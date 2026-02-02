@@ -389,7 +389,7 @@ const eaBridgeService = new EaBridgeService({
   brokerRouter,
   logger,
   brokerMeta: appConfig.brokerMeta,
-  broadcast: _websocketLayer?.broadcast,
+  broadcast: null,
 });
 logger.info('EA Bridge Service initialized for intelligent MT4/MT5 integration');
 
@@ -1053,6 +1053,7 @@ const {
 // This lets the dashboard show auto-trade attempts, rejects, and opened trades.
 try {
   if (_websocketLayer?.broadcast) {
+    eaBridgeService.broadcast = _websocketLayer.broadcast;
     tradeManager.emit = _websocketLayer.broadcast;
     tradingEngine.emit = _websocketLayer.broadcast;
   }
