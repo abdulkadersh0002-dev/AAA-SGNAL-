@@ -22,7 +22,7 @@ export async function ingestMacroEvents(sources = [], options = {}) {
         error: error.message,
         processed: 0,
         persisted: 0,
-        skipped: 0
+        skipped: 0,
       });
     }
   }
@@ -76,7 +76,7 @@ async function processMacroSource(source, options) {
         defaultCountry,
         defaultSource,
         defaultImpact: toNumber(source.defaultImpact),
-        sourceMetadata: source.metadata || {}
+        sourceMetadata: source.metadata || {},
       });
 
       if (!mapped) {
@@ -98,7 +98,7 @@ async function processMacroSource(source, options) {
     processed,
     persisted: dryRun ? 0 : persisted,
     skipped,
-    dryRun
+    dryRun,
   };
 }
 
@@ -117,7 +117,7 @@ async function* iterateMacroRecords(filePath, format) {
       parse({
         columns: true,
         skip_empty_lines: true,
-        trim: true
+        trim: true,
       })
     );
 
@@ -183,14 +183,14 @@ function mapMacroRecord(record, context) {
     defaultCountry,
     defaultSource,
     defaultImpact,
-    sourceMetadata
+    sourceMetadata,
   } = context;
 
   const releasedAtValue = selectField(record, columns.releasedAt, [
     'released_at',
     'time',
     'timestamp',
-    'date'
+    'date',
   ]);
   const releasedAt = parseTimestamp(releasedAtValue, { timezone });
   if (!releasedAt) {
@@ -238,7 +238,7 @@ function mapMacroRecord(record, context) {
     tags: ensureArray(selectField(record, columns.tags, ['tags', 'categories']))
       .map((tag) => toStringValue(tag))
       .filter(Boolean),
-    notes: toStringValue(selectField(record, columns.notes, ['notes', 'comment']))
+    notes: toStringValue(selectField(record, columns.notes, ['notes', 'comment'])),
   };
 
   return {
@@ -255,7 +255,7 @@ function mapMacroRecord(record, context) {
     surprise,
     impactScore,
     source,
-    metadata
+    metadata,
   };
 }
 
@@ -337,7 +337,7 @@ async function insertMacroBatch(client, rows) {
     'surprise',
     'impact_score',
     'source',
-    'metadata'
+    'metadata',
   ];
 
   const values = [];

@@ -123,7 +123,7 @@ class PerformanceDigestService {
       providerHealth,
       activeTrades,
       recentClosed,
-      accountBalance: this.tradingEngine?.config?.accountBalance ?? null
+      accountBalance: this.tradingEngine?.config?.accountBalance ?? null,
     };
   }
 
@@ -399,7 +399,7 @@ class PerformanceDigestService {
       '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
       '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
       `<< /Length ${streamLength} >>\nstream\n${streamContent}\nendstream`,
-      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'
+      '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
     ];
 
     let pdf = '%PDF-1.4\n';
@@ -445,13 +445,13 @@ class PerformanceDigestService {
         risk: {
           var: data.riskSnapshot?.var,
           correlation: data.riskSnapshot?.correlation,
-          pnlSummary: data.riskSnapshot?.pnlSummary
+          pnlSummary: data.riskSnapshot?.pnlSummary,
         },
         artifacts: {
           htmlPath,
-          pdfPath
-        }
-      }
+          pdfPath,
+        },
+      },
     });
   }
 }

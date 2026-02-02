@@ -153,7 +153,13 @@ Get a runtime configuration summary (environment, toggles, and effective modes).
     "autoTrading": { "autostart": false },
     "brokerRouting": { "enabled": true, "defaultBroker": "mt5" },
     "brokers": { "mt5": true, "mt4": false, "oanda": false, "ibkr": false },
-    "services": { "riskReports": true, "performanceDigests": true, "brokerReconciliation": true, "pairPrefetch": true, "jobQueue": true },
+    "services": {
+      "riskReports": true,
+      "performanceDigests": true,
+      "brokerReconciliation": true,
+      "pairPrefetch": true,
+      "jobQueue": true
+    },
     "persistence": { "enabled": false, "ssl": false },
     "endpoints": { "health": "/api/healthz", "metrics": "/metrics", "websocket": "/ws/trading" }
   },
@@ -298,7 +304,7 @@ These endpoints expose the EA-streamed quotes/bars used by the realtime runner a
 
 | Parameter  | Type   | Description                                      |
 | ---------- | ------ | ------------------------------------------------ |
-| `maxAgeMs` | number | Cache tolerance; `0` forces fresh               |
+| `maxAgeMs` | number | Cache tolerance; `0` forces fresh                |
 | `symbols`  | string | Optional comma-separated symbols (e.g. `EURUSD`) |
 
 **Response (example):**
@@ -332,7 +338,9 @@ These endpoints expose the EA-streamed quotes/bars used by the realtime runner a
   "broker": "mt5",
   "symbol": "EURUSD",
   "timeframe": "M15",
-  "candles": [{ "time": 1730000000000, "open": 1.08, "high": 1.081, "low": 1.079, "close": 1.0805 }],
+  "candles": [
+    { "time": 1730000000000, "open": 1.08, "high": 1.081, "low": 1.079, "close": 1.0805 }
+  ],
   "count": 1,
   "timestamp": 1730000000000
 }
@@ -344,10 +352,10 @@ Returns the current **execution-oriented** signal payload for the EA.
 
 **Query Parameters:**
 
-| Parameter     | Type   | Description |
-| ------------ | ------ | ----------- |
-| `symbol`     | string | Required symbol (e.g. `EURUSD`) |
-| `accountMode`| string | Optional (e.g. `demo` or `real`) |
+| Parameter     | Type   | Description                      |
+| ------------- | ------ | -------------------------------- |
+| `symbol`      | string | Required symbol (e.g. `EURUSD`)  |
+| `accountMode` | string | Optional (e.g. `demo` or `real`) |
 
 **Response (shape):**
 

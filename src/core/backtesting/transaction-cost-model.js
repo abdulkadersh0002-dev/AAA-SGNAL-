@@ -37,7 +37,7 @@ export class TransactionCostModel {
     exitPrice: _exitPrice,
     units = this.lotSize,
     slippagePips = this.slippagePips,
-    spreadPips = this.spreadPips
+    spreadPips = this.spreadPips,
   }) {
     const pipPrecision = this.getPipPrecision(pair);
     const pipValue = (pipPrecision / entryPrice) * units;
@@ -52,7 +52,7 @@ export class TransactionCostModel {
       commissionCost: toFixedNumber(commissionCost, 8),
       totalCost: toFixedNumber(spreadCost + slippageCost + commissionCost, 8),
       pipPrecision,
-      pipValue
+      pipValue,
     };
   }
 }

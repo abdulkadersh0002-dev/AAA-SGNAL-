@@ -7,11 +7,11 @@ import axios from 'axios';
 
 const FRED_SERIES = {
   retailSales: {
-    USD: 'RSAFS' // Advance Retail Sales: Retail Trade
+    USD: 'RSAFS', // Advance Retail Sales: Retail Trade
   },
   manufacturing: {
-    USD: 'IPMAN' // Industrial Production: Manufacturing
-  }
+    USD: 'IPMAN', // Industrial Production: Manufacturing
+  },
 };
 
 class EconomicAnalyzer {
@@ -37,7 +37,7 @@ class EconomicAnalyzer {
       indicators: {},
       score: 0,
       sentiment: 'neutral',
-      strength: 0
+      strength: 0,
     };
 
     try {
@@ -48,7 +48,7 @@ class EconomicAnalyzer {
         this.getInterestRate(currency),
         this.getUnemployment(currency),
         this.getRetailSales(currency),
-        this.getManufacturing(currency)
+        this.getManufacturing(currency),
       ]);
 
       indicators.forEach((result, index) => {
@@ -59,7 +59,7 @@ class EconomicAnalyzer {
             'interestRate',
             'unemployment',
             'retailSales',
-            'manufacturing'
+            'manufacturing',
           ];
           analysis.indicators[names[index]] = result.value;
         }
@@ -96,7 +96,7 @@ class EconomicAnalyzer {
           change: this.calculateChange(response.data[1]),
           impact: this.calculateImpact(latestData.value, 'gdp'),
           trend: this.calculateChange(response.data[1]) > 0 ? 'up' : 'down',
-          source: 'WorldBank'
+          source: 'WorldBank',
         };
       }
     } catch (error) {
@@ -122,7 +122,7 @@ class EconomicAnalyzer {
           change: this.calculateChange(response.data[1]),
           impact: this.calculateInflationImpact(latestData.value),
           trend: this.calculateChange(response.data[1]) > 0 ? 'up' : 'down',
-          source: 'WorldBank'
+          source: 'WorldBank',
         };
       }
     } catch (error) {
@@ -144,7 +144,7 @@ class EconomicAnalyzer {
       AUD: { value: 4.35, change: 0.0 },
       CAD: { value: 5.0, change: 0.0 },
       CHF: { value: 1.75, change: 0.0 },
-      NZD: { value: 5.5, change: 0.0 }
+      NZD: { value: 5.5, change: 0.0 },
     };
 
     const rate = rates[currency] || { value: null, change: 0 };
@@ -153,7 +153,7 @@ class EconomicAnalyzer {
       change: rate.change,
       impact: this.calculateInterestRateImpact(rate.value ?? 0, rate.change ?? 0),
       trend: rate.change > 0 ? 'up' : rate.change < 0 ? 'down' : 'neutral',
-      source: 'CentralBank'
+      source: 'CentralBank',
     };
   }
 
@@ -174,7 +174,7 @@ class EconomicAnalyzer {
           change: this.calculateChange(response.data[1]),
           impact: this.calculateUnemploymentImpact(latestData.value),
           trend: this.calculateChange(response.data[1]) > 0 ? 'up' : 'down',
-          source: 'WorldBank'
+          source: 'WorldBank',
         };
       }
     } catch (error) {
@@ -210,7 +210,7 @@ class EconomicAnalyzer {
       impact,
       trend: this.trendFromChange(series.change),
       source: series.source,
-      observedAt: series.latestDate
+      observedAt: series.latestDate,
     };
   }
 
@@ -241,7 +241,7 @@ class EconomicAnalyzer {
       impact,
       trend: this.trendFromChange(series.change),
       source: series.source,
-      observedAt: series.latestDate
+      observedAt: series.latestDate,
     };
   }
 
@@ -256,7 +256,7 @@ class EconomicAnalyzer {
       interestRate: 0.25,
       unemployment: 0.15,
       retailSales: 0.1,
-      manufacturing: 0.05
+      manufacturing: 0.05,
     };
 
     Object.keys(indicators).forEach((key) => {
@@ -354,7 +354,7 @@ class EconomicAnalyzer {
       AUD: 'AUS',
       CAD: 'CAN',
       CHF: 'CHE',
-      NZD: 'NZL'
+      NZD: 'NZL',
     };
     return mapping[currency] || 'USA';
   }
@@ -369,7 +369,7 @@ class EconomicAnalyzer {
       indicators: {},
       score: 0,
       sentiment: 'neutral',
-      strength: 0
+      strength: 0,
     };
   }
 
@@ -387,7 +387,7 @@ class EconomicAnalyzer {
   setCached(key, data) {
     this.cache.set(key, {
       data,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     });
   }
 
@@ -405,7 +405,7 @@ class EconomicAnalyzer {
       change: null,
       impact: 0,
       trend: 'neutral',
-      source: reason || 'unavailable'
+      source: reason || 'unavailable',
     };
   }
 
@@ -429,7 +429,7 @@ class EconomicAnalyzer {
         api_key: fredKey,
         file_type: 'json',
         sort_order: 'desc',
-        limit: 5
+        limit: 5,
       };
 
       const { data } = await axios.get(url, { params, timeout: 10000 });
@@ -461,7 +461,7 @@ class EconomicAnalyzer {
         previous: previousValue,
         change: changePct,
         latestDate: latest.date || null,
-        source: 'FRED'
+        source: 'FRED',
       };
     } catch (error) {
       console.error(`FRED series ${seriesId} fetch error:`, error.message);

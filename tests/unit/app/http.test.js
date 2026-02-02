@@ -14,7 +14,7 @@ async function startEphemeralServer(app) {
   }
   return {
     server,
-    baseUrl: `http://127.0.0.1:${port}`
+    baseUrl: `http://127.0.0.1:${port}`,
   };
 }
 
@@ -22,7 +22,7 @@ function createLogger() {
   return {
     info() {},
     warn() {},
-    error() {}
+    error() {},
   };
 }
 
@@ -36,22 +36,22 @@ describe('http app', () => {
         priceDataFetcher: {
           providerConfigured: () => true,
           getAggregateDataConfidence: () => 75,
-          metrics: null
+          metrics: null,
         },
         newsAnalyzer: {
-          apiKeys: { polygon: 'ok', finnhub: 'ok', newsApi: 'optional' }
+          apiKeys: { polygon: 'ok', finnhub: 'ok', newsApi: 'optional' },
         },
         economicAnalyzer: {
           cache: { size: 1 },
-          apiKeys: {}
+          apiKeys: {},
         },
-        getStatistics: () => ({ totalTrades: 1 })
+        getStatistics: () => ({ totalTrades: 1 }),
       },
       tradeManager: {
-        getStatus: () => ({ enabled: true, pairs: ['EURUSD'] })
+        getStatus: () => ({ enabled: true, pairs: ['EURUSD'] }),
       },
       heartbeatMonitor: {
-        getHeartbeat: () => ({ status: 'ok', timestamp: Date.now(), summary: { ok: true } })
+        getHeartbeat: () => ({ status: 'ok', timestamp: Date.now(), summary: { ok: true } }),
       },
       brokerRouter: null,
       eaBridgeService: null,
@@ -62,8 +62,8 @@ describe('http app', () => {
       metricsRegistry: {
         register: {
           contentType: 'text/plain; version=0.0.4',
-          metrics: async () => 'metric 1\n'
-        }
+          metrics: async () => 'metric 1\n',
+        },
       },
       providerAvailabilityState: {
         buildSnapshot: () => ({
@@ -75,13 +75,13 @@ describe('http app', () => {
           dataConfidence: null,
           providerOrder: [],
           rateLimits: {},
-          defaultAvailability: null
+          defaultAvailability: null,
         }),
         providerAvailabilityAlertConfig: {},
         history: [],
         historyLimit: 10,
-        loadProviderAvailabilityHistory: null
-      }
+        loadProviderAvailabilityHistory: null,
+      },
     });
 
     const started = await startEphemeralServer(app);
@@ -112,7 +112,7 @@ describe('http app', () => {
 
   it('echoes incoming x-request-id', async () => {
     const res = await fetch(`${baseUrl}/api/healthz`, {
-      headers: { 'x-request-id': 'test-request-id' }
+      headers: { 'x-request-id': 'test-request-id' },
     });
     assert.equal(res.status, 200);
     assert.equal(res.headers.get('x-request-id'), 'test-request-id');

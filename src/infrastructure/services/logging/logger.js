@@ -14,7 +14,7 @@ const logDir = env.LOG_DIR || 'logs';
 const base = {
   service: serviceName,
   environment,
-  version
+  version,
 };
 
 const targets = [];
@@ -35,7 +35,7 @@ if (enableConsole) {
     targets.push({
       target: 'pino/file',
       level,
-      options: { destination: 1 } // stdout as JSON
+      options: { destination: 1 }, // stdout as JSON
     });
   } else {
     targets.push({
@@ -44,8 +44,8 @@ if (enableConsole) {
       options: {
         colorize: true,
         translateTime: 'SYS:standard',
-        ignore: 'pid,hostname'
-      }
+        ignore: 'pid,hostname',
+      },
     });
   }
 }
@@ -58,8 +58,8 @@ if (enableFile) {
       level,
       options: {
         destination: path.join(logDir, 'application.log'),
-        mkdir: true
-      }
+        mkdir: true,
+      },
     });
   } catch (error) {
     console.error('Failed to initialize log directory:', error.message);
@@ -78,10 +78,10 @@ if (env.LOKI_ENDPOINT) {
       labels: {
         service: serviceName,
         environment,
-        app: 'signals-strategy'
-      }
+        app: 'signals-strategy',
+      },
     },
-    level: env.LOKI_LOG_LEVEL || level
+    level: env.LOKI_LOG_LEVEL || level,
   });
 }
 
@@ -105,9 +105,9 @@ if (env.ELASTIC_ENDPOINT) {
       password: env.ELASTIC_PASSWORD || null,
       headers: parsedHeaders,
       batchSize: Number(env.ELASTIC_BATCH_SIZE || '50'),
-      flushInterval: Number(env.ELASTIC_FLUSH_INTERVAL || '5000')
+      flushInterval: Number(env.ELASTIC_FLUSH_INTERVAL || '5000'),
     },
-    level: env.ELASTIC_LOG_LEVEL || level
+    level: env.ELASTIC_LOG_LEVEL || level,
   });
 }
 
@@ -116,8 +116,8 @@ const transport =
     ? pino.transport({
         targets: targets.map((target) => ({
           ...target,
-          target: typeof target.target === 'string' ? target.target : target.target
-        }))
+          target: typeof target.target === 'string' ? target.target : target.target,
+        })),
       })
     : undefined;
 
@@ -130,8 +130,8 @@ const logger = transport
         formatters: {
           level(value) {
             return { level: value };
-          }
-        }
+          },
+        },
       },
       transport
     )
@@ -142,8 +142,8 @@ const logger = transport
       formatters: {
         level(value) {
           return { level: value };
-        }
-      }
+        },
+      },
     });
 
 export default logger;

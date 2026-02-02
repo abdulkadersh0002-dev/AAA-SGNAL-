@@ -14,7 +14,7 @@ import {
   MARKET_STATE,
   TIMEFRAME,
   API_ENDPOINTS,
-  CONFIG_KEYS
+  CONFIG_KEYS,
 } from '../../src/constants/index.js';
 
 describe('Constants', () => {

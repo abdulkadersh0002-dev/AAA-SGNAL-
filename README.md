@@ -15,7 +15,7 @@ An EA-driven automated trading system with economic, news, and technical analysi
 - [Testing](#-testing)
 - [Architecture](#-architecture)
 - [Contributing](#-contributing)
-npm run up
+  npm run up
 - [License](#-license)
 
 ## ✨ Features
@@ -26,6 +26,7 @@ npm run up
 - **Multi-broker Support** - OANDA, MT5, and IBKR integration
 - **Risk Management** - Advanced position sizing and risk controls
 - **Real-time WebSocket Updates** - Live trade and signal broadcasting
+
 ## 🚀 Quick Start
 
 **One command to start everything:**
@@ -50,6 +51,7 @@ npm run dev
 ```
 
 **Access Points:**
+
 - Backend API: `http://127.0.0.1:4101`
 - Dashboard: `http://127.0.0.1:4173`
 - Health Check: `http://127.0.0.1:4101/api/healthz`
@@ -194,12 +196,12 @@ See `.env.example` for the complete list of configuration options.
 
 ### EA Bridge Endpoints (MT4/MT5)
 
-| Endpoint | Method | Description |
-| --- | --- | --- |
-| `/api/broker/bridge/:broker/agent/config` | GET | Server execution policy for the EA |
-| `/api/broker/bridge/:broker/signal/get` | GET | EA signal payload for a symbol (`?symbol=EURUSD&accountMode=demo`) |
-| `/api/broker/bridge/:broker/market/quotes` | GET | Latest EA-streamed quotes |
-| `/api/broker/bridge/:broker/market/candles` | GET | Candles derived from EA bars/quotes |
+| Endpoint                                    | Method | Description                                                        |
+| ------------------------------------------- | ------ | ------------------------------------------------------------------ |
+| `/api/broker/bridge/:broker/agent/config`   | GET    | Server execution policy for the EA                                 |
+| `/api/broker/bridge/:broker/signal/get`     | GET    | EA signal payload for a symbol (`?symbol=EURUSD&accountMode=demo`) |
+| `/api/broker/bridge/:broker/market/quotes`  | GET    | Latest EA-streamed quotes                                          |
+| `/api/broker/bridge/:broker/market/candles` | GET    | Candles derived from EA bars/quotes                                |
 
 ### Feature Endpoints
 

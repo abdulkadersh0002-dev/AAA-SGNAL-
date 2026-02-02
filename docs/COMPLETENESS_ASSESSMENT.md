@@ -263,14 +263,14 @@ import Redis from 'ioredis';
 const redis = new Redis({
   host: process.env.REDIS_HOST,
   port: 6379,
-  retryStrategy: (times) => Math.min(times * 50, 2000)
+  retryStrategy: (times) => Math.min(times * 50, 2000),
 });
 
 // Add Bull for background jobs
 import Bull from 'bull';
 
 const signalQueue = new Bull('signal-processing', {
-  redis: { host: 'localhost', port: 6379 }
+  redis: { host: 'localhost', port: 6379 },
 });
 ```
 
@@ -357,8 +357,8 @@ class BacktestEngine {
         sharpeRatio: 0,
         maxDrawdown: 0,
         winRate: 0,
-        profitFactor: 0
-      }
+        profitFactor: 0,
+      },
     };
 
     // Simulate historical trading
@@ -578,10 +578,11 @@ jobs:
 #### Focus: Make it intelligent
 
 1. **Weeks 4-6: Validation & Backtesting Enhancements**
-  - Expand backtesting engine
-  - Improve parameter optimization
-  - Add stricter data-quality gating
-  - Add more scenario coverage
+
+- Expand backtesting engine
+- Improve parameter optimization
+- Add stricter data-quality gating
+- Add more scenario coverage
 
 2. **Weeks 7-8: Multi-Tenancy**
    - Add user management
@@ -635,7 +636,7 @@ These can be implemented quickly for immediate impact:
        redis: await checkRedis(),
        providers: await checkProviders(),
        memory: process.memoryUsage(),
-       uptime: process.uptime()
+       uptime: process.uptime(),
      };
 
      const isHealthy = Object.values(checks).every((c) => c.healthy);

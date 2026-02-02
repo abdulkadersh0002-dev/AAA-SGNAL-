@@ -56,7 +56,7 @@ class RiskReportService {
       pair: trade.pair,
       direction: trade.direction,
       positionSize: trade.positionSize,
-      pnl: trade.currentPnL || trade.finalPnL || null
+      pnl: trade.currentPnL || trade.finalPnL || null,
     }));
 
     const priceHealth = this.tradingEngine?.priceDataFetcher?.getHealthStatus?.() || {};
@@ -66,7 +66,7 @@ class RiskReportService {
       .map(([provider, info]) => ({
         provider,
         remaining: info.remaining,
-        backoffSeconds: info.backoffSeconds
+        backoffSeconds: info.backoffSeconds,
       }));
     const riskCommand = this.tradingEngine?.getRiskCommandSnapshot?.() || null;
 
@@ -85,16 +85,16 @@ class RiskReportService {
       providerHealth: {
         status: priceHealth.status || 'unknown',
         alerts,
-        degradedProviders
+        degradedProviders,
       },
       risk: {
         dailyRiskLimitPct,
         dailyRiskUsedPct,
         dailyRiskRemainingPct: Number.isFinite(dailyRiskUsedPct)
           ? Math.max(0, dailyRiskLimitPct - dailyRiskUsedPct)
-          : null
+          : null,
       },
-      riskCommand
+      riskCommand,
     };
   }
 
@@ -212,7 +212,7 @@ class RiskReportService {
       body,
       context: report,
       subject: `Daily Risk Report (${new Date(report.generatedAt).toUTCString()})`,
-      channels: ['log', 'slack', 'email', 'webhook']
+      channels: ['log', 'slack', 'email', 'webhook'],
     });
   }
 }

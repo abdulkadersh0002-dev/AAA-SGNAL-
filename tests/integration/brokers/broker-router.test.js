@@ -24,7 +24,7 @@ const createMockBroker = (name, options = {}) => ({
       margin: 1000,
       freeMargin: 9500,
       marginLevel: 1050,
-      currency: 'USD'
+      currency: 'USD',
     };
   },
 
@@ -41,8 +41,8 @@ const createMockBroker = (name, options = {}) => ({
         openPrice: 1.085,
         currentPrice: 1.087,
         profit: 20,
-        openTime: Date.now() - 3600000
-      }
+        openTime: Date.now() - 3600000,
+      },
     ];
   },
 
@@ -57,7 +57,7 @@ const createMockBroker = (name, options = {}) => ({
       volume: order.volume,
       price: order.price || 1.085,
       status: 'filled',
-      executedAt: Date.now()
+      executedAt: Date.now(),
     };
   },
 
@@ -69,9 +69,9 @@ const createMockBroker = (name, options = {}) => ({
       positionId,
       closePrice: 1.088,
       profit: 30,
-      closedAt: Date.now()
+      closedAt: Date.now(),
     };
-  }
+  },
 });
 
 // Mock broker router
@@ -134,7 +134,7 @@ const createMockBrokerRouter = (brokers) => ({
     }
 
     return broker.placeOrder(order);
-  }
+  },
 });
 
 describe('Broker Integration', () => {
@@ -172,7 +172,7 @@ describe('Broker Integration', () => {
       const order = {
         symbol: 'EURUSD',
         type: 'buy',
-        volume: 0.1
+        volume: 0.1,
       };
 
       const result = await mt5Broker.placeOrder(order);

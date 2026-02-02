@@ -67,7 +67,7 @@ function sanitizeSlack(entry) {
   return {
     channel: payload.channel ?? null,
     title: payload.title ?? null,
-    text: typeof payload.text === 'string' ? payload.text.trim() : null
+    text: typeof payload.text === 'string' ? payload.text.trim() : null,
   };
 }
 
@@ -89,7 +89,7 @@ function validateSlackSchema(entry, context) {
     '*Description*:',
     '*State*:',
     '*Severity*:',
-    '*Runbook*:'
+    '*Runbook*:',
   ];
   requiredPhrases.forEach((phrase) => {
     if (!text.includes(phrase)) {
@@ -127,15 +127,15 @@ function sanitizeTicket(entry) {
       labels: {
         alertname: labels.alertname ?? null,
         service: labels.service ?? null,
-        severity: labels.severity ?? null
+        severity: labels.severity ?? null,
       },
       annotations: {
         summary: annotations.summary ?? null,
         description: annotations.description ?? null,
         runbook: annotations.runbook ?? null,
-        ticket_hint: annotations.ticket_hint ?? null
-      }
-    }
+        ticket_hint: annotations.ticket_hint ?? null,
+      },
+    },
   };
 }
 
@@ -185,7 +185,7 @@ function compareSnapshot({ id, entry, fixturesDir, fixtureFile, projector, valid
       'Expected:',
       expectedJson,
       'Actual:',
-      actualJson
+      actualJson,
     ].join('\n');
     throw new Error(message);
   }
@@ -210,7 +210,7 @@ export function compareAlertSnapshots({ inputPath, fixturesDir }) {
         deriveSlackState(entry) === 'firing',
       projector: sanitizeSlack,
       fixtureFile: 'slack-critical-firing.json',
-      validator: validateSlackSchema
+      validator: validateSlackSchema,
     },
     {
       id: 'slack-critical-resolved',
@@ -220,7 +220,7 @@ export function compareAlertSnapshots({ inputPath, fixturesDir }) {
         deriveSlackState(entry) === 'resolved',
       projector: sanitizeSlack,
       fixtureFile: 'slack-critical-resolved.json',
-      validator: validateSlackSchema
+      validator: validateSlackSchema,
     },
     {
       id: 'slack-warning-firing',
@@ -230,7 +230,7 @@ export function compareAlertSnapshots({ inputPath, fixturesDir }) {
         deriveSlackState(entry) === 'firing',
       projector: sanitizeSlack,
       fixtureFile: 'slack-warning-slo-firing.json',
-      validator: validateSlackSchema
+      validator: validateSlackSchema,
     },
     {
       id: 'slack-warning-resolved',
@@ -240,7 +240,7 @@ export function compareAlertSnapshots({ inputPath, fixturesDir }) {
         deriveSlackState(entry) === 'resolved',
       projector: sanitizeSlack,
       fixtureFile: 'slack-warning-slo-resolved.json',
-      validator: validateSlackSchema
+      validator: validateSlackSchema,
     },
     {
       id: 'ticket-critical-firing',
@@ -250,7 +250,7 @@ export function compareAlertSnapshots({ inputPath, fixturesDir }) {
         deriveTicketState(entry) === 'firing',
       projector: sanitizeTicket,
       fixtureFile: 'ticket-critical-firing.json',
-      validator: validateTicketSchema
+      validator: validateTicketSchema,
     },
     {
       id: 'ticket-critical-resolved',
@@ -260,8 +260,8 @@ export function compareAlertSnapshots({ inputPath, fixturesDir }) {
         deriveTicketState(entry) === 'resolved',
       projector: sanitizeTicket,
       fixtureFile: 'ticket-critical-resolved.json',
-      validator: validateTicketSchema
-    }
+      validator: validateTicketSchema,
+    },
   ];
 
   definitions.forEach((definition) => {
@@ -272,7 +272,7 @@ export function compareAlertSnapshots({ inputPath, fixturesDir }) {
       fixturesDir,
       fixtureFile: definition.fixtureFile,
       projector: definition.projector,
-      validator: definition.validator
+      validator: definition.validator,
     });
   });
 }

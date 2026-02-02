@@ -17,7 +17,7 @@ export const EconomicAnalysisSchema = z
     indicators: z.record(z.unknown()),
     score: z.number(),
     sentiment: z.string(),
-    strength: z.number()
+    strength: z.number(),
   })
   .strict();
 
@@ -46,13 +46,13 @@ export const NewsAnalysisSchema = z
     sentiment: z.object({
       base: z.number(),
       quote: z.number(),
-      overall: z.number()
+      overall: z.number(),
     }),
     impact: z.number(),
     direction: z.string(),
     confidence: z.number(),
     sources: z.record(z.unknown()),
-    sentimentFeeds: z.unknown().nullable()
+    sentimentFeeds: z.unknown().nullable(),
   })
   .strict();
 
@@ -101,7 +101,7 @@ export const TechnicalAnalysisSchema = z
     regimeSummary: z.record(z.unknown()).nullable(),
     volatilitySummary: z.record(z.unknown()).nullable(),
     divergenceSummary: z.record(z.unknown()).nullable(),
-    volumePressureSummary: z.record(z.unknown()).nullable()
+    volumePressureSummary: z.record(z.unknown()).nullable(),
   })
   .strict();
 
@@ -115,7 +115,7 @@ export function normalizeEconomicAnalysis(raw) {
     indicators: raw.indicators || {},
     score: Number(raw.score) || 0,
     sentiment: raw.sentiment || 'neutral',
-    strength: Number(raw.strength) || 0
+    strength: Number(raw.strength) || 0,
   };
 }
 
@@ -132,13 +132,13 @@ export function normalizeNewsAnalysis(raw) {
     sentiment: {
       base: Number(raw.sentiment?.base) || 0,
       quote: Number(raw.sentiment?.quote) || 0,
-      overall: Number(raw.sentiment?.overall) || 0
+      overall: Number(raw.sentiment?.overall) || 0,
     },
     impact: Number(raw.impact) || 0,
     direction: raw.direction || 'neutral',
     confidence: Number(raw.confidence) || 0,
     sources: raw.sources || {},
-    sentimentFeeds: raw.sentimentFeeds ?? null
+    sentimentFeeds: raw.sentimentFeeds ?? null,
   };
 }
 
@@ -159,7 +159,7 @@ export function normalizeTechnicalAnalysis(raw) {
       lastPrice: value.lastPrice != null ? Number(value.lastPrice) : null,
       latestCandle: value.latestCandle || null,
       priceChangePercent: Number(value.priceChangePercent) || 0,
-      direction: value.direction || 'NEUTRAL'
+      direction: value.direction || 'NEUTRAL',
     };
   });
 
@@ -176,7 +176,7 @@ export function normalizeTechnicalAnalysis(raw) {
     regimeSummary: raw.regimeSummary || null,
     volatilitySummary: raw.volatilitySummary || null,
     divergenceSummary: raw.divergenceSummary || null,
-    volumePressureSummary: raw.volumePressureSummary || null
+    volumePressureSummary: raw.volumePressureSummary || null,
   };
 }
 

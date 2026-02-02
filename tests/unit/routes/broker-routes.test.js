@@ -17,7 +17,7 @@ async function startEphemeralServer(app) {
   }
   return {
     server,
-    baseUrl: `http://127.0.0.1:${port}`
+    baseUrl: `http://127.0.0.1:${port}`,
   };
 }
 
@@ -25,7 +25,7 @@ function createLogger() {
   return {
     info() {},
     warn() {},
-    error() {}
+    error() {},
   };
 }
 
@@ -56,7 +56,7 @@ describe('broker routes (unit)', () => {
         logger: createLogger(),
         config: { brokerRouting: { enabled: false } },
         requireBrokerRead: (req, res, next) => next(),
-        requireBrokerWrite: (req, res, next) => next()
+        requireBrokerWrite: (req, res, next) => next(),
       })
     );
 
@@ -87,7 +87,7 @@ describe('broker routes (unit)', () => {
         const err = new Error('Unknown connector');
         err.code = 'UNKNOWN_CONNECTOR';
         throw err;
-      }
+      },
     };
 
     app.use(
@@ -99,7 +99,7 @@ describe('broker routes (unit)', () => {
         logger: createLogger(),
         config: { brokerRouting: { enabled: true } },
         requireBrokerRead: (req, res, next) => next(),
-        requireBrokerWrite: (req, res, next) => next()
+        requireBrokerWrite: (req, res, next) => next(),
       })
     );
 
@@ -112,7 +112,7 @@ describe('broker routes (unit)', () => {
     const res = await fetch(`${baseUrl}/api/broker/connectors/unknown/probe`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'connect' })
+      body: JSON.stringify({ action: 'connect' }),
     });
 
     assert.equal(res.status, 404);
@@ -150,7 +150,7 @@ describe('broker routes (unit)', () => {
           throw new Error('Unexpected');
         }
         return { id, ok: true };
-      }
+      },
     };
 
     app.use(
@@ -162,7 +162,7 @@ describe('broker routes (unit)', () => {
         logger: createLogger(),
         config: { brokerRouting: { enabled: true } },
         requireBrokerRead: (req, res, next) => next(),
-        requireBrokerWrite: (req, res, next) => next()
+        requireBrokerWrite: (req, res, next) => next(),
       })
     );
 
@@ -175,21 +175,21 @@ describe('broker routes (unit)', () => {
     const invalidRes = await fetch(`${baseUrl}/api/broker/connectors/invalid/probe`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'connect' })
+      body: JSON.stringify({ action: 'connect' }),
     });
     assert.equal(invalidRes.status, 400);
 
     const unsupportedRes = await fetch(`${baseUrl}/api/broker/connectors/unsupported/probe`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'connect' })
+      body: JSON.stringify({ action: 'connect' }),
     });
     assert.equal(unsupportedRes.status, 400);
 
     const failedRes = await fetch(`${baseUrl}/api/broker/connectors/failed/probe`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'connect' })
+      body: JSON.stringify({ action: 'connect' }),
     });
     assert.equal(failedRes.status, 502);
     const failedBody = await failedRes.json();
@@ -199,7 +199,7 @@ describe('broker routes (unit)', () => {
     const boomRes = await fetch(`${baseUrl}/api/broker/connectors/boom/probe`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'connect' })
+      body: JSON.stringify({ action: 'connect' }),
     });
     assert.equal(boomRes.status, 500);
   });
@@ -218,7 +218,7 @@ describe('broker routes (unit)', () => {
         logger: createLogger(),
         config: { brokerRouting: { enabled: true }, tradingModifyApi: { enabled: false } },
         requireBrokerRead: (req, res, next) => next(),
-        requireBrokerWrite: (req, res, next) => next()
+        requireBrokerWrite: (req, res, next) => next(),
       })
     );
 
@@ -231,7 +231,7 @@ describe('broker routes (unit)', () => {
     const res = await fetch(`${baseUrl}/api/broker/positions/modify`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ broker: 'mt5', ticket: '123', symbol: 'EURUSD', stopLoss: 1.2345 })
+      body: JSON.stringify({ broker: 'mt5', ticket: '123', symbol: 'EURUSD', stopLoss: 1.2345 }),
     });
 
     assert.equal(res.status, 503);
@@ -252,7 +252,7 @@ describe('broker routes (unit)', () => {
       modifyPosition: async (payload) => {
         calls.push(payload);
         return { success: true, broker: payload.broker, result: { ok: true } };
-      }
+      },
     };
 
     app.use(
@@ -264,7 +264,7 @@ describe('broker routes (unit)', () => {
         logger: createLogger(),
         config: { brokerRouting: { enabled: true }, tradingModifyApi: { enabled: true } },
         requireBrokerRead: (req, res, next) => next(),
-        requireBrokerWrite: (req, res, next) => next()
+        requireBrokerWrite: (req, res, next) => next(),
       })
     );
 
@@ -282,8 +282,8 @@ describe('broker routes (unit)', () => {
         id: '999',
         pair: 'EURUSD',
         sl: '1.11111',
-        reason: 'breakeven'
-      })
+        reason: 'breakeven',
+      }),
     });
 
     assert.equal(res.status, 200);

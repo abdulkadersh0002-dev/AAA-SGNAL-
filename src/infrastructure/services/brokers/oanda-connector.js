@@ -20,9 +20,9 @@ class OandaConnector extends BaseBrokerConnector {
         timeout: options.timeout || 10000,
         headers: {
           Authorization: accessToken ? `Bearer ${accessToken}` : undefined,
-          'Content-Type': 'application/json'
-        }
-      }
+          'Content-Type': 'application/json',
+        },
+      },
     });
     this.accountId = accountId;
     this.accessToken = accessToken;
@@ -34,7 +34,7 @@ class OandaConnector extends BaseBrokerConnector {
         broker: this.name,
         mode: this.accountMode,
         connected: false,
-        details: 'Missing account credentials'
+        details: 'Missing account credentials',
       };
     }
 
@@ -44,7 +44,7 @@ class OandaConnector extends BaseBrokerConnector {
         broker: this.name,
         mode: this.accountMode,
         connected: true,
-        details: response.data?.account || null
+        details: response.data?.account || null,
       };
     } catch (error) {
       this.logger?.warn?.({ err: error }, 'Oanda health check failed');
@@ -52,7 +52,7 @@ class OandaConnector extends BaseBrokerConnector {
         broker: this.name,
         mode: this.accountMode,
         connected: false,
-        error: error.message
+        error: error.message,
       };
     }
   }
@@ -73,15 +73,15 @@ class OandaConnector extends BaseBrokerConnector {
         clientExtensions: order.clientExtensions || undefined,
         stopLossOnFill: order.stopLoss
           ? {
-              price: order.stopLoss
+              price: order.stopLoss,
             }
           : undefined,
         takeProfitOnFill: order.takeProfit
           ? {
-              price: order.takeProfit
+              price: order.takeProfit,
             }
-          : undefined
-      }
+          : undefined,
+      },
     };
 
     try {
@@ -96,8 +96,8 @@ class OandaConnector extends BaseBrokerConnector {
           fillTransactionId: response.data?.orderFillTransaction?.id,
           price: response.data?.orderFillTransaction?.price || null,
           executedUnits: response.data?.orderFillTransaction?.units || null,
-          time: response.data?.orderFillTransaction?.time || new Date().toISOString()
-        }
+          time: response.data?.orderFillTransaction?.time || new Date().toISOString(),
+        },
       };
     } catch (error) {
       const detail = error.response?.data || error.message;
@@ -116,12 +116,12 @@ class OandaConnector extends BaseBrokerConnector {
       const response = await this.http.put(
         `/v3/accounts/${this.accountId}/positions/${position.symbol}/close`,
         {
-          [`${side}`]: {}
+          [`${side}`]: {},
         }
       );
       return {
         success: true,
-        result: response.data
+        result: response.data,
       };
     } catch (error) {
       const detail = error.response?.data || error.message;
@@ -150,8 +150,8 @@ class OandaConnector extends BaseBrokerConnector {
     try {
       const response = await this.http.get(`/v3/accounts/${this.accountId}/transactions`, {
         params: {
-          type: 'ORDER_FILL'
-        }
+          type: 'ORDER_FILL',
+        },
       });
       return response.data?.transactions || [];
     } catch (error) {

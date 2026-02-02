@@ -17,7 +17,7 @@ async function startEphemeralServer(app) {
   }
   return {
     server,
-    baseUrl: `http://127.0.0.1:${port}`
+    baseUrl: `http://127.0.0.1:${port}`,
   };
 }
 
@@ -25,7 +25,7 @@ function createLogger() {
   return {
     info() {},
     warn() {},
-    error() {}
+    error() {},
   };
 }
 
@@ -50,10 +50,10 @@ describe('feature routes (unit)', () => {
       '/api',
       featureRoutes({
         tradingEngine: {
-          config: { riskCommandCenter: { enabled: false } }
+          config: { riskCommandCenter: { enabled: false } },
         },
         logger: createLogger(),
-        requireBasicRead: (req, res, next) => next()
+        requireBasicRead: (req, res, next) => next(),
       })
     );
 
@@ -80,10 +80,10 @@ describe('feature routes (unit)', () => {
       featureRoutes({
         tradingEngine: {
           config: { riskCommandCenter: { enabled: true } },
-          getRiskCommandSnapshot: () => ({ ok: true })
+          getRiskCommandSnapshot: () => ({ ok: true }),
         },
         logger: createLogger(),
-        requireBasicRead: (req, res, next) => next()
+        requireBasicRead: (req, res, next) => next(),
       })
     );
 

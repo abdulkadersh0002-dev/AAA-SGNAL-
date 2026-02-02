@@ -27,8 +27,8 @@ test('WebSocket broadcast flow', async (t) => {
   const server = await startTestServer({
     enableWebSockets: true,
     env: {
-      PROVIDER_AVAILABILITY_BROADCAST_INTERVAL_MS: '200'
-    }
+      PROVIDER_AVAILABILITY_BROADCAST_INTERVAL_MS: '200',
+    },
   });
 
   t.after(async () => {
@@ -57,9 +57,9 @@ test('WebSocket broadcast flow', async (t) => {
     const response = await fetch(server.url('/api/signal/generate'), {
       method: 'POST',
       headers: {
-        'content-type': 'application/json'
+        'content-type': 'application/json',
       },
-      body: JSON.stringify({ pair: 'EURUSD', broadcast: true })
+      body: JSON.stringify({ pair: 'EURUSD', broadcast: true }),
     });
     assert.equal(response.status, 200);
 

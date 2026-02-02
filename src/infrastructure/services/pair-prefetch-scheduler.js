@@ -12,20 +12,20 @@ const DEFAULT_OPTIONS = {
     M15: 240,
     H1: 260,
     H4: 320,
-    D1: 400
+    D1: 400,
   },
   cadenceMinutes: {
     M5: 6,
     M15: 12,
     H1: 45,
     H4: 180,
-    D1: 480
+    D1: 480,
   },
   volatilityTiers: {
     high: 0.6,
     medium: 1,
-    low: 1.4
-  }
+    low: 1.4,
+  },
 };
 
 const MINUTE_IN_MS = 60000;
@@ -44,10 +44,10 @@ export default class PairPrefetchScheduler {
       ...options,
       barsPerTimeframe: {
         ...DEFAULT_OPTIONS.barsPerTimeframe,
-        ...(options.barsPerTimeframe || {})
+        ...(options.barsPerTimeframe || {}),
       },
       cadenceMinutes: { ...DEFAULT_OPTIONS.cadenceMinutes, ...(options.cadenceMinutes || {}) },
-      volatilityTiers: { ...DEFAULT_OPTIONS.volatilityTiers, ...(options.volatilityTiers || {}) }
+      volatilityTiers: { ...DEFAULT_OPTIONS.volatilityTiers, ...(options.volatilityTiers || {}) },
     };
 
     this.timer = null;
@@ -134,7 +134,7 @@ export default class PairPrefetchScheduler {
           {
             pair: task.pair,
             timeframe: task.timeframe,
-            provider: primaryProvider
+            provider: primaryProvider,
           },
           'Prefetch skipped due to provider quota pressure'
         );
@@ -186,7 +186,7 @@ export default class PairPrefetchScheduler {
           bars: this.options.barsPerTimeframe[timeframe] || 240,
           priority,
           key,
-          metadata: entry
+          metadata: entry,
         });
       }
     }
@@ -198,7 +198,7 @@ export default class PairPrefetchScheduler {
     try {
       await this.priceDataFetcher.fetchPriceData(task.pair, task.timeframe, task.bars, {
         bypassCache: true,
-        purpose: 'refresh'
+        purpose: 'refresh',
       });
       this.lastPrefetch.set(task.key, now);
       recordPrefetchResult(task.pair, task.timeframe, 'success');

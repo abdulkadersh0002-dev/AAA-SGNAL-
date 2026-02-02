@@ -33,7 +33,7 @@ export function createHttpApp({
   broadcast,
   metricsRegistry,
   providerAvailabilityState,
-  runtimeSummary
+  runtimeSummary,
 }) {
   const app = express();
 
@@ -41,7 +41,7 @@ export function createHttpApp({
     server: serverConfig,
     apiAuth: apiAuthConfig,
     brokerRouting: brokerRoutingConfig,
-    security: securityConfig
+    security: securityConfig,
   } = appConfig;
 
   const allowPublicEaBridge = securityConfig?.allowPublicEaBridge === true;
@@ -84,7 +84,7 @@ export function createHttpApp({
         }
         return callback(null, allowedOrigins.includes(origin));
       },
-      credentials: securityConfig?.cors?.allowCredentials === true
+      credentials: securityConfig?.cors?.allowCredentials === true,
     })
   );
   app.use(requestIdMiddleware());
@@ -112,8 +112,8 @@ export function createHttpApp({
       { method: 'GET', path: /^\/api\/health\/heartbeat(\/.*)?$/ },
       { method: 'GET', path: /^\/metrics$/ },
       { path: /^\/api\/client(\/.*)?$/ },
-      ...(allowPublicEaBridge ? [{ path: /^\/api\/broker\/bridge(\/.*)?$/ }] : [])
-    ]
+      ...(allowPublicEaBridge ? [{ path: /^\/api\/broker\/bridge(\/.*)?$/ }] : []),
+    ],
   });
 
   const requireBasicRead = apiAuth.requireAnyRole(['read.basic', 'admin']);
@@ -135,14 +135,14 @@ export function createHttpApp({
     return res.status(403).json({
       success: false,
       error: 'Trade execution is disabled (TRADING_SCOPE=signals)',
-      ...(_requestId ? { requestId: _requestId } : null)
+      ...(_requestId ? { requestId: _requestId } : null),
     });
   };
 
   const sensitiveRateLimiter = createRateLimiter({
     windowMs: 60 * 1000,
     max: 20,
-    logger
+    logger,
   });
 
   app.use('/api', apiAuth.authenticate);
@@ -157,7 +157,7 @@ export function createHttpApp({
       metricsRegistry,
       logger,
       providerAvailabilityState,
-      runtimeSummary
+      runtimeSummary,
     })
   );
 
@@ -174,7 +174,7 @@ export function createHttpApp({
       requireSignalsGenerate,
       requireTradeExecute: [requireExecutionScope, requireTradeExecute],
       requireTradeRead,
-      requireTradeClose: [requireExecutionScope, requireTradeClose]
+      requireTradeClose: [requireExecutionScope, requireTradeClose],
     })
   );
 
@@ -184,7 +184,7 @@ export function createHttpApp({
       tradingEngine,
       eaBridgeService,
       logger,
-      requireSignalsGenerate
+      requireSignalsGenerate,
     })
   );
 
@@ -199,9 +199,9 @@ export function createHttpApp({
       requireAutomationControl: [
         requireExecutionScope,
         sensitiveRateLimiter,
-        requireAutomationControl
+        requireAutomationControl,
       ],
-      requireBasicRead
+      requireBasicRead,
     })
   );
 
@@ -213,7 +213,7 @@ export function createHttpApp({
       auditLogger,
       logger,
       requireConfigRead,
-      requireConfigWrite: [sensitiveRateLimiter, requireConfigWrite]
+      requireConfigWrite: [sensitiveRateLimiter, requireConfigWrite],
     })
   );
 
@@ -226,7 +226,7 @@ export function createHttpApp({
       logger,
       config: { brokerRouting: brokerRoutingConfig },
       requireBrokerRead,
-      requireBrokerWrite: [requireExecutionScope, sensitiveRateLimiter, requireBrokerWrite]
+      requireBrokerWrite: [requireExecutionScope, sensitiveRateLimiter, requireBrokerWrite],
     })
   );
 
@@ -235,7 +235,7 @@ export function createHttpApp({
     featureRoutes({
       tradingEngine,
       logger,
-      requireBasicRead
+      requireBasicRead,
     })
   );
 
@@ -250,7 +250,7 @@ export function createHttpApp({
       auditLogger,
       logger,
       broadcast,
-      requireBrokerWrite: allowPublicEaBridge ? null : [sensitiveRateLimiter, requireBrokerWrite]
+      requireBrokerWrite: allowPublicEaBridge ? null : [sensitiveRateLimiter, requireBrokerWrite],
     })
   );
 
@@ -262,7 +262,7 @@ export function createHttpApp({
       logger,
       tradingEngine,
       tradeManager,
-      brokerRouter
+      brokerRouter,
     }).router
   );
 

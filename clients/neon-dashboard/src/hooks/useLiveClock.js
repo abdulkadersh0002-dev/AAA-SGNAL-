@@ -9,7 +9,7 @@ const defaultFormatter = (date) =>
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-    hour12: false
+    hour12: false,
   });
 
 export const useLiveClock = (formatter = defaultFormatter, intervalMs = 1000) => {

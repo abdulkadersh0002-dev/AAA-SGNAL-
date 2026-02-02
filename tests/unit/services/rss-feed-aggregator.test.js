@@ -15,22 +15,22 @@ const createMockAggregator = () => {
       name: 'Reuters',
       url: ['https://www.reuters.com/feed/rss/businessNews'],
       category: 'macro',
-      priority: 1
+      priority: 1,
     },
     {
       id: 'bloomberg-markets',
       name: 'Bloomberg Markets',
       url: ['https://news.google.com/rss/search?q=bloomberg+markets'],
       category: 'markets',
-      priority: 1
+      priority: 1,
     },
     {
       id: 'forexlive',
       name: 'ForexLive',
       url: ['https://www.forexlive.com/feed/news'],
       category: 'forex',
-      priority: 1
-    }
+      priority: 1,
+    },
   ];
 
   return {
@@ -72,7 +72,7 @@ const createMockAggregator = () => {
           headline: 'Federal Reserve signals rate decision',
           summary: 'The Federal Reserve is expected to make a key announcement.',
           timestamp: Date.now(),
-          url: 'https://reuters.com/article/1'
+          url: 'https://reuters.com/article/1',
         },
         {
           feedId: 'bloomberg-markets',
@@ -81,7 +81,7 @@ const createMockAggregator = () => {
           headline: 'EUR/USD trades near 1.09 level',
           summary: 'Currency markets see volatility amid economic data.',
           timestamp: Date.now() - 60000,
-          url: 'https://bloomberg.com/article/1'
+          url: 'https://bloomberg.com/article/1',
         },
         {
           feedId: 'forexlive',
@@ -90,8 +90,8 @@ const createMockAggregator = () => {
           headline: 'GBP/USD bounces from support',
           summary: 'Technical analysis shows key support levels holding.',
           timestamp: Date.now() - 120000,
-          url: 'https://forexlive.com/article/1'
-        }
+          url: 'https://forexlive.com/article/1',
+        },
       ];
 
       return mockItems
@@ -101,7 +101,7 @@ const createMockAggregator = () => {
 
     async fetchAll(options = {}) {
       return this.fetchFeeds(options);
-    }
+    },
   };
 };
 
@@ -172,7 +172,7 @@ describe('RSS Feed Aggregator', () => {
       const item = {
         headline: 'EUR/USD rises on Federal Reserve news',
         summary: 'Markets react to announcement',
-        source: 'Reuters'
+        source: 'Reuters',
       };
 
       const matches = aggregator.matchesKeywords(item, ['eur', 'federal']);
@@ -183,7 +183,7 @@ describe('RSS Feed Aggregator', () => {
       const item = {
         headline: 'Market update',
         summary: 'USD/JPY falls as dollar weakens',
-        source: 'Bloomberg'
+        source: 'Bloomberg',
       };
 
       const matches = aggregator.matchesKeywords(item, ['dollar']);
@@ -201,7 +201,7 @@ describe('RSS Feed Aggregator', () => {
       const item = {
         headline: 'Crypto news',
         summary: 'Bitcoin rises',
-        source: 'CoinDesk'
+        source: 'CoinDesk',
       };
 
       const matches = aggregator.matchesKeywords(item, ['forex', 'eur']);
@@ -226,7 +226,7 @@ describe('RSS Feed Aggregator', () => {
     it('should filter by keywords', async () => {
       const items = await aggregator.fetchAll({
         maxItems: 10,
-        keywords: ['eur', 'gbp']
+        keywords: ['eur', 'gbp'],
       });
 
       for (const item of items) {
@@ -261,7 +261,10 @@ describe('RSS Feed Aggregator', () => {
 
   describe('External Provider Calls (Disabled)', () => {
     it('should not call Polygon/Finnhub even if apiKeys passed', async () => {
-      const aggregator = new RssFeedAggregator({ feeds: [], apiKeys: { polygon: 'live-key', finnhub: 'live-key' } });
+      const aggregator = new RssFeedAggregator({
+        feeds: [],
+        apiKeys: { polygon: 'live-key', finnhub: 'live-key' },
+      });
       const originalAxiosGet = axios.get;
 
       axios.get = async (url, config) => {

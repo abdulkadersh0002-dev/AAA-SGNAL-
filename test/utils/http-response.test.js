@@ -5,7 +5,7 @@ import {
   badRequest,
   notFound,
   serviceUnavailable,
-  serverError
+  serverError,
 } from '../../src/utils/http-response.js';
 
 describe('HTTP Response Utilities', () => {
@@ -25,7 +25,7 @@ describe('HTTP Response Utilities', () => {
         return { statusCode, jsonData };
       },
       getStatus: () => statusCode,
-      getJson: () => jsonData
+      getJson: () => jsonData,
     };
   };
 

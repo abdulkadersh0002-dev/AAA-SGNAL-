@@ -9,14 +9,14 @@ function createAnalyzer() {
       aggregator: {
         async fetch() {
           return [];
-        }
+        },
       },
       languageProcessor: { analyzeText: () => ({}) },
       calendarService: {
         async fetch() {
           return [];
-        }
-      }
+        },
+      },
     }
   );
 }
@@ -26,7 +26,7 @@ test('calculateSentiment weights article scores by impact', () => {
   const news = [
     { score: 3, impact: 2 },
     { score: -1, impact: 1 },
-    { score: 0.5, impact: 0.5 }
+    { score: 0.5, impact: 0.5 },
   ];
 
   const sentiment = analyzer.calculateSentiment(news);
@@ -51,7 +51,7 @@ test('calculateConfidence grows with news volume, events, sources, and sentiment
     quoteNews: new Array(3).fill({}),
     calendar: [{ impact: 1 }, { impact: 2 }],
     sources: { aggregator: true, sentimentFeeds: true, calendar: true, rss: false },
-    sentiment: { overall: 12 }
+    sentiment: { overall: 12 },
   });
 
   assert.ok(confidence > 0);

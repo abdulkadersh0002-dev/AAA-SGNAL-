@@ -37,14 +37,14 @@ npm run dev
 
 ### Available Commands
 
-| Command | Description |
-|---------|-------------|
-| `npm run dev` | 🚀 Start backend + dashboard (recommended) |
-| `npm start` | Start backend only |
-| `npm run dev:backend` | Start backend with auto-reload |
-| `npm run dev:dashboard` | Start dashboard only |
-| `npm test` | Run all tests |
-| `npm run lint` | Check code quality |
+| Command                 | Description                                |
+| ----------------------- | ------------------------------------------ |
+| `npm run dev`           | 🚀 Start backend + dashboard (recommended) |
+| `npm start`             | Start backend only                         |
+| `npm run dev:backend`   | Start backend with auto-reload             |
+| `npm run dev:dashboard` | Start dashboard only                       |
+| `npm test`              | Run all tests                              |
+| `npm run lint`          | Check code quality                         |
 
 ### Verify Everything Works
 
@@ -58,6 +58,7 @@ Open these URLs in your browser:
 ### Troubleshooting
 
 **Port already in use?**
+
 ```bash
 # Edit .env and change:
 PORT=4101           # Change to 4102, 4103, etc.
@@ -65,11 +66,13 @@ DASHBOARD_PORT=4173 # Change to 4174, 4175, etc.
 ```
 
 **Backend fails to start?**
+
 - Check your `.env` file configuration
 - Ensure Node.js version is 20 or higher: `node --version`
 - Check logs for error messages
 
 **Dashboard not loading?**
+
 - Wait 30 seconds after starting
 - Dashboard takes longer to compile on first run
 - Check console output for compilation progress
@@ -113,14 +116,14 @@ npm run dev
 
 ### الأوامر المتاحة
 
-| الأمر | الوصف |
-|------|-------|
-| `npm run dev` | 🚀 تشغيل الباكند + الداشبورد (موصى به) |
-| `npm start` | تشغيل الباكند فقط |
-| `npm run dev:backend` | تشغيل الباكند مع إعادة التحميل التلقائي |
-| `npm run dev:dashboard` | تشغيل الداشبورد فقط |
-| `npm test` | تشغيل جميع الاختبارات |
-| `npm run lint` | فحص جودة الكود |
+| الأمر                   | الوصف                                   |
+| ----------------------- | --------------------------------------- |
+| `npm run dev`           | 🚀 تشغيل الباكند + الداشبورد (موصى به)  |
+| `npm start`             | تشغيل الباكند فقط                       |
+| `npm run dev:backend`   | تشغيل الباكند مع إعادة التحميل التلقائي |
+| `npm run dev:dashboard` | تشغيل الداشبورد فقط                     |
+| `npm test`              | تشغيل جميع الاختبارات                   |
+| `npm run lint`          | فحص جودة الكود                          |
 
 ### التحقق من عمل كل شيء
 
@@ -134,6 +137,7 @@ npm run dev
 ### حل المشاكل
 
 **المنفذ مستخدم بالفعل؟**
+
 ```bash
 # عدّل ملف .env وغيّر:
 PORT=4101           # غيّر إلى 4102، 4103، إلخ.
@@ -141,11 +145,13 @@ DASHBOARD_PORT=4173 # غيّر إلى 4174، 4175، إلخ.
 ```
 
 **الباكند لا يبدأ؟**
+
 - تحقق من إعدادات ملف `.env`
 - تأكد من أن إصدار Node.js هو 20 أو أعلى: `node --version`
 - تحقق من رسائل الخطأ في السجلات
 
 **الداشبورد لا يفتح؟**
+
 - انتظر 30 ثانية بعد البدء
 - الداشبورد يأخذ وقتاً أطول للتجميع في أول مرة
 - تحقق من مخرجات الكونسول لرؤية تقدم التجميع

@@ -4,7 +4,7 @@ import {
   cumulativeSum,
   maxDrawdown,
   sharpeRatio,
-  sum
+  sum,
 } from './math-helpers.js';
 import { toFixedNumber } from './utils.js';
 
@@ -19,7 +19,7 @@ export function buildPerformanceSummary(trades = [], options = {}) {
       sharpe: 0,
       profitFactor: 0,
       maxDrawdownPct: 0,
-      expectancyPct: 0
+      expectancyPct: 0,
     };
   }
 
@@ -52,7 +52,7 @@ export function buildPerformanceSummary(trades = [], options = {}) {
     sharpe: toFixedNumber(sharpeRatio(returns, options.riskFreeRate ?? 0), 3),
     profitFactor: toFixedNumber(profitFactor, 3),
     maxDrawdownPct: toFixedNumber(Math.abs(maxDdRaw) * 100, 3),
-    expectancyPct: toFixedNumber(expectancyPct * 100, 3)
+    expectancyPct: toFixedNumber(expectancyPct * 100, 3),
   };
 }
 

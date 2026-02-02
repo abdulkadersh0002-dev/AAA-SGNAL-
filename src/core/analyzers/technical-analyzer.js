@@ -72,7 +72,7 @@ class TechnicalAnalyzer {
         overallScore: 0,
         trend: 'neutral',
         strength: 0,
-        signals: []
+        signals: [],
       };
 
       const availabilityByTimeframe = {};
@@ -85,7 +85,7 @@ class TechnicalAnalyzer {
           normalizedQuality: 1,
           availableProviders: ['eaBridge'],
           blockedProviders: [],
-          availabilityDetails: []
+          availabilityDetails: [],
         };
 
         const series =
@@ -145,7 +145,7 @@ class TechnicalAnalyzer {
         overallScore: 0,
         trend: 'neutral',
         strength: 0,
-        signals: []
+        signals: [],
       };
 
       // Analyze each timeframe
@@ -156,7 +156,7 @@ class TechnicalAnalyzer {
           availabilityByTimeframe[tf] = {
             timeframe: tf,
             inspectedAt: Date.now(),
-            ...availabilityDetail
+            ...availabilityDetail,
           };
         }
 
@@ -213,7 +213,7 @@ class TechnicalAnalyzer {
       return this.priceDataFetcher.isDataFetchViable(timeframe, {
         includeDetails: true,
         requireHealthyQuality: true,
-        qualityThreshold: this.availabilityQualityThreshold
+        qualityThreshold: this.availabilityQualityThreshold,
       });
     } catch (error) {
       this.logger?.debug?.({ err: error, timeframe }, 'Availability evaluation failed');
@@ -230,7 +230,7 @@ class TechnicalAnalyzer {
       : Date.now();
     frame.dataAvailability = {
       ...availabilityDetail,
-      inspectedAt
+      inspectedAt,
     };
     frame.availabilityStatus = frame.dataAvailability.viable === false ? 'degraded' : 'available';
     frame.availabilityReasons = Array.isArray(frame.dataAvailability.reasons)
@@ -249,7 +249,7 @@ class TechnicalAnalyzer {
       if (detail) {
         entries.push({
           ...detail,
-          timeframe: detail.timeframe || tf
+          timeframe: detail.timeframe || tf,
         });
       }
     }
@@ -295,7 +295,7 @@ class TechnicalAnalyzer {
       timeframes: entries.reduce((acc, entry) => {
         acc[entry.timeframe] = entry;
         return acc;
-      }, {})
+      }, {}),
     };
   }
 
@@ -317,7 +317,7 @@ class TechnicalAnalyzer {
       lastPrice: null,
       latestCandle: null,
       priceChangePercent: 0,
-      direction: 'NEUTRAL'
+      direction: 'NEUTRAL',
     };
 
     // Calculate all indicators
@@ -405,7 +405,7 @@ class TechnicalAnalyzer {
       }
       return {
         high: Math.max(...highs),
-        low: Math.min(...lows)
+        low: Math.min(...lows),
       };
     };
 
@@ -444,7 +444,7 @@ class TechnicalAnalyzer {
       s1,
       r2,
       s2,
-      basedOn: prev?.time ?? null
+      basedOn: prev?.time ?? null,
     };
   }
 
@@ -504,7 +504,7 @@ class TechnicalAnalyzer {
         high,
         low,
         close,
-        volume: Math.random() * 10000
+        volume: Math.random() * 10000,
       });
     }
 
@@ -545,7 +545,7 @@ class TechnicalAnalyzer {
       result[period] = {
         value: sma,
         signal: currentPrice > sma ? 'bullish' : 'bearish',
-        distance: ((currentPrice - sma) / sma) * 100
+        distance: ((currentPrice - sma) / sma) * 100,
       };
     });
 
@@ -576,7 +576,7 @@ class TechnicalAnalyzer {
       result[period] = {
         value: ema,
         signal: currentPrice > ema ? 'bullish' : 'bearish',
-        distance: ((currentPrice - ema) / ema) * 100
+        distance: ((currentPrice - ema) / ema) * 100,
       };
     });
 
@@ -621,7 +621,7 @@ class TechnicalAnalyzer {
     return {
       value: rsi,
       signal: rsi > 70 ? 'overbought' : rsi < 30 ? 'oversold' : 'neutral',
-      trend: rsi > 50 ? 'bullish' : 'bearish'
+      trend: rsi > 50 ? 'bullish' : 'bearish',
     };
   }
 
@@ -643,7 +643,7 @@ class TechnicalAnalyzer {
       signal: signalLine,
       histogram,
       crossover: histogram > 0 ? 'bullish' : 'bearish',
-      strength: Math.abs(histogram)
+      strength: Math.abs(histogram),
     };
   }
 
@@ -675,7 +675,7 @@ class TechnicalAnalyzer {
       lower,
       bandwidth,
       position,
-      signal: position > 80 ? 'overbought' : position < 20 ? 'oversold' : 'neutral'
+      signal: position > 80 ? 'overbought' : position < 20 ? 'oversold' : 'neutral',
     };
   }
 
@@ -731,7 +731,7 @@ class TechnicalAnalyzer {
       k,
       d,
       signal: k > 80 ? 'overbought' : k < 20 ? 'oversold' : 'neutral',
-      crossover: k > d ? 'bullish' : 'bearish'
+      crossover: k > d ? 'bullish' : 'bearish',
     };
   }
 
@@ -759,7 +759,7 @@ class TechnicalAnalyzer {
     return {
       value: atr,
       percentage: (atr / currentPrice) * 100,
-      volatility: atr > currentPrice * 0.01 ? 'high' : 'low'
+      volatility: atr > currentPrice * 0.01 ? 'high' : 'low',
     };
   }
 
@@ -802,7 +802,7 @@ class TechnicalAnalyzer {
       plusDI,
       minusDI,
       trend: adx > 25 ? 'strong' : adx > 20 ? 'moderate' : 'weak',
-      direction: plusDI > minusDI ? 'bullish' : 'bearish'
+      direction: plusDI > minusDI ? 'bullish' : 'bearish',
     };
   }
 
@@ -838,7 +838,7 @@ class TechnicalAnalyzer {
           : currentPrice < Math.min(senkouA, senkouB)
             ? 'bearish'
             : 'neutral',
-      cloudThickness: Math.abs(senkouA - senkouB)
+      cloudThickness: Math.abs(senkouA - senkouB),
     };
   }
 
@@ -862,7 +862,7 @@ class TechnicalAnalyzer {
       50.0: high - diff * 0.5,
       61.8: high - diff * 0.618,
       78.6: high - diff * 0.786,
-      100: low
+      100: low,
     };
 
     const currentPrice = data[data.length - 1].close;
@@ -881,7 +881,7 @@ class TechnicalAnalyzer {
       levels,
       nearest: nearestLevel,
       high,
-      low
+      low,
     };
   }
 
@@ -1151,7 +1151,7 @@ class TechnicalAnalyzer {
     return {
       resistance: resistance.sort((a, b) => b - a),
       support: support.sort((a, b) => b - a),
-      currentPrice: data[data.length - 1].close
+      currentPrice: data[data.length - 1].close,
     };
   }
 
@@ -1358,7 +1358,7 @@ class TechnicalAnalyzer {
       lastPrice: null,
       latestCandle: null,
       priceChangePercent: 0,
-      direction: 'NEUTRAL'
+      direction: 'NEUTRAL',
     };
   }
 
@@ -1396,7 +1396,7 @@ class TechnicalAnalyzer {
           confidence: Math.min(Math.abs(analysis.score), 95),
           price: analysis.lastPrice,
           direction: analysis.direction,
-          patterns: analysis.patterns.map((p) => p.name)
+          patterns: analysis.patterns.map((p) => p.name),
         });
       }
     });
@@ -1465,7 +1465,7 @@ class TechnicalAnalyzer {
       slope: Number(slopePct.toFixed(4)),
       slopeAngle: Number(slopeAngle.toFixed(2)),
       momentum: Number(momentum.toFixed(2)),
-      sampleSize: recent.length
+      sampleSize: recent.length,
     };
   }
 
@@ -1516,7 +1516,7 @@ class TechnicalAnalyzer {
           start: prev.time,
           end: curr.time,
           count: 1,
-          avgMagnitude: magnitude
+          avgMagnitude: magnitude,
         };
       } else {
         current.end = curr.time;
@@ -1543,7 +1543,7 @@ class TechnicalAnalyzer {
       atrPercentage: Number((atrPerc * 100).toFixed(3)),
       range,
       volatilityScore: Number((volScore * 100).toFixed(1)),
-      clusters
+      clusters,
     };
   }
 
@@ -1608,9 +1608,9 @@ class TechnicalAnalyzer {
             price: { previous: first.price, current: second.price },
             oscillator: {
               previous: Number(rsiPrev.toFixed(2)),
-              current: Number(rsiCurr.toFixed(2))
+              current: Number(rsiCurr.toFixed(2)),
             },
-            occurredAt: { previous: first.time, current: second.time }
+            occurredAt: { previous: first.time, current: second.time },
           });
         }
         if (
@@ -1626,9 +1626,9 @@ class TechnicalAnalyzer {
             price: { previous: first.price, current: second.price },
             oscillator: {
               previous: Number(macdPrev.toFixed(5)),
-              current: Number(macdCurr.toFixed(5))
+              current: Number(macdCurr.toFixed(5)),
             },
-            occurredAt: { previous: first.time, current: second.time }
+            occurredAt: { previous: first.time, current: second.time },
           });
         }
       }
@@ -1643,9 +1643,9 @@ class TechnicalAnalyzer {
             price: { previous: first.price, current: second.price },
             oscillator: {
               previous: Number(rsiPrev.toFixed(2)),
-              current: Number(rsiCurr.toFixed(2))
+              current: Number(rsiCurr.toFixed(2)),
             },
-            occurredAt: { previous: first.time, current: second.time }
+            occurredAt: { previous: first.time, current: second.time },
           });
         }
         if (
@@ -1661,9 +1661,9 @@ class TechnicalAnalyzer {
             price: { previous: first.price, current: second.price },
             oscillator: {
               previous: Number(macdPrev.toFixed(5)),
-              current: Number(macdCurr.toFixed(5))
+              current: Number(macdCurr.toFixed(5)),
             },
-            occurredAt: { previous: first.time, current: second.time }
+            occurredAt: { previous: first.time, current: second.time },
           });
         }
       }
@@ -1731,7 +1731,7 @@ class TechnicalAnalyzer {
       volumeRate: Number(volumeRate.toFixed(2)),
       volumeZScore: Number(zScore.toFixed(2)),
       priceDeltaPct: Number((priceDeltaPct * 100).toFixed(2)),
-      sampleSize: window.length
+      sampleSize: window.length,
     };
   }
 
@@ -1825,7 +1825,7 @@ class TechnicalAnalyzer {
         time: data[i].time,
         value: Number(macdValue.toFixed(6)),
         signal: signal !== null ? Number(signal.toFixed(6)) : null,
-        histogram: histogram !== null ? Number(histogram.toFixed(6)) : null
+        histogram: histogram !== null ? Number(histogram.toFixed(6)) : null,
       });
     }
 
@@ -1938,7 +1938,7 @@ class TechnicalAnalyzer {
       volumeRate: analysis.volumePressure?.volumeRate ?? null,
       priceDeltaPct: analysis.volumePressure?.priceDeltaPct ?? null,
       patternCount: Array.isArray(analysis.patterns) ? analysis.patterns.length : 0,
-      divergenceCount: Array.isArray(analysis.divergences) ? analysis.divergences.length : 0
+      divergenceCount: Array.isArray(analysis.divergences) ? analysis.divergences.length : 0,
     };
   }
 
@@ -2000,7 +2000,7 @@ class TechnicalAnalyzer {
         bandwidth,
         slope,
         slopeAngle,
-        momentum
+        momentum,
       }));
 
     let state = 'transition';
@@ -2016,7 +2016,7 @@ class TechnicalAnalyzer {
       averageBandwidth: avgBandwidth,
       averageSlope: avgSlope,
       averageSlopeAngle: avgSlopeAngle,
-      timeframes: summaryEntries
+      timeframes: summaryEntries,
     };
   }
 
@@ -2064,7 +2064,7 @@ class TechnicalAnalyzer {
         std,
         atr: current,
         volatilityScore,
-        range
+        range,
       }));
 
     return {
@@ -2072,7 +2072,7 @@ class TechnicalAnalyzer {
       averageATR: averageAtr,
       averageStd: averageStd,
       averageScore,
-      timeframes: summaryEntries
+      timeframes: summaryEntries,
     };
   }
 
@@ -2091,7 +2091,7 @@ class TechnicalAnalyzer {
           confidence: div.confidence,
           price: div.price || null,
           oscillator: div.oscillator || null,
-          occurredAt: div.occurredAt || null
+          occurredAt: div.occurredAt || null,
         };
         if (div.type === 'bullish') {
           bullish.push(entry);
@@ -2104,7 +2104,7 @@ class TechnicalAnalyzer {
     return {
       bullish: bullish.slice(0, 5),
       bearish: bearish.slice(0, 5),
-      total: bullish.length + bearish.length
+      total: bullish.length + bearish.length,
     };
   }
 
@@ -2141,7 +2141,7 @@ class TechnicalAnalyzer {
         pressure,
         volumeRate,
         volumeZScore,
-        priceDeltaPct
+        priceDeltaPct,
       }));
 
     return {
@@ -2153,7 +2153,7 @@ class TechnicalAnalyzer {
       averageVolumeZScore: avgZScore.length
         ? Number((avgZScore.reduce((a, b) => a + b, 0) / avgZScore.length).toFixed(2))
         : null,
-      timeframes: summaryEntries
+      timeframes: summaryEntries,
     };
   }
 
@@ -2186,7 +2186,7 @@ class TechnicalAnalyzer {
       M30: 250,
       H1: 200,
       H4: 150,
-      D1: 100
+      D1: 100,
     };
     return counts[timeframe] || 200;
   }
@@ -2202,7 +2202,7 @@ class TechnicalAnalyzer {
       M30: 1800000,
       H1: 3600000,
       H4: 14400000,
-      D1: 86400000
+      D1: 86400000,
     };
     return ms[timeframe] || 3600000;
   }
@@ -2218,7 +2218,7 @@ class TechnicalAnalyzer {
       overallScore: 0,
       trend: 'neutral',
       strength: 0,
-      signals: []
+      signals: [],
     };
   }
 
@@ -2236,7 +2236,7 @@ class TechnicalAnalyzer {
   setCached(key, data) {
     this.cache.set(key, {
       data,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     });
   }
 }

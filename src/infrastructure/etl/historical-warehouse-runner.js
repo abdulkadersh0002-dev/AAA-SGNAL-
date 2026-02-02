@@ -11,7 +11,7 @@ export class HistoricalWarehouseRunner {
   async run(options = {}) {
     const dryRun = options.dryRun ?? this.config.dryRun ?? false;
     const sharedOptions = {
-      dryRun
+      dryRun,
     };
 
     const summary = {
@@ -22,14 +22,14 @@ export class HistoricalWarehouseRunner {
       priceResults: [],
       macroResults: [],
       newsResults: [],
-      featureNormalization: null
+      featureNormalization: null,
     };
 
     if (Array.isArray(this.config.prices) && this.config.prices.length > 0) {
       summary.priceSources = this.config.prices.length;
       summary.priceResults = await ingestHistoricalPrices(this.config.prices, {
         ...sharedOptions,
-        chunkSize: this.config.priceChunkSize || options.priceChunkSize
+        chunkSize: this.config.priceChunkSize || options.priceChunkSize,
       });
     }
 
@@ -37,7 +37,7 @@ export class HistoricalWarehouseRunner {
       summary.macroSources = this.config.macro.length;
       summary.macroResults = await ingestMacroEvents(this.config.macro, {
         ...sharedOptions,
-        chunkSize: this.config.macroChunkSize || options.macroChunkSize
+        chunkSize: this.config.macroChunkSize || options.macroChunkSize,
       });
     }
 
@@ -45,7 +45,7 @@ export class HistoricalWarehouseRunner {
       summary.newsSources = this.config.news.length;
       summary.newsResults = await ingestHistoricalNews(this.config.news, {
         ...sharedOptions,
-        chunkSize: this.config.newsChunkSize || options.newsChunkSize
+        chunkSize: this.config.newsChunkSize || options.newsChunkSize,
       });
     }
 
@@ -54,7 +54,7 @@ export class HistoricalWarehouseRunner {
         dryRun,
         batchSize: this.config.normalizeFeatureStore?.batchSize || options.normalizeBatchSize,
         since: this.config.normalizeFeatureStore?.since || options.normalizeSince,
-        until: this.config.normalizeFeatureStore?.until || options.normalizeUntil
+        until: this.config.normalizeFeatureStore?.until || options.normalizeUntil,
       });
     }
 

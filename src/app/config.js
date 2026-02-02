@@ -6,7 +6,7 @@ import {
   parseFloatSafe,
   parseListSafe,
   parseJsonSafe,
-  normalizeTradingScope
+  normalizeTradingScope,
 } from './env-utils.js';
 
 const envSchema = z
@@ -22,7 +22,7 @@ const envSchema = z
     REQUEST_JSON_LIMIT: z.preprocess(
       (value) => (value === undefined || value === null || value === '' ? undefined : value),
       z.string().default('5mb')
-    )
+    ),
   })
   .passthrough();
 
@@ -32,7 +32,7 @@ export {
   parseFloatSafe,
   parseListSafe,
   parseJsonSafe,
-  normalizeTradingScope
+  normalizeTradingScope,
 };
 
 function buildPriceDataConfig(env) {
@@ -62,14 +62,14 @@ function buildPriceDataConfig(env) {
     rateLimitOverrides.twelveData = {
       ...(rateLimitOverrides.twelveData || {}),
       maxRequests: twelveDataMaxPerMinute,
-      windowMs: 60000
+      windowMs: 60000,
     };
   }
   const twelveDataCooldown = parseIntSafe(env.PRICE_PROVIDER_TWELVEDATA_COOLDOWN_MS);
   if (Number.isFinite(twelveDataCooldown) && twelveDataCooldown > 0) {
     rateLimitOverrides.twelveData = {
       ...(rateLimitOverrides.twelveData || {}),
-      cooldownMs: twelveDataCooldown
+      cooldownMs: twelveDataCooldown,
     };
   }
 
@@ -78,14 +78,14 @@ function buildPriceDataConfig(env) {
     rateLimitOverrides.alphaVantage = {
       ...(rateLimitOverrides.alphaVantage || {}),
       maxRequests: alphaVantageMaxPerDay,
-      windowMs: 86400000
+      windowMs: 86400000,
     };
   }
   const alphaVantageCooldown = parseIntSafe(env.PRICE_PROVIDER_ALPHAVANTAGE_COOLDOWN_MS);
   if (Number.isFinite(alphaVantageCooldown) && alphaVantageCooldown > 0) {
     rateLimitOverrides.alphaVantage = {
       ...(rateLimitOverrides.alphaVantage || {}),
-      cooldownMs: alphaVantageCooldown
+      cooldownMs: alphaVantageCooldown,
     };
   }
 
@@ -94,14 +94,14 @@ function buildPriceDataConfig(env) {
     rateLimitOverrides.polygon = {
       ...(rateLimitOverrides.polygon || {}),
       maxRequests: polygonMaxPerMinute,
-      windowMs: 60000
+      windowMs: 60000,
     };
   }
   const polygonCooldown = parseIntSafe(env.PRICE_PROVIDER_POLYGON_COOLDOWN_MS);
   if (Number.isFinite(polygonCooldown) && polygonCooldown > 0) {
     rateLimitOverrides.polygon = {
       ...(rateLimitOverrides.polygon || {}),
-      cooldownMs: polygonCooldown
+      cooldownMs: polygonCooldown,
     };
   }
 
@@ -110,14 +110,14 @@ function buildPriceDataConfig(env) {
     rateLimitOverrides.finnhub = {
       ...(rateLimitOverrides.finnhub || {}),
       maxRequests: finnhubMaxPerMinute,
-      windowMs: 60000
+      windowMs: 60000,
     };
   }
   const finnhubCooldown = parseIntSafe(env.PRICE_PROVIDER_FINNHUB_COOLDOWN_MS);
   if (Number.isFinite(finnhubCooldown) && finnhubCooldown > 0) {
     rateLimitOverrides.finnhub = {
       ...(rateLimitOverrides.finnhub || {}),
-      cooldownMs: finnhubCooldown
+      cooldownMs: finnhubCooldown,
     };
   }
 
@@ -130,7 +130,7 @@ function buildPriceDataConfig(env) {
     maxAgeMultiplier: parseFloatSafe(env.PRICE_BARS_MAX_AGE_MULTIPLIER),
     gapMultiplier: parseFloatSafe(env.PRICE_BARS_GAP_MULTIPLIER),
     maxGapRatio: parseFloatSafe(env.PRICE_BARS_MAX_GAP_RATIO),
-    enforceQuality: parseBoolSafe(env.PRICE_BARS_ENFORCE_QUALITY, false)
+    enforceQuality: parseBoolSafe(env.PRICE_BARS_ENFORCE_QUALITY, false),
   };
 
   const priceDataConfig = {};
@@ -172,8 +172,8 @@ function buildAlertEmailConfig(env) {
       port: parseIntSafe(env.ALERT_SMTP_PORT) || 587,
       secure: String(env.ALERT_SMTP_SECURE || '').toLowerCase() === 'true',
       user: env.ALERT_SMTP_USER,
-      pass: env.ALERT_SMTP_PASSWORD
-    }
+      pass: env.ALERT_SMTP_PASSWORD,
+    },
   };
 }
 
@@ -217,7 +217,7 @@ function buildTradingEngineConfig(env, priceDataConfig) {
     enforceMomentumGuards: parseBoolSafe(env.AUTO_TRADING_ENFORCE_MOMENTUM_GUARDS, false),
     enforceHtfAlignment: parseBoolSafe(env.AUTO_TRADING_ENFORCE_HTF_ALIGNMENT, true),
     enforceFxAtrRange: parseBoolSafe(env.AUTO_TRADING_ENFORCE_FX_ATR_RANGE, true),
-    enforceCryptoVolSpike: parseBoolSafe(env.AUTO_TRADING_ENFORCE_CRYPTO_VOL_SPIKE, true)
+    enforceCryptoVolSpike: parseBoolSafe(env.AUTO_TRADING_ENFORCE_CRYPTO_VOL_SPIKE, true),
   };
 
   if (smartStrongPreset) {
@@ -300,7 +300,7 @@ function buildTradingEngineConfig(env, priceDataConfig) {
       // Background scanning cadence (realtime strong-signal execution is separate).
       monitoringIntervalMs: 10 * 1000,
       signalGenerationIntervalMs: 2 * 60 * 1000,
-      signalCheckIntervalMs: 30 * 1000
+      signalCheckIntervalMs: 30 * 1000,
     };
   }
 
@@ -315,7 +315,7 @@ function buildTradingEngineConfig(env, priceDataConfig) {
     autoReenable: parseBoolSafe(env.DATA_QUALITY_AUTO_REENABLE, true),
     autoReenableMinScore: parseFloatSafe(env.DATA_QUALITY_REENABLE_MIN_SCORE),
     autoReenableMinHealthyCount: parseIntSafe(env.DATA_QUALITY_REENABLE_MIN_HEALTHY),
-    autoReenableWindowMs: parseIntSafe(env.DATA_QUALITY_REENABLE_WINDOW_MS)
+    autoReenableWindowMs: parseIntSafe(env.DATA_QUALITY_REENABLE_WINDOW_MS),
   };
 
   if (!Number.isFinite(dataQualityGuard.autoReenableMinScore)) {
@@ -335,14 +335,14 @@ function buildTradingEngineConfig(env, priceDataConfig) {
     drawdownThresholdPct: parseFloatSafe(env.ALERT_DRAWDOWN_THRESHOLD_PCT),
     volatilityScoreThreshold: parseFloatSafe(env.ALERT_VOLATILITY_THRESHOLD),
     volatilityCooldownMs: parseIntSafe(env.ALERT_VOLATILITY_COOLDOWN_MS),
-    exposureWarningFraction: parseFloatSafe(env.ALERT_EXPOSURE_WARNING_FRACTION)
+    exposureWarningFraction: parseFloatSafe(env.ALERT_EXPOSURE_WARNING_FRACTION),
   };
 
   const persistence = {
     retryBaseMs: parseIntSafe(env.PERSISTENCE_RETRY_BASE_MS),
     retryMaxMs: parseIntSafe(env.PERSISTENCE_RETRY_MAX_MS),
     maxConsecutiveFailures: parseIntSafe(env.PERSISTENCE_MAX_FAILURES),
-    disablePermanently: parseBoolSafe(env.PERSISTENCE_DISABLE_PERMANENT, false)
+    disablePermanently: parseBoolSafe(env.PERSISTENCE_DISABLE_PERMANENT, false),
   };
 
   if (Object.values(persistence).some((value) => value != null && value !== false)) {
@@ -360,15 +360,15 @@ function buildTradingEngineConfig(env, priceDataConfig) {
       enabled: parseBoolSafe(env.RISK_CORRELATION_ENABLED, true),
       threshold: parseFloatSafe(env.RISK_CORRELATION_THRESHOLD) || 0.8,
       maxClusterSize: parseIntSafe(env.RISK_MAX_CORRELATED_POSITIONS) || 3,
-      matrix: correlationMatrix || undefined
+      matrix: correlationMatrix || undefined,
     },
     valueAtRisk: {
       enabled: parseBoolSafe(env.RISK_VAR_ENABLED, true),
       confidence: parseFloatSafe(env.RISK_VAR_CONFIDENCE) || 0.95,
       lookbackTrades: parseIntSafe(env.RISK_VAR_LOOKBACK) || 50,
       maxLossPct: parseFloatSafe(env.RISK_VAR_MAX_LOSS_PCT) || 6,
-      minSamples: parseIntSafe(env.RISK_VAR_MIN_SAMPLES) || 20
-    }
+      minSamples: parseIntSafe(env.RISK_VAR_MIN_SAMPLES) || 20,
+    },
   };
 
   return config;
@@ -387,29 +387,29 @@ function buildBrokerConfig(env) {
       enabled: oandaEnabled,
       accountMode: env.OANDA_ACCOUNT_MODE || 'demo',
       accessToken: env.OANDA_ACCESS_TOKEN,
-      accountId: env.OANDA_ACCOUNT_ID
+      accountId: env.OANDA_ACCOUNT_ID,
     },
     mt4: {
       enabled: mt4Enabled,
       accountMode: env.MT4_ACCOUNT_MODE || 'demo',
       baseUrl: env.MT4_BRIDGE_URL,
       apiKey: env.MT4_BRIDGE_TOKEN,
-      accountNumber: env.MT4_ACCOUNT_NUMBER
+      accountNumber: env.MT4_ACCOUNT_NUMBER,
     },
     mt5: {
       enabled: mt5Enabled,
       accountMode: env.MT5_ACCOUNT_MODE || 'demo',
       baseUrl: env.MT5_BRIDGE_URL,
       apiKey: env.MT5_BRIDGE_TOKEN,
-      accountNumber: env.MT5_ACCOUNT_NUMBER
+      accountNumber: env.MT5_ACCOUNT_NUMBER,
     },
     ibkr: {
       enabled: ibkrEnabled,
       accountMode: env.IBKR_ACCOUNT_MODE || 'demo',
       baseUrl: env.IBKR_GATEWAY_URL,
       accountId: env.IBKR_ACCOUNT_ID,
-      allowSelfSigned: parseBoolSafe(env.IBKR_ALLOW_SELF_SIGNED, true)
-    }
+      allowSelfSigned: parseBoolSafe(env.IBKR_ALLOW_SELF_SIGNED, true),
+    },
   };
 }
 
@@ -434,8 +434,8 @@ export function buildAppConfig(environment = process.env) {
       criticalRatio: parseFloatSafe(env.ALERT_PROVIDER_CRITICAL_RATIO),
       qualityWarningThreshold: parseFloatSafe(env.ALERT_PROVIDER_QUALITY_WARNING),
       qualityCriticalThreshold: parseFloatSafe(env.ALERT_PROVIDER_QUALITY_CRITICAL),
-      cooldownMs: parseIntSafe(env.ALERT_PROVIDER_COOLDOWN_MS) || 10 * 60 * 1000
-    }
+      cooldownMs: parseIntSafe(env.ALERT_PROVIDER_COOLDOWN_MS) || 10 * 60 * 1000,
+    },
   };
 
   const providerAvailabilityTimeframes = parseListSafe(env.PROVIDER_AVAILABILITY_TIMEFRAMES);
@@ -444,18 +444,19 @@ export function buildAppConfig(environment = process.env) {
   }
 
   const apiAuth = {
-    enabled: parseBoolSafe(env.ENABLE_API_AUTH, false) || parseBoolSafe(env.API_AUTH_ENABLED, false)
+    enabled:
+      parseBoolSafe(env.ENABLE_API_AUTH, false) || parseBoolSafe(env.API_AUTH_ENABLED, false),
   };
 
   const security = {
     apiAuth: {
-      allowQueryKey: parseBoolSafe(env.API_AUTH_ALLOW_QUERY_KEY, false)
+      allowQueryKey: parseBoolSafe(env.API_AUTH_ALLOW_QUERY_KEY, false),
     },
     cors: {
       allowedOrigins: parseListSafe(env.CORS_ALLOWED_ORIGINS),
-      allowCredentials: parseBoolSafe(env.CORS_ALLOW_CREDENTIALS, false)
+      allowCredentials: parseBoolSafe(env.CORS_ALLOW_CREDENTIALS, false),
     },
-    allowPublicEaBridge: parseBoolSafe(env.ALLOW_PUBLIC_EA_BRIDGE, false)
+    allowPublicEaBridge: parseBoolSafe(env.ALLOW_PUBLIC_EA_BRIDGE, false),
   };
 
   const priceData = buildPriceDataConfig(env);
@@ -464,21 +465,21 @@ export function buildAppConfig(environment = process.env) {
     brokerMeta: {
       symbolAllowlist: parseListSafe(env.BROKER_SYMBOL_ALLOWLIST),
       symbolMap: parseJsonSafe(env.BROKER_SYMBOL_MAP),
-      symbolSuffix: env.BROKER_SYMBOL_SUFFIX || ''
+      symbolSuffix: env.BROKER_SYMBOL_SUFFIX || '',
     },
     forexOpenUtc: env.MARKET_FOREX_OPEN_UTC || '21:00',
     forexCloseUtc: env.MARKET_FOREX_CLOSE_UTC || '21:00',
     rolloverStartUtc: env.MARKET_ROLLOVER_START_UTC || '21:55',
     rolloverEndUtc: env.MARKET_ROLLOVER_END_UTC || '22:10',
     blockRollover: parseBoolSafe(env.MARKET_BLOCK_ROLLOVER, true),
-    blockClosed: parseBoolSafe(env.MARKET_BLOCK_CLOSED, true)
+    blockClosed: parseBoolSafe(env.MARKET_BLOCK_CLOSED, true),
   };
 
   const alerting = {
     slackWebhookUrl: env.ALERT_SLACK_WEBHOOK || null,
     webhookUrls: env.ALERT_WEBHOOK_URLS || null,
     email: buildAlertEmailConfig(env),
-    dedupeMs: parseIntSafe(env.ALERT_DEDUPE_MS)
+    dedupeMs: parseIntSafe(env.ALERT_DEDUPE_MS),
   };
 
   const brokers = buildBrokerConfig(env);
@@ -490,7 +491,7 @@ export function buildAppConfig(environment = process.env) {
     retryAttempts: parseIntSafe(env.BROKER_RETRY_ATTEMPTS),
     retryBaseMs: parseIntSafe(env.BROKER_RETRY_BASE_MS),
     breakerThreshold: parseIntSafe(env.BROKER_BREAKER_THRESHOLD),
-    breakerCooldownMs: parseIntSafe(env.BROKER_BREAKER_COOLDOWN_MS)
+    breakerCooldownMs: parseIntSafe(env.BROKER_BREAKER_COOLDOWN_MS),
   };
 
   const eaOnlyModeEnabled = parseBoolSafe(env.EA_ONLY_MODE, true);
@@ -503,7 +504,7 @@ export function buildAppConfig(environment = process.env) {
     p95LatencyMs: parseIntSafe(env.TARGET_P95_LATENCY_MS),
     maxErrorRatePct: parseFloatSafe(env.TARGET_MAX_ERROR_RATE_PCT),
     maxDrawdownPct: parseFloatSafe(env.TARGET_MAX_DRAWDOWN_PCT),
-    maxSlippagePips: parseFloatSafe(env.TARGET_MAX_SLIPPAGE_PIPS)
+    maxSlippagePips: parseFloatSafe(env.TARGET_MAX_SLIPPAGE_PIPS),
   };
 
   const brokerMeta = {
@@ -511,33 +512,33 @@ export function buildAppConfig(environment = process.env) {
     symbolSuffix: env.BROKER_SYMBOL_SUFFIX || '',
     symbolAllowlist: parseListSafe(env.BROKER_SYMBOL_ALLOWLIST),
     metalsSymbols: parseListSafe(env.BROKER_METALS_SYMBOLS),
-    symbolMap: parseJsonSafe(env.BROKER_SYMBOL_MAP)
+    symbolMap: parseJsonSafe(env.BROKER_SYMBOL_MAP),
   };
 
   const tradingModifyApi = {
-    enabled: parseBoolSafe(env.ENABLE_TRADING_MODIFY_API, false)
+    enabled: parseBoolSafe(env.ENABLE_TRADING_MODIFY_API, false),
   };
 
   const riskReports = {
     enabled: env.ENABLE_RISK_REPORTS !== 'false',
-    reportHourUtc: parseIntSafe(env.RISK_REPORT_HOUR_UTC)
+    reportHourUtc: parseIntSafe(env.RISK_REPORT_HOUR_UTC),
   };
 
   const performanceDigests = {
     enabled: env.ENABLE_PERFORMANCE_DIGESTS !== 'false',
     reportHourUtc: parseIntSafe(env.PERFORMANCE_DIGEST_HOUR_UTC),
     outputDir: env.PERFORMANCE_DIGEST_OUTPUT_DIR,
-    includePdf: parseBoolSafe(env.PERFORMANCE_DIGEST_PDF_ENABLED, true)
+    includePdf: parseBoolSafe(env.PERFORMANCE_DIGEST_PDF_ENABLED, true),
   };
 
   const brokerReconciliation = {
-    intervalMs: parseIntSafe(env.BROKER_RECONCILE_INTERVAL_MS) || 60000
+    intervalMs: parseIntSafe(env.BROKER_RECONCILE_INTERVAL_MS) || 60000,
   };
 
   const pairPrefetch = {
     enabled: env.ENABLE_PREFETCH_SCHEDULER !== 'false',
     tickIntervalMs: parseIntSafe(env.PREFETCH_TICK_MS),
-    maxPairsPerTick: parseIntSafe(env.PREFETCH_MAX_PER_TICK)
+    maxPairsPerTick: parseIntSafe(env.PREFETCH_MAX_PER_TICK),
   };
 
   const jobQueue = {
@@ -547,14 +548,14 @@ export function buildAppConfig(environment = process.env) {
     retryBaseMs: parseIntSafe(env.JOB_QUEUE_RETRY_BASE_MS),
     retryMaxMs: parseIntSafe(env.JOB_QUEUE_RETRY_MAX_MS),
     maxQueueSize: parseIntSafe(env.JOB_QUEUE_MAX_SIZE),
-    deadLetterMax: parseIntSafe(env.JOB_QUEUE_DEAD_LETTER_MAX)
+    deadLetterMax: parseIntSafe(env.JOB_QUEUE_DEAD_LETTER_MAX),
   };
 
   const autoTrading = {
     autostart: parseBoolSafe(env.AUTO_TRADING_AUTOSTART, false),
     monitoringIntervalMs: parseIntSafe(env.AUTO_TRADING_MONITORING_INTERVAL_MS),
     signalGenerationIntervalMs: parseIntSafe(env.AUTO_TRADING_SIGNAL_INTERVAL_MS),
-    signalCheckIntervalMs: parseIntSafe(env.AUTO_TRADING_SIGNAL_CHECK_INTERVAL_MS)
+    signalCheckIntervalMs: parseIntSafe(env.AUTO_TRADING_SIGNAL_CHECK_INTERVAL_MS),
   };
 
   const services = {
@@ -563,7 +564,7 @@ export function buildAppConfig(environment = process.env) {
     brokerReconciliation,
     pairPrefetch,
     jobQueue,
-    autoTrading
+    autoTrading,
   };
 
   const database = {
@@ -572,7 +573,7 @@ export function buildAppConfig(environment = process.env) {
     name: env.DB_NAME,
     user: env.DB_USER,
     password: env.DB_PASSWORD,
-    ssl: parseBoolSafe(env.DB_SSL, false)
+    ssl: parseBoolSafe(env.DB_SSL, false),
   };
 
   return {
@@ -587,7 +588,7 @@ export function buildAppConfig(environment = process.env) {
     brokerMeta,
     tradingScope: {
       mode: tradingScope,
-      allowExecution: tradingScope === 'execution' || tradingScope === 'autonomous'
+      allowExecution: tradingScope === 'execution' || tradingScope === 'autonomous',
     },
     governanceTargets,
     tradingModifyApi,
@@ -595,7 +596,7 @@ export function buildAppConfig(environment = process.env) {
     pairPrefetch,
     autoTrading,
     priceData,
-    database
+    database,
   };
 }
 

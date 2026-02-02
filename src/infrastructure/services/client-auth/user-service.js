@@ -10,7 +10,7 @@ const PASSWORD_ROUNDS = 12;
 authenticator.options = {
   step: 30,
   digits: 6,
-  window: 1
+  window: 1,
 };
 
 export default class ClientUserService {
@@ -33,7 +33,7 @@ export default class ClientUserService {
       tokenVersion: row.token_version ?? 0,
       lastLoginAt: row.last_login_at,
       createdAt: row.created_at,
-      updatedAt: row.updated_at
+      updatedAt: row.updated_at,
     };
   }
 
@@ -93,7 +93,7 @@ export default class ClientUserService {
       ...this.mapRow(row),
       passwordHash: row.password_hash,
       mfaSecret: row.mfa_secret,
-      mfaPendingSecret: row.mfa_pending_secret
+      mfaPendingSecret: row.mfa_pending_secret,
     };
   }
 

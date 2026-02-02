@@ -8,7 +8,7 @@ export const PriceBarSchema = z
     high: z.number(),
     low: z.number(),
     close: z.number(),
-    volume: z.number().optional().nullable()
+    volume: z.number().optional().nullable(),
   })
   .passthrough();
 
@@ -27,14 +27,14 @@ export const MarketQuoteSchema = z
     contractSize: z.number().nullable().optional(),
     timestamp: z.number().nullable().optional(),
     time: z.number().nullable().optional(),
-    source: z.string().nullable().optional()
+    source: z.string().nullable().optional(),
   })
   .passthrough();
 
 export const MarketQuotesIngestSchema = z
   .object({
     broker: z.string().min(1),
-    quotes: z.array(MarketQuoteSchema).optional()
+    quotes: z.array(MarketQuoteSchema).optional(),
   })
   .passthrough()
   .refine(
@@ -42,7 +42,7 @@ export const MarketQuotesIngestSchema = z
       (Array.isArray(value.quotes) && value.quotes.length > 0) ||
       Boolean(value.symbol || value.pair),
     {
-      message: 'quotes[] or single quote payload is required'
+      message: 'quotes[] or single quote payload is required',
     }
   )
   .transform((value) => {
@@ -51,7 +51,7 @@ export const MarketQuotesIngestSchema = z
     }
     const single = {
       ...value,
-      symbol: value.symbol ?? value.pair
+      symbol: value.symbol ?? value.pair,
     };
     return { broker: value.broker, quotes: [single] };
   });
@@ -65,7 +65,7 @@ export const MarketSnapshotSchema = z
     timestamp: z.number().optional(),
     time: z.number().optional(),
     source: z.string().optional(),
-    quote: z.record(z.unknown()).optional()
+    quote: z.record(z.unknown()).optional(),
   })
   .passthrough();
 
@@ -91,7 +91,7 @@ export const MarketNewsItemSchema = z
     comment: z.unknown().optional(),
     kind: z.string().nullable().optional(),
     url: z.string().nullable().optional(),
-    link: z.string().nullable().optional()
+    link: z.string().nullable().optional(),
   })
   .passthrough();
 
@@ -99,7 +99,7 @@ export const MarketNewsIngestSchema = z
   .object({
     broker: z.string().min(1),
     items: z.array(MarketNewsItemSchema).optional(),
-    news: z.array(MarketNewsItemSchema).optional()
+    news: z.array(MarketNewsItemSchema).optional(),
   })
   .passthrough()
   .refine(
@@ -110,7 +110,7 @@ export const MarketNewsIngestSchema = z
   )
   .transform((value) => ({
     broker: value.broker,
-    items: Array.isArray(value.items) && value.items.length ? value.items : value.news || []
+    items: Array.isArray(value.items) && value.items.length ? value.items : value.news || [],
   }));
 
 export const MarketBarsIngestSchema = z
@@ -121,15 +121,16 @@ export const MarketBarsIngestSchema = z
     bars: z.array(PriceBarSchema).optional(),
     bar: PriceBarSchema.optional(),
     source: z.string().optional(),
-    timestamp: z.number().optional()
+    timestamp: z.number().optional(),
   })
   .passthrough()
   .refine((value) => (Array.isArray(value.bars) ? value.bars.length > 0 : Boolean(value.bar)), {
-    message: 'bars[] or bar is required'
+    message: 'bars[] or bar is required',
   })
   .transform((value) => ({
     ...value,
-    bars: Array.isArray(value.bars) && value.bars.length ? value.bars : value.bar ? [value.bar] : []
+    bars:
+      Array.isArray(value.bars) && value.bars.length ? value.bars : value.bar ? [value.bar] : [],
   }));
 
 const optionalFiniteNumber = () =>
@@ -157,7 +158,7 @@ export const ModifyPositionSchema = z
     comment: z.string().max(120).optional().nullable(),
     source: z.string().max(60).optional().nullable(),
     tradeId: z.string().max(80).optional().nullable(),
-    reason: z.string().max(120).optional().nullable()
+    reason: z.string().max(120).optional().nullable(),
   })
   .passthrough()
   .refine(
@@ -183,7 +184,7 @@ export const ModifyPositionSchema = z
       comment: value.comment ?? null,
       source: value.source ?? null,
       tradeId: value.tradeId ?? null,
-      reason: value.reason ?? null
+      reason: value.reason ?? null,
     };
   });
 

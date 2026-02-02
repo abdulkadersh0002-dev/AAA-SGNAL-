@@ -18,7 +18,7 @@ export async function normalizeFeatureSnapshots(options = {}) {
         persisted: 0,
         skipped: 0,
         dryRun,
-        note: 'normalized_feature_vectors table not present; did you run migrations?'
+        note: 'normalized_feature_vectors table not present; did you run migrations?',
       };
     }
 
@@ -71,7 +71,7 @@ export async function normalizeFeatureSnapshots(options = {}) {
           pair: row.pair,
           timeframe: row.timeframe,
           capturedAt: row.captured_at,
-          snapshotId: row.id
+          snapshotId: row.id,
         });
 
         if (flattenedRows.length === 0) {
@@ -98,7 +98,7 @@ export async function normalizeFeatureSnapshots(options = {}) {
       flattenedFeatures: flattened,
       persisted: dryRun ? 0 : persisted,
       skippedSnapshots: skipped,
-      dryRun
+      dryRun,
     };
   });
 }
@@ -162,8 +162,8 @@ function buildRow(featureKey, featureType, numericValue, textValue, boolValue, c
     boolValue,
     metadata: {
       source: 'feature_snapshots',
-      path: normalizedKey
-    }
+      path: normalizedKey,
+    },
   };
 }
 
@@ -182,7 +182,7 @@ async function upsertNormalizedFeatures(client, rows) {
     'numeric_value',
     'text_value',
     'bool_value',
-    'metadata'
+    'metadata',
   ];
 
   const values = [];

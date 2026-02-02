@@ -57,7 +57,7 @@ const ISO_6393_TO_1 = {
   tha: 'th',
   tur: 'tr',
   ukr: 'uk',
-  vie: 'vi'
+  vie: 'vi',
 };
 
 const ASCII_REGEX = /^[\x00-\x7F]+$/;
@@ -82,7 +82,7 @@ export default class LanguageProcessor {
       enableTranslation = appConfig.env.ENABLE_NEWS_TRANSLATION !== 'false',
       detectionMinLength = 24,
       detectionMaxCandidates = 5,
-      translationTimeoutMs = 7000
+      translationTimeoutMs = 7000,
     } = options;
 
     const hasTranslatorOverride = Object.prototype.hasOwnProperty.call(options, 'translator');
@@ -114,7 +114,7 @@ export default class LanguageProcessor {
         code: this.targetLanguage,
         raw: null,
         confidence: 0,
-        reliability: 'empty'
+        reliability: 'empty',
       };
     }
 
@@ -123,12 +123,12 @@ export default class LanguageProcessor {
         code: this.targetLanguage,
         raw: 'eng',
         confidence: 0.45,
-        reliability: 'short-text'
+        reliability: 'short-text',
       };
     }
 
     const candidates = francAll(normalized, {
-      minLength: Math.min(this.detectionMinLength, Math.max(10, Math.floor(normalized.length / 2)))
+      minLength: Math.min(this.detectionMinLength, Math.max(10, Math.floor(normalized.length / 2))),
     }).slice(0, this.detectionMaxCandidates);
 
     for (const [rawCode, distance] of candidates) {
@@ -144,7 +144,7 @@ export default class LanguageProcessor {
         code,
         raw: rawCode,
         confidence,
-        reliability: distance === 0 ? 'exact' : 'approx'
+        reliability: distance === 0 ? 'exact' : 'approx',
       };
     }
 
@@ -153,7 +153,7 @@ export default class LanguageProcessor {
         code: this.targetLanguage,
         raw: 'eng',
         confidence: 0.4,
-        reliability: 'fallback-ascii'
+        reliability: 'fallback-ascii',
       };
     }
 
@@ -161,7 +161,7 @@ export default class LanguageProcessor {
       code: null,
       raw: 'und',
       confidence: 0,
-      reliability: 'unknown'
+      reliability: 'unknown',
     };
   }
 
@@ -181,7 +181,7 @@ export default class LanguageProcessor {
       return {
         text,
         changed: false,
-        provider: null
+        provider: null,
       };
     }
 
@@ -191,7 +191,7 @@ export default class LanguageProcessor {
       return {
         text: normalizedText,
         changed: false,
-        provider: null
+        provider: null,
       };
     }
 
@@ -200,7 +200,7 @@ export default class LanguageProcessor {
       return {
         text: normalized,
         changed: false,
-        provider: null
+        provider: null,
       };
     }
 
@@ -210,7 +210,7 @@ export default class LanguageProcessor {
       return {
         text: normalized,
         changed: false,
-        provider: null
+        provider: null,
       };
     }
 
@@ -225,7 +225,7 @@ export default class LanguageProcessor {
       const response = {
         text: result?.text || normalized,
         changed: Boolean(result?.text && result.text !== normalized),
-        provider: 'google-translate'
+        provider: 'google-translate',
       };
       this.translationCache.set(cacheKey, response);
       return response;
@@ -254,7 +254,7 @@ export default class LanguageProcessor {
       const fallback = {
         text: normalized,
         changed: false,
-        provider: null
+        provider: null,
       };
       this.translationCache.set(cacheKey, fallback);
       return fallback;
@@ -268,7 +268,7 @@ export default class LanguageProcessor {
 
     const [translatedHeadline, translatedSummary] = await Promise.all([
       this.translateText(headline || '', sourceLanguage),
-      this.translateText(summary || '', sourceLanguage)
+      this.translateText(summary || '', sourceLanguage),
     ]);
 
     return {
@@ -277,17 +277,17 @@ export default class LanguageProcessor {
         headline: {
           original: headline || null,
           translated: translatedHeadline.text || null,
-          changed: translatedHeadline.changed
+          changed: translatedHeadline.changed,
         },
         summary: {
           original: summary || null,
           translated: translatedSummary.text || null,
-          changed: translatedSummary.changed
+          changed: translatedSummary.changed,
         },
-        provider: translatedHeadline.provider || translatedSummary.provider || null
+        provider: translatedHeadline.provider || translatedSummary.provider || null,
       },
       headlineForAnalysis: translatedHeadline.text || headline || null,
-      summaryForAnalysis: translatedSummary.text || summary || null
+      summaryForAnalysis: translatedSummary.text || summary || null,
     };
   }
 

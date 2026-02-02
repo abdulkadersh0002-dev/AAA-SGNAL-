@@ -43,7 +43,7 @@ const createMockProvider = (options = {}) => {
         H1: '1h',
         H4: '4h',
         D1: '1day',
-        W1: '1week'
+        W1: '1week',
       };
       return mapping[timeframe] || timeframe;
     },
@@ -58,7 +58,7 @@ const createMockProvider = (options = {}) => {
         low: parseFloat(data.low),
         close: parseFloat(data.close),
         volume: parseFloat(data.volume) || 0,
-        timestamp: Date.now()
+        timestamp: Date.now(),
       };
     },
 
@@ -72,7 +72,7 @@ const createMockProvider = (options = {}) => {
         high: parseFloat(bar.high),
         low: parseFloat(bar.low),
         close: parseFloat(bar.close),
-        volume: parseFloat(bar.volume) || 0
+        volume: parseFloat(bar.volume) || 0,
       }));
     },
 
@@ -92,7 +92,7 @@ const createMockProvider = (options = {}) => {
         high: '1.0920',
         low: '1.0800',
         close: '1.0890',
-        volume: '125000'
+        volume: '125000',
       });
     },
 
@@ -119,12 +119,12 @@ const createMockProvider = (options = {}) => {
           high: (basePrice + variation + 0.002).toFixed(5),
           low: (basePrice + variation - 0.002).toFixed(5),
           close: (basePrice + variation + 0.001).toFixed(5),
-          volume: Math.floor(Math.random() * 10000).toString()
+          volume: Math.floor(Math.random() * 10000).toString(),
         });
       }
 
       return this.normalizeBars(mockBars);
-    }
+    },
   };
 };
 
@@ -193,7 +193,7 @@ describe('TwelveData Provider', () => {
         high: '1.0920',
         low: '1.0800',
         close: '1.0890',
-        volume: '125000'
+        volume: '125000',
       };
 
       const normalized = provider.normalizeQuote(rawQuote);
@@ -222,8 +222,8 @@ describe('TwelveData Provider', () => {
           high: '1.0870',
           low: '1.0840',
           close: '1.0860',
-          volume: '5000'
-        }
+          volume: '5000',
+        },
       ];
 
       const normalized = provider.normalizeBars(rawBars);
@@ -267,7 +267,7 @@ describe('TwelveData Provider', () => {
       const bars = await provider.fetchBars({
         pair: 'EURUSD',
         timeframe: 'M15',
-        bars: 10
+        bars: 10,
       });
 
       assert.strictEqual(bars.length, 10);
@@ -277,7 +277,7 @@ describe('TwelveData Provider', () => {
       const bars = await provider.fetchBars({
         pair: 'EURUSD',
         timeframe: 'H1',
-        bars: 5
+        bars: 5,
       });
 
       for (const bar of bars) {
@@ -293,7 +293,7 @@ describe('TwelveData Provider', () => {
       const bars = await provider.fetchBars({
         pair: 'X',
         timeframe: 'M15',
-        bars: 10
+        bars: 10,
       });
       assert.strictEqual(bars, null);
     });

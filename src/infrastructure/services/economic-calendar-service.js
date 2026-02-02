@@ -167,7 +167,7 @@ class EconomicCalendarService {
         impact,
         actual: actual || null,
         forecast: forecast || null,
-        previous: previous || null
+        previous: previous || null,
       });
     }
     return events;
@@ -188,7 +188,7 @@ class EconomicCalendarService {
       `${date} ${timePart} UTC`,
       `${date} ${timePart} GMT`,
       `${date} ${timePart}`,
-      date
+      date,
     ];
 
     for (const candidate of candidates) {
@@ -218,8 +218,8 @@ class EconomicCalendarService {
           Accept:
             'application/rss+xml, application/atom+xml, application/xml;q=0.9, text/xml;q=0.8, */*;q=0.5',
           'Accept-Language': 'en-US,en;q=0.8',
-          'User-Agent': 'SignalsGateway/1.0 (+https://localhost)'
-        }
+          'User-Agent': 'SignalsGateway/1.0 (+https://localhost)',
+        },
       });
 
       const status = response?.status;
@@ -451,8 +451,8 @@ class EconomicCalendarService {
         headers: {
           Accept: 'application/json, */*;q=0.8',
           'Accept-Language': 'en-US,en;q=0.8',
-          'User-Agent': 'SignalsGateway/1.0 (+https://localhost)'
-        }
+          'User-Agent': 'SignalsGateway/1.0 (+https://localhost)',
+        },
       });
 
       const status = response?.status;
@@ -499,7 +499,7 @@ class EconomicCalendarService {
         impact: entry.impact,
         actual: entry.actual ?? entry.actualValue ?? null,
         forecast: entry.forecast ?? null,
-        previous: entry.previous ?? null
+        previous: entry.previous ?? null,
       }));
     } catch (error) {
       this.applyBackoff('calendar:feed', error);
@@ -536,7 +536,7 @@ class EconomicCalendarService {
       actual: this.extractField(item, 'actual'),
       forecast: this.extractField(item, 'forecast'),
       previous: this.extractField(item, 'previous'),
-      source: 'ForexFactory'
+      source: 'ForexFactory',
     };
   }
 
@@ -653,7 +653,7 @@ class EconomicCalendarService {
       actual: item.actual ?? null,
       forecast: item.forecast ?? null,
       previous: item.previous ?? null,
-      source: 'Finnhub'
+      source: 'Finnhub',
     };
   }
 
@@ -663,7 +663,7 @@ class EconomicCalendarService {
       { event: 'Employment Report', impact: 8 },
       { event: 'Inflation Release', impact: 7 },
       { event: 'GDP Growth', impact: 6 },
-      { event: 'Retail Sales', impact: 5 }
+      { event: 'Retail Sales', impact: 5 },
     ];
 
     const events = [];
@@ -683,7 +683,7 @@ class EconomicCalendarService {
         forecast: null,
         previous: null,
         actual: null,
-        source: 'Synthetic'
+        source: 'Synthetic',
       });
     });
 
@@ -725,7 +725,7 @@ class EconomicCalendarService {
       CA: 'CAD',
       AU: 'AUD',
       NZ: 'NZD',
-      CH: 'CHF'
+      CH: 'CHF',
     };
     return mapping[country] || country;
   }
@@ -737,7 +737,7 @@ class EconomicCalendarService {
 
     return {
       from: past.toISOString().split('T')[0],
-      to: future.toISOString().split('T')[0]
+      to: future.toISOString().split('T')[0],
     };
   }
 

@@ -7,7 +7,7 @@ import {
   toNumber,
   normalizePair,
   normalizeTimeframe,
-  toStringValue
+  toStringValue,
 } from './etl-utils.js';
 
 const DEFAULT_CHUNK_SIZE = 500;
@@ -28,7 +28,7 @@ export async function ingestHistoricalPrices(sources = [], options = {}) {
         error: error.message,
         processed: 0,
         persisted: 0,
-        skipped: 0
+        skipped: 0,
       });
     }
   }
@@ -82,7 +82,7 @@ async function processPriceSource(source, options) {
         provider,
         ingestSource,
         timezone,
-        sourceMetadata: source.metadata || {}
+        sourceMetadata: source.metadata || {},
       });
 
       if (!mapped) {
@@ -104,7 +104,7 @@ async function processPriceSource(source, options) {
     processed,
     persisted: dryRun ? 0 : persisted,
     skipped,
-    dryRun
+    dryRun,
   };
 }
 
@@ -123,7 +123,7 @@ async function* iteratePriceRecords(filePath, format) {
       parse({
         columns: true,
         skip_empty_lines: true,
-        trim: true
+        trim: true,
       })
     );
 
@@ -211,7 +211,7 @@ function mapPriceRecord(record, context) {
     ...sourceMetadata,
     ingestSource,
     recordProvider: rowProvider,
-    rawProvider: toStringValue(record.provider) || null
+    rawProvider: toStringValue(record.provider) || null,
   };
 
   if (record.quality != null) {
@@ -232,7 +232,7 @@ function mapPriceRecord(record, context) {
     volume,
     provider: rowProvider,
     source: ingestSource,
-    metadata
+    metadata,
   };
 }
 
@@ -264,7 +264,7 @@ async function insertPriceBatch(client, rows, options) {
     'volume',
     'provider',
     'source',
-    'metadata'
+    'metadata',
   ];
 
   const values = [];

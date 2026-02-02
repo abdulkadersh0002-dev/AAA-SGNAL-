@@ -49,7 +49,7 @@ export const TradeSchema = z
       .nullable(),
     finalPnL: z
       .object({ amount: z.number().nullable(), percentage: z.number().nullable() })
-      .nullable()
+      .nullable(),
   })
   .strict();
 
@@ -81,7 +81,7 @@ export function createTradeDTO(raw) {
     liveContext: raw.liveContext ?? null,
     layeredAnalysis: raw.layeredAnalysis ?? null,
     currentPnL: raw.currentPnL || null,
-    finalPnL: raw.finalPnL || null
+    finalPnL: raw.finalPnL || null,
   };
 }
 

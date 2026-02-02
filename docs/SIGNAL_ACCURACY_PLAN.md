@@ -289,7 +289,7 @@ ML models are not used in EA-only mode. Replace "model improvements" with strict
      // Lagged features
      'price_change_1h',
      'price_change_4h',
-     'price_change_24h'
+     'price_change_24h',
    ];
    ```
 
@@ -335,7 +335,7 @@ ML models are not used in EA-only mode. Replace "model improvements" with strict
      'three_white_soldiers',
      'morning_star',
      'head_and_shoulders',
-     'double_top_bottom'
+     'double_top_bottom',
    ];
    // Only trade signals confirmed by patterns
    ```

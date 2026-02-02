@@ -56,14 +56,14 @@ function getCommand() {
     return {
       command: 'cmd.exe',
       args: ['/d', '/s', '/c', 'npm run -s test:coverage'],
-      useShell: false
+      useShell: false,
     };
   }
 
   return {
     command: 'npm',
     args: ['run', '-s', 'test:coverage'],
-    useShell: false
+    useShell: false,
   };
 }
 
@@ -74,7 +74,7 @@ async function runCoverage() {
     const child = spawn(command, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       env: { ...process.env, NODE_ENV: process.env.NODE_ENV || 'test' },
-      shell: useShell
+      shell: useShell,
     });
 
     let output = '';

@@ -59,8 +59,8 @@ async function checkUrl(url, { timeoutMs, fetchImpl }) {
       redirect: 'follow',
       signal: controller.signal,
       headers: {
-        'User-Agent': 'signals-ci-runbook-probe/1.0'
-      }
+        'User-Agent': 'signals-ci-runbook-probe/1.0',
+      },
     });
     if (!response.ok) {
       throw new Error(`received HTTP ${response.status}`);

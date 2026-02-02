@@ -7,7 +7,7 @@ function createFetcher(options = {}) {
     {},
     {
       allowUnconfiguredProviders: true,
-      ...options
+      ...options,
     }
   );
 }
@@ -48,7 +48,7 @@ test('getProviderOrder prefers healthy providers over blocked ones', () => {
   fetcher.metrics.providers.polygon.failed = 12;
   fetcher.metrics.providers.polygon.circuitBreaker = {
     reason: 'failures',
-    expiresAt: new Date(Date.now() + 60_000).toISOString()
+    expiresAt: new Date(Date.now() + 60_000).toISOString(),
   };
 
   const order = fetcher.getProviderOrder('M15');

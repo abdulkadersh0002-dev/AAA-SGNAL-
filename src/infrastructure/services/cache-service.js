@@ -57,7 +57,7 @@ class CacheStats {
       deletes: this.deletes,
       evictions: this.evictions,
       expirations: this.expirations,
-      hitRate: `${(this.hitRate * 100).toFixed(2)}%`
+      hitRate: `${(this.hitRate * 100).toFixed(2)}%`,
     };
   }
 }
@@ -225,7 +225,7 @@ export default class CacheService {
       ...this.stats.toJSON(),
       size: this.size(),
       maxSize: this.maxSize,
-      namespace: this.namespace
+      namespace: this.namespace,
     };
   }
 
@@ -342,7 +342,7 @@ export function createCacheFactory(globalOptions = {}) {
       const cache = new CacheService({
         ...globalOptions,
         ...options,
-        namespace
+        namespace,
       });
 
       // Share the underlying map for memory efficiency
@@ -358,7 +358,7 @@ export function createCacheFactory(globalOptions = {}) {
     getGlobalStats() {
       const stats = {
         totalSize: sharedCache.size,
-        namespaces: {}
+        namespaces: {},
       };
 
       for (const [namespace, cache] of instances.entries()) {
@@ -383,6 +383,6 @@ export function createCacheFactory(globalOptions = {}) {
         cache.stop();
       }
       instances.clear();
-    }
+    },
   };
 }

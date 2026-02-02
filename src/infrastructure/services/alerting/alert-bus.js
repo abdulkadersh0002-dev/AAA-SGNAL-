@@ -59,9 +59,9 @@ class AlertBus {
           this.emailConfig.smtp.user && this.emailConfig.smtp.pass
             ? {
                 user: this.emailConfig.smtp.user,
-                pass: this.emailConfig.smtp.pass
+                pass: this.emailConfig.smtp.pass,
               }
-            : undefined
+            : undefined,
       });
     }
   }
@@ -114,7 +114,7 @@ class AlertBus {
       message: event.message,
       body: event.body || null,
       context: event.context || null,
-      subject: event.subject || null
+      subject: event.subject || null,
     };
 
     const key = this.dedupeKey(payload);
@@ -175,7 +175,7 @@ class AlertBus {
       await fetch(this.slackWebhookUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: textLines.join('\n') })
+        body: JSON.stringify({ text: textLines.join('\n') }),
       });
       return true;
     } catch (error) {
@@ -199,14 +199,14 @@ class AlertBus {
       message: payload.message,
       body: payload.body,
       context: payload.context,
-      preview: contextPreview
+      preview: contextPreview,
     };
     const tasks = this.webhookUrls.map(async (url) => {
       try {
         await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
+          body: JSON.stringify(body),
         });
       } catch (error) {
         this.logger?.warn?.(
@@ -245,7 +245,7 @@ class AlertBus {
         from: this.emailConfig.from,
         to: recipients.join(', '),
         subject,
-        text: bodyLines.join('\n')
+        text: bodyLines.join('\n'),
       });
       return true;
     } catch (error) {
@@ -263,7 +263,7 @@ class AlertBus {
         topic: payload.topic,
         severity: payload.severity,
         message: payload.message,
-        timestamp: payload.timestamp
+        timestamp: payload.timestamp,
       },
       'AlertBus event'
     );

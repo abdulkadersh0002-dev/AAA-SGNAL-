@@ -138,7 +138,7 @@ export function createMarketRules(options = {}) {
       pricePrecision: instrument?.pricePrecision ?? 5,
       pipSize: instrument?.pipSize ?? (symbol?.endsWith('JPY') ? 0.01 : 0.0001),
       contractSize: instrument?.contractSize ?? 100000,
-      assetClass: instrument?.assetClass || 'forex'
+      assetClass: instrument?.assetClass || 'forex',
     };
   };
 
@@ -166,6 +166,6 @@ export function createMarketRules(options = {}) {
     isMarketOpen,
     isRolloverWindow,
     getPrecision,
-    validateOrder
+    validateOrder,
   };
 }

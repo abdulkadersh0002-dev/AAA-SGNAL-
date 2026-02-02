@@ -58,7 +58,7 @@ export function maxDrawdown(equityCurve = []) {
   return {
     maxDrawdown: maxDd,
     peak,
-    trough
+    trough,
   };
 }
 

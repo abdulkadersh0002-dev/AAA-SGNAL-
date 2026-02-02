@@ -15,7 +15,7 @@ async function startEphemeralServer(app) {
   }
   return {
     server,
-    baseUrl: `http://127.0.0.1:${port}`
+    baseUrl: `http://127.0.0.1:${port}`,
   };
 }
 
@@ -23,13 +23,13 @@ function createLogger() {
   return {
     info() {},
     warn() {},
-    error() {}
+    error() {},
   };
 }
 
 function createAuditLogger() {
   return {
-    record: async () => {}
+    record: async () => {},
   };
 }
 
@@ -68,7 +68,7 @@ describe('Trading routes (integration)', () => {
       },
       closeAllTrades: async () => ({ success: true, closed: 0 }),
       startAutoTrading: async () => ({ success: true, message: 'started' }),
-      stopAutoTrading: () => ({ success: true, message: 'stopped' })
+      stopAutoTrading: () => ({ success: true, message: 'stopped' }),
     };
 
     const activeTrades = new Map();
@@ -81,7 +81,7 @@ describe('Trading routes (integration)', () => {
         maxDailyRisk: 0.06,
         maxConcurrentTrades: 5,
         signalAmplifier: 2.5,
-        directionThreshold: 12
+        directionThreshold: 12,
       },
       activeTrades,
       tradingHistory,
@@ -99,7 +99,7 @@ describe('Trading routes (integration)', () => {
         riskManagement: {},
         isValid: { isValid: true, checks: { ok: true }, reason: 'ok' },
         explainability: null,
-        reasoning: ['test-signal']
+        reasoning: ['test-signal'],
       }),
       executeTrade: async (signal) => {
         const tradeId = randomUUID();
@@ -117,7 +117,7 @@ describe('Trading routes (integration)', () => {
           closeReason: null,
           broker: null,
           currentPnL: null,
-          finalPnL: null
+          finalPnL: null,
         };
         activeTrades.set(tradeId, trade);
         tradingHistory.push(trade);
@@ -133,19 +133,19 @@ describe('Trading routes (integration)', () => {
           ...trade,
           closeTime: new Date(),
           status: 'CLOSED',
-          closeReason: 'manual_close'
+          closeReason: 'manual_close',
         };
         activeTrades.delete(tradeId);
         tradingHistory.push(closed);
         return closed;
-      }
+      },
     };
 
     const app = createHttpApp({
       tradingEngine,
       tradeManager,
       heartbeatMonitor: {
-        getHeartbeat: () => ({ status: 'ok', timestamp: Date.now(), summary: { ok: true } })
+        getHeartbeat: () => ({ status: 'ok', timestamp: Date.now(), summary: { ok: true } }),
       },
       brokerRouter: null,
       eaBridgeService: null,
@@ -156,8 +156,8 @@ describe('Trading routes (integration)', () => {
       metricsRegistry: {
         register: {
           contentType: 'text/plain; version=0.0.4',
-          metrics: async () => 'metric 1\n'
-        }
+          metrics: async () => 'metric 1\n',
+        },
       },
       providerAvailabilityState: {
         buildSnapshot: () => ({
@@ -169,13 +169,13 @@ describe('Trading routes (integration)', () => {
           dataConfidence: null,
           providerOrder: [],
           rateLimits: {},
-          defaultAvailability: null
+          defaultAvailability: null,
         }),
         providerAvailabilityAlertConfig: {},
         history: [],
         historyLimit: 10,
-        loadProviderAvailabilityHistory: null
-      }
+        loadProviderAvailabilityHistory: null,
+      },
     });
 
     const started = await startEphemeralServer(app);
@@ -219,7 +219,7 @@ describe('Trading routes (integration)', () => {
     const bad = await fetch(`${baseUrl}/api/signal/batch`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({})
+      body: JSON.stringify({}),
     });
     assert.equal(bad.status, 400);
     const badBody = await bad.json();
@@ -229,7 +229,7 @@ describe('Trading routes (integration)', () => {
     const good = await fetch(`${baseUrl}/api/signal/batch`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ pairs: ['EURUSD', 'GBPUSD'] })
+      body: JSON.stringify({ pairs: ['EURUSD', 'GBPUSD'] }),
     });
     assert.equal(good.status, 200);
     const goodBody = await good.json();
@@ -242,7 +242,7 @@ describe('Trading routes (integration)', () => {
     const execute = await fetch(`${baseUrl}/api/trade/execute`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ pair: 'EURUSD' })
+      body: JSON.stringify({ pair: 'EURUSD' }),
     });
     assert.equal(execute.status, 200);
     const executeBody = await execute.json();

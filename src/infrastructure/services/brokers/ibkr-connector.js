@@ -22,9 +22,9 @@ class IbkrConnector extends BaseBrokerConnector {
         timeout: options.timeout || 10000,
         httpsAgent: agent,
         headers: {
-          'Content-Type': 'application/json'
-        }
-      }
+          'Content-Type': 'application/json',
+        },
+      },
     });
 
     this.accountId = accountId;
@@ -38,7 +38,7 @@ class IbkrConnector extends BaseBrokerConnector {
         broker: this.name,
         mode: this.accountMode,
         connected: true,
-        details: response.data || null
+        details: response.data || null,
       };
     } catch (error) {
       this.logger?.warn?.({ err: error, broker: this.name }, 'IBKR health check failed');
@@ -46,7 +46,7 @@ class IbkrConnector extends BaseBrokerConnector {
         broker: this.name,
         mode: this.accountMode,
         connected: false,
-        error: error.message
+        error: error.message,
       };
     }
   }
@@ -64,7 +64,7 @@ class IbkrConnector extends BaseBrokerConnector {
         quantity: Number(order.quantity || order.units || 0),
         account: order.account || this.accountId,
         price: order.price || null,
-        auxPrice: order.stopLoss || null
+        auxPrice: order.stopLoss || null,
       };
 
       const path = this.accountId
@@ -73,13 +73,13 @@ class IbkrConnector extends BaseBrokerConnector {
       const response = await this.http.post(path, payload);
       return {
         success: true,
-        order: response.data || null
+        order: response.data || null,
       };
     } catch (error) {
       this.logger?.error?.({ err: error, broker: this.name }, 'IBKR placeOrder failed');
       return {
         success: false,
-        error: error.response?.data || error.message
+        error: error.response?.data || error.message,
       };
     }
   }
@@ -90,7 +90,7 @@ class IbkrConnector extends BaseBrokerConnector {
         conid: position.conid || position.contractId,
         quantity: Number(position.quantity || position.units || 0),
         side: position.side === 'BUY' ? 'SELL' : 'BUY',
-        account: position.account || this.accountId
+        account: position.account || this.accountId,
       };
       const path = this.accountId
         ? `/iserver/account/${this.accountId}/segment/closing`
@@ -98,13 +98,13 @@ class IbkrConnector extends BaseBrokerConnector {
       const response = await this.http.post(path, payload);
       return {
         success: true,
-        result: response.data || null
+        result: response.data || null,
       };
     } catch (error) {
       this.logger?.error?.({ err: error, broker: this.name }, 'IBKR closePosition failed');
       return {
         success: false,
-        error: error.response?.data || error.message
+        error: error.response?.data || error.message,
       };
     }
   }

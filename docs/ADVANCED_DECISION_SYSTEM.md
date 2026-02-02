@@ -1,4 +1,5 @@
 # نظام القرار المتقدم والأخبار الذكية
+
 # Advanced Decision System & Intelligent News Handling
 
 ## Overview / نظرة عامة
@@ -12,26 +13,28 @@ This document explains the enhanced decision-making system that replaces simple 
 ## نموذج التقييم (Decision Scoring Model)
 
 ### النظام القديم ❌
+
 ```javascript
 if (news) {
-  return "لا تتداول"; // Don't trade
+  return 'لا تتداول'; // Don't trade
 }
 if (confidence > 50 && strength > 40) {
-  return "تداول"; // Trade
+  return 'تداول'; // Trade
 }
 ```
 
 ### النظام الجديد ✅
+
 ```javascript
 // Context Score (30%) + Signal Score (40%) + Risk Score (30%) = Total Score
 const score = calculateTradeScore({
   context: { marketPhase, session, liquidity, spread },
   signal: { confidence, strength, mtfAlignment, confluence },
-  risk: { newsImpact, volatility, exposure, correlation }
+  risk: { newsImpact, volatility, exposure, correlation },
 });
 
 if (score.totalScore >= 65) {
-  return "تداول"; // Trade
+  return 'تداول'; // Trade
 }
 ```
 
@@ -119,14 +122,14 @@ if (score.totalScore >= 65) {
 
 ## عتبات القرار (Decision Thresholds)
 
-| التقييم | القرار | الثقة |
-|---------|--------|-------|
-| ≥ 80 | ENTER | HIGH |
-| 70-79 | ENTER | MEDIUM |
-| 65-69 | ENTER | LOW |
-| 45-64 | HOLD (for existing trades) | MEDIUM |
-| 25-44 | EXIT | MEDIUM |
-| < 25 | EXIT_NOW | HIGH |
+| التقييم | القرار                     | الثقة  |
+| ------- | -------------------------- | ------ |
+| ≥ 80    | ENTER                      | HIGH   |
+| 70-79   | ENTER                      | MEDIUM |
+| 65-69   | ENTER                      | LOW    |
+| 45-64   | HOLD (for existing trades) | MEDIUM |
+| 25-44   | EXIT                       | MEDIUM |
+| < 25    | EXIT_NOW                   | HIGH   |
 
 ---
 
@@ -134,17 +137,17 @@ if (score.totalScore >= 65) {
 
 ### أنواع الأخبار المدعومة
 
-| النوع | التأثير | مضاعف التقلب | الكلمات المفتاحية |
-|------|---------|--------------|-------------------|
-| INTEREST_RATE | High | 3.0x | interest rate, fed funds, rate decision |
-| CPI | High | 2.5x | cpi, consumer price, inflation |
-| NFP | High | 2.8x | non-farm, payroll, jobs report |
-| GDP | High | 2.2x | gdp, economic growth |
-| PMI | Medium | 1.5x | pmi, purchasing managers |
-| RETAIL_SALES | Medium | 1.6x | retail sales, consumer spending |
-| UNEMPLOYMENT | Medium | 1.8x | unemployment, jobless claims |
-| TRADE_BALANCE | Low | 1.2x | trade balance, exports, imports |
-| SPEECHES | Medium | 1.4x | speech, testimony, press conference |
+| النوع         | التأثير | مضاعف التقلب | الكلمات المفتاحية                       |
+| ------------- | ------- | ------------ | --------------------------------------- |
+| INTEREST_RATE | High    | 3.0x         | interest rate, fed funds, rate decision |
+| CPI           | High    | 2.5x         | cpi, consumer price, inflation          |
+| NFP           | High    | 2.8x         | non-farm, payroll, jobs report          |
+| GDP           | High    | 2.2x         | gdp, economic growth                    |
+| PMI           | Medium  | 1.5x         | pmi, purchasing managers                |
+| RETAIL_SALES  | Medium  | 1.6x         | retail sales, consumer spending         |
+| UNEMPLOYMENT  | Medium  | 1.8x         | unemployment, jobless claims            |
+| TRADE_BALANCE | Low     | 1.2x         | trade balance, exports, imports         |
+| SPEECHES      | Medium  | 1.4x         | speech, testimony, press conference     |
 
 ### تصنيف مستوى التأثير
 
@@ -154,19 +157,20 @@ if (score.totalScore >= 65) {
 
 ### تحليل التوقيت
 
-| التوقيت | الوصف | الإجراءات |
-|---------|-------|-----------|
-| Imminent | < 15 دقيقة قبل الخبر | منع الدخول، تقليل الحجم |
-| During | أثناء الخبر (30 دقيقة) | منع الدخول، توسيع SL، إغلاق جزئي |
-| Aftermath | بعد الخبر (30-60 دقيقة) | مراقبة فقط |
-| Scheduled | في المستقبل | مراقبة |
-| Past | خبر قديم | تجاهل |
+| التوقيت   | الوصف                   | الإجراءات                        |
+| --------- | ----------------------- | -------------------------------- |
+| Imminent  | < 15 دقيقة قبل الخبر    | منع الدخول، تقليل الحجم          |
+| During    | أثناء الخبر (30 دقيقة)  | منع الدخول، توسيع SL، إغلاق جزئي |
+| Aftermath | بعد الخبر (30-60 دقيقة) | مراقبة فقط                       |
+| Scheduled | في المستقبل             | مراقبة                           |
+| Past      | خبر قديم                | تجاهل                            |
 
 ---
 
 ## الإجراءات الذكية (Smart Actions)
 
 ### 1. PREVENT_ENTRY (منع الدخول)
+
 ```javascript
 {
   action: 'PREVENT_ENTRY',
@@ -176,6 +180,7 @@ if (score.totalScore >= 65) {
 ```
 
 ### 2. REDUCE_SIZE (تقليل حجم الصفقة)
+
 ```javascript
 {
   action: 'REDUCE_SIZE',
@@ -186,6 +191,7 @@ if (score.totalScore >= 65) {
 ```
 
 ### 3. WIDEN_SL (توسيع إيقاف الخسارة)
+
 ```javascript
 {
   action: 'WIDEN_SL',
@@ -196,6 +202,7 @@ if (score.totalScore >= 65) {
 ```
 
 ### 4. PARTIAL_CLOSE (إغلاق جزئي)
+
 ```javascript
 {
   action: 'PARTIAL_CLOSE',
@@ -206,6 +213,7 @@ if (score.totalScore >= 65) {
 ```
 
 ### 5. FULL_EXIT (خروج كامل)
+
 ```javascript
 {
   action: 'FULL_EXIT',
@@ -221,17 +229,15 @@ if (score.totalScore >= 65) {
 ### الآلية
 
 1. **Start Monitoring** عند فتح الصفقة:
+
 ```javascript
 intelligentTradeManager.startMonitoringTrade(tradeId, trade, initialScore);
 ```
 
 2. **Re-score** كل دقيقة (قابل للتعديل):
+
 ```javascript
-const result = intelligentTradeManager.rescoreActiveTrade(
-  tradeId, 
-  currentMarketData, 
-  newsItems
-);
+const result = intelligentTradeManager.rescoreActiveTrade(tradeId, currentMarketData, newsItems);
 
 if (result.action === 'EXIT' || result.action === 'EXIT_NOW') {
   // Close the trade
@@ -240,6 +246,7 @@ if (result.action === 'EXIT' || result.action === 'EXIT_NOW') {
 ```
 
 3. **Stop Monitoring** عند إغلاق الصفقة:
+
 ```javascript
 intelligentTradeManager.stopMonitoringTrade(tradeId);
 ```
@@ -247,6 +254,7 @@ intelligentTradeManager.stopMonitoringTrade(tradeId);
 ### تحليل الاتجاه
 
 يحلل النظام اتجاه التقييم:
+
 - **Improving**: التقييم يتحسن → استمر
 - **Stable**: التقييم مستقر → استمر
 - **Declining**: التقييم ينخفض → احتمال الخروج
@@ -264,7 +272,7 @@ const evaluation = intelligentTradeManager.evaluateTradeEntryWithScoring({
     strength: 60,
     direction: 'BUY',
     confluence: 70,
-    mtfAlignment: 0.8
+    mtfAlignment: 0.8,
   },
   broker: 'mt5',
   symbol: 'EURUSD',
@@ -272,16 +280,16 @@ const evaluation = intelligentTradeManager.evaluateTradeEntryWithScoring({
     liquidity: 0.9,
     spread: 0.0001,
     normalSpread: 0.00015,
-    exposure: 0.3
+    exposure: 0.3,
   },
   newsItems: [
     {
       title: 'US CPI Report',
       currency: 'USD',
       impact: 75,
-      time: Date.now() + 30 * 60 * 1000 // 30 min in future
-    }
-  ]
+      time: Date.now() + 30 * 60 * 1000, // 30 min in future
+    },
+  ],
 });
 
 console.log(evaluation);
@@ -310,12 +318,12 @@ const classification = intelligentTradeManager.classifyNewsWithActions(
     title: 'Federal Reserve Interest Rate Decision',
     currency: 'USD',
     impact: 90,
-    time: Date.now() + 10 * 60 * 1000 // 10 min away
+    time: Date.now() + 10 * 60 * 1000, // 10 min away
   },
   {
     symbol: 'EURUSD',
     direction: 'BUY',
-    openPrice: 1.1000
+    openPrice: 1.1,
   }
 );
 
@@ -345,7 +353,7 @@ const rescoreResult = intelligentTradeManager.rescoreActiveTrade(
   {
     liquidity: 0.85,
     spread: 0.00012,
-    exposure: 0.4
+    exposure: 0.4,
   },
   newsItems
 );
@@ -379,10 +387,10 @@ if (rescoreResult.action === 'EXIT' || rescoreResult.action === 'EXIT_NOW') {
 
 ```javascript
 const intelligentTradeManager = new IntelligentTradeManager({
-  minEntryScore: 65,      // Minimum score to enter (default: 65)
-  minHoldScore: 45,       // Minimum score to hold (default: 45)
+  minEntryScore: 65, // Minimum score to enter (default: 65)
+  minHoldScore: 45, // Minimum score to hold (default: 45)
   emergencyExitScore: 25, // Exit immediately below this (default: 25)
-  minExecutionConfidence: 80 // Final confidence threshold (default: 80)
+  minExecutionConfidence: 80, // Final confidence threshold (default: 80)
 });
 ```
 
@@ -390,9 +398,9 @@ const intelligentTradeManager = new IntelligentTradeManager({
 
 ```javascript
 const scoringModel = new DecisionScoringModel({
-  contextWeight: 30,  // Context score weight (default: 30%)
-  signalWeight: 40,   // Signal score weight (default: 40%)
-  riskWeight: 30      // Risk score weight (default: 30%)
+  contextWeight: 30, // Context score weight (default: 30%)
+  signalWeight: 40, // Signal score weight (default: 40%)
+  riskWeight: 30, // Risk score weight (default: 30%)
 });
 ```
 
@@ -408,21 +416,25 @@ const tradesNeedingRescore = intelligentTradeManager.getTradesNeedingRescore(600
 ## الفوائد (Benefits)
 
 ### 1. قرارات أكثر ذكاءً
+
 - تقييم شامل بدلاً من شروط بسيطة
 - أوزان قابلة للتعديل حسب الاستراتيجية
 - تحليل متعدد الأبعاد
 
 ### 2. إدارة ديناميكية للأخبار
+
 - تصنيف ذكي للأخبار بدلاً من المنع الكلي
 - إجراءات متدرجة حسب التأثير
 - تعلم من السلوك التاريخي
 
 ### 3. إعادة التقييم المستمرة
+
 - مراقبة الصفقات بشكل مستمر
 - خروج تلقائي عند تدهور الظروف
 - تحليل اتجاه التقييم
 
 ### 4. شفافية كاملة
+
 - أسباب واضحة لكل قرار
 - تفصيل للتقييم (Context/Signal/Risk)
 - توصيات قابلة للفهم
@@ -431,11 +443,11 @@ const tradesNeedingRescore = intelligentTradeManager.getTradesNeedingRescore(600
 
 ## الحد الأدنى للأداء المتوقع
 
-| الإعداد | متوسط التقييم | معدل النجاح المتوقع | تكرار الإشارات |
-|---------|---------------|---------------------|----------------|
-| Conservative (≥75) | 80+ | 85-90% | منخفض |
-| Balanced (≥65) | 70-80 | 75-85% | متوسط |
-| Aggressive (≥55) | 60-75 | 65-75% | عالي |
+| الإعداد            | متوسط التقييم | معدل النجاح المتوقع | تكرار الإشارات |
+| ------------------ | ------------- | ------------------- | -------------- |
+| Conservative (≥75) | 80+           | 85-90%              | منخفض          |
+| Balanced (≥65)     | 70-80         | 75-85%              | متوسط          |
+| Aggressive (≥55)   | 60-75         | 65-75%              | عالي           |
 
 ---
 

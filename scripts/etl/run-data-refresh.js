@@ -53,8 +53,8 @@ async function runEtl(etlConfigPath, dryRunFlag) {
 async function fetchJson(url) {
   const response = await fetch(url, {
     headers: {
-      Accept: 'application/json'
-    }
+      Accept: 'application/json',
+    },
   });
   if (!response.ok) {
     const text = await response.text();
@@ -118,7 +118,7 @@ async function validateFeeds(baseUrl, freshnessMinutes) {
     freshness: statusTimestamp ? Date.now() - statusTimestamp : null,
     detail: statusTimestamp
       ? `status ${statusEnabled ? 'enabled' : 'disabled'} · updated ${formatMinutesAgo(statusTimestamp)}`
-      : 'status timestamp unavailable'
+      : 'status timestamp unavailable',
   });
 
   const featureUrl = new URL('/api/features-snapshots?limit=24', baseUrl).toString();
@@ -135,7 +135,7 @@ async function validateFeeds(baseUrl, freshnessMinutes) {
     detail:
       snapshots.length === 0
         ? 'no feature snapshots returned'
-        : `latest snapshot ${formatMinutesAgo(latestSnapshotTs)} · total ${snapshots.length}`
+        : `latest snapshot ${formatMinutesAgo(latestSnapshotTs)} · total ${snapshots.length}`,
   });
 
   return results;

@@ -48,9 +48,9 @@ async function sendFixturePayload(port, endpoint, fixtureName, transform = (payl
   const response = await fetch(`http://127.0.0.1:${port}${endpoint}`, {
     method: 'POST',
     headers: {
-      'content-type': 'application/json'
+      'content-type': 'application/json',
     },
-    body: JSON.stringify(body)
+    body: JSON.stringify(body),
   });
   assert.ok(response.ok, `Request to ${endpoint} failed with ${response.status}`);
 }
@@ -65,7 +65,7 @@ test('Alerting pipeline harness captures and validates payloads', async (t) => {
     ['scripts/ci/mock-alert-receivers.mjs', '--port', String(port), '--output', outputPath],
     {
       cwd: repoRoot,
-      stdio: 'ignore'
+      stdio: 'ignore',
     }
   );
 
@@ -99,7 +99,7 @@ test('Alerting pipeline harness captures and validates payloads', async (t) => {
   const ticketTransform = (fixture) => ({
     receiver: fixture.receiver,
     status: fixture.status,
-    alerts: [fixture.alert]
+    alerts: [fixture.alert],
   });
   await sendFixturePayload(port, '/ticket', 'ticket-critical-firing.json', ticketTransform);
   await sendFixturePayload(port, '/ticket', 'ticket-critical-resolved.json', ticketTransform);

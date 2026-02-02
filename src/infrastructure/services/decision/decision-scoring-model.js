@@ -9,19 +9,19 @@ import logger from '../logging/logger.js';
 class DecisionScoringModel {
   constructor(options = {}) {
     this.logger = options.logger || logger;
-    
+
     // Score weights (total = 100)
     this.weights = {
-      contextScore: options.contextWeight || 30,  // 30% - market conditions, timing
-      signalScore: options.signalWeight || 40,    // 40% - technical analysis quality
-      riskScore: options.riskWeight || 30         // 30% - news, volatility, exposure
+      contextScore: options.contextWeight || 30, // 30% - market conditions, timing
+      signalScore: options.signalWeight || 40, // 40% - technical analysis quality
+      riskScore: options.riskWeight || 30, // 30% - news, volatility, exposure
     };
-    
+
     // Minimum thresholds
-    this.minEntryScore = options.minEntryScore || 65;  // 65/100 to enter
-    this.minHoldScore = options.minHoldScore || 45;    // 45/100 to hold
+    this.minEntryScore = options.minEntryScore || 65; // 65/100 to enter
+    this.minHoldScore = options.minHoldScore || 45; // 45/100 to hold
     this.emergencyExitScore = options.emergencyExitScore || 25; // Exit below 25
-    
+
     // Score history for trend analysis
     this.scoreHistory = new Map(); // tradeId -> [{ timestamp, score, reason }]
     this.maxHistorySize = 100;
@@ -35,41 +35,37 @@ class DecisionScoringModel {
     const contextScore = this.calculateContextScore(context);
     const signalScore = this.calculateSignalScore(signal);
     const riskScore = this.calculateRiskScore(risk);
-    
+
     // Weighted combination
     const totalScore = Math.round(
-      (contextScore.score * this.weights.contextScore / 100) +
-      (signalScore.score * this.weights.signalScore / 100) +
-      (riskScore.score * this.weights.riskScore / 100)
+      (contextScore.score * this.weights.contextScore) / 100 +
+        (signalScore.score * this.weights.signalScore) / 100 +
+        (riskScore.score * this.weights.riskScore) / 100
     );
-    
+
     // Determine decision
     const decision = this.determineDecision(totalScore, tradeId);
-    
+
     // Combine all reasons
-    const reasons = [
-      ...contextScore.reasons,
-      ...signalScore.reasons,
-      ...riskScore.reasons
-    ];
-    
+    const reasons = [...contextScore.reasons, ...signalScore.reasons, ...riskScore.reasons];
+
     const result = {
       totalScore,
       breakdown: {
         context: contextScore,
         signal: signalScore,
-        risk: riskScore
+        risk: riskScore,
       },
       decision,
       reasons,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     };
-    
+
     // Track score history if tradeId provided
     if (tradeId) {
       this.recordScoreHistory(tradeId, result);
     }
-    
+
     return result;
   }
 
@@ -80,7 +76,7 @@ class DecisionScoringModel {
   calculateContextScore(context = {}) {
     let score = 50; // Start neutral
     const reasons = [];
-    
+
     // Market phase (0-25 points)
     const phase = context.marketPhase;
     if (phase) {
@@ -94,7 +90,7 @@ class DecisionScoringModel {
         reasons.push(`Market phase unclear: ${phase}`);
       }
     }
-    
+
     // Trading session (0-15 points)
     const session = context.tradingSession;
     if (session === 'london' || session === 'newyork' || session === 'overlap') {
@@ -107,7 +103,7 @@ class DecisionScoringModel {
       score -= 10;
       reasons.push('Off-hours (avoid)');
     }
-    
+
     // Liquidity (0-10 points)
     const liquidity = context.liquidity;
     if (liquidity && liquidity >= 0.8) {
@@ -120,7 +116,7 @@ class DecisionScoringModel {
       score -= 5;
       reasons.push('Low liquidity warning');
     }
-    
+
     // Spread conditions (0-10 points)
     const spread = context.spread;
     const normalSpread = context.normalSpread || 0.0015;
@@ -134,11 +130,11 @@ class DecisionScoringModel {
       score -= 10;
       reasons.push('Wide spread warning');
     }
-    
+
     return {
       score: Math.max(0, Math.min(100, score)),
       reasons,
-      category: 'Context'
+      category: 'Context',
     };
   }
 
@@ -149,20 +145,20 @@ class DecisionScoringModel {
   calculateSignalScore(signal = {}) {
     let score = 0;
     const reasons = [];
-    
+
     // Base confidence and strength (0-40 points)
     const confidence = signal.confidence || 0;
     const strength = signal.strength || 0;
-    
+
     score += confidence * 0.25; // Up to 25 points from confidence
-    score += strength * 0.15;   // Up to 15 points from strength
-    
+    score += strength * 0.15; // Up to 15 points from strength
+
     if (confidence >= 70) {
       reasons.push(`High confidence: ${confidence}%`);
     } else if (confidence < 50) {
       reasons.push(`Low confidence warning: ${confidence}%`);
     }
-    
+
     // Multi-timeframe alignment (0-20 points)
     const mtfAlignment = signal.multiTimeframeAlignment;
     if (mtfAlignment >= 0.8) {
@@ -175,7 +171,7 @@ class DecisionScoringModel {
       score -= 5;
       reasons.push('Weak multi-timeframe alignment');
     }
-    
+
     // Confluence layers (0-20 points)
     const confluence = signal.confluence || 0;
     if (confluence >= 80) {
@@ -190,20 +186,23 @@ class DecisionScoringModel {
     } else {
       reasons.push(`Low confluence: ${confluence}%`);
     }
-    
+
     // Signal freshness (0-10 points)
     const age = signal.age || 0;
-    if (age < 60000) { // Less than 1 minute
+    if (age < 60000) {
+      // Less than 1 minute
       score += 10;
       reasons.push('Fresh signal');
-    } else if (age < 300000) { // Less than 5 minutes
+    } else if (age < 300000) {
+      // Less than 5 minutes
       score += 5;
       reasons.push('Recent signal');
-    } else if (age > 600000) { // More than 10 minutes
+    } else if (age > 600000) {
+      // More than 10 minutes
       score -= 10;
       reasons.push('Stale signal warning');
     }
-    
+
     // Trend alignment (0-10 points)
     const trendAlignment = signal.trendAlignment;
     if (trendAlignment === 'aligned') {
@@ -213,11 +212,11 @@ class DecisionScoringModel {
       score -= 5;
       reasons.push('Counter-trend (higher risk)');
     }
-    
+
     return {
       score: Math.max(0, Math.min(100, score)),
       reasons,
-      category: 'Signal'
+      category: 'Signal',
     };
   }
 
@@ -229,7 +228,7 @@ class DecisionScoringModel {
   calculateRiskScore(risk = {}) {
     let score = 100; // Start with maximum (lowest risk)
     const reasons = [];
-    
+
     // News impact (0-40 points penalty)
     const newsImpact = risk.newsImpact;
     if (newsImpact) {
@@ -243,7 +242,7 @@ class DecisionScoringModel {
         score -= 5;
         reasons.push('Low-impact news present');
       }
-      
+
       // Timing penalty
       if (newsImpact.timing === 'imminent') {
         score -= 15;
@@ -255,7 +254,7 @@ class DecisionScoringModel {
     } else {
       reasons.push('No major news conflicts');
     }
-    
+
     // Volatility risk (0-30 points penalty)
     const volatility = risk.volatility;
     if (volatility === 'extreme') {
@@ -270,7 +269,7 @@ class DecisionScoringModel {
     } else if (volatility === 'normal') {
       reasons.push('Normal volatility');
     }
-    
+
     // Exposure risk (0-20 points penalty)
     const exposure = risk.exposure || 0;
     if (exposure > 0.8) {
@@ -282,7 +281,7 @@ class DecisionScoringModel {
     } else if (exposure < 0.3) {
       reasons.push('Low exposure');
     }
-    
+
     // Correlation risk (0-10 points penalty)
     const correlation = risk.correlationRisk;
     if (correlation === 'high') {
@@ -292,11 +291,11 @@ class DecisionScoringModel {
       score -= 5;
       reasons.push('Moderate correlation');
     }
-    
+
     return {
       score: Math.max(0, Math.min(100, score)),
       reasons,
-      category: 'Risk'
+      category: 'Risk',
     };
   }
 
@@ -306,7 +305,7 @@ class DecisionScoringModel {
   determineDecision(totalScore, tradeId = null) {
     let action = 'HOLD';
     let confidence = 'MEDIUM';
-    
+
     if (!tradeId) {
       // Entry decision
       if (totalScore >= this.minEntryScore) {
@@ -320,7 +319,7 @@ class DecisionScoringModel {
       // Exit/hold decision for existing trade
       const history = this.getScoreHistory(tradeId);
       const trend = this.analyzeScoreTrend(history);
-      
+
       if (totalScore < this.emergencyExitScore) {
         action = 'EXIT_NOW';
         confidence = 'HIGH';
@@ -335,7 +334,7 @@ class DecisionScoringModel {
         confidence = 'MEDIUM';
       }
     }
-    
+
     return { action, confidence, score: totalScore };
   }
 
@@ -346,15 +345,15 @@ class DecisionScoringModel {
     if (!this.scoreHistory.has(tradeId)) {
       this.scoreHistory.set(tradeId, []);
     }
-    
+
     const history = this.scoreHistory.get(tradeId);
     history.push({
       timestamp: scoreResult.timestamp,
       score: scoreResult.totalScore,
       breakdown: scoreResult.breakdown,
-      reasons: scoreResult.reasons
+      reasons: scoreResult.reasons,
     });
-    
+
     // Keep bounded
     if (history.length > this.maxHistorySize) {
       history.shift();
@@ -375,11 +374,11 @@ class DecisionScoringModel {
     if (history.length < 2) {
       return 'stable';
     }
-    
+
     const recent = history.slice(-5); // Last 5 scores
     let increases = 0;
     let decreases = 0;
-    
+
     for (let i = 1; i < recent.length; i++) {
       if (recent[i].score > recent[i - 1].score) {
         increases++;
@@ -387,13 +386,13 @@ class DecisionScoringModel {
         decreases++;
       }
     }
-    
+
     if (decreases >= increases * 2) {
       return 'declining';
     } else if (increases >= decreases * 2) {
       return 'improving';
     }
-    
+
     return 'stable';
   }
 
@@ -409,16 +408,16 @@ class DecisionScoringModel {
    */
   explainScore(scoreResult) {
     const { totalScore, breakdown, decision, reasons } = scoreResult;
-    
+
     return {
       summary: `Total Score: ${totalScore}/100 → ${decision.action} (${decision.confidence} confidence)`,
       breakdown: {
         context: `${breakdown.context.score}/100 (${this.weights.contextScore}% weight)`,
         signal: `${breakdown.signal.score}/100 (${this.weights.signalWeight}% weight)`,
-        risk: `${breakdown.risk.score}/100 (${this.weights.riskScore}% weight)`
+        risk: `${breakdown.risk.score}/100 (${this.weights.riskScore}% weight)`,
       },
       reasons: reasons,
-      recommendation: this.getRecommendation(totalScore, decision.action)
+      recommendation: this.getRecommendation(totalScore, decision.action),
     };
   }
 

@@ -10,13 +10,15 @@ const DEFAULTS = {
   maxSpreadPipsMetals: 6,
   maxSpreadPipsCrypto: 25,
   maxSpreadRelative: 0.003,
-  maxNewsImpact: 70
+  maxNewsImpact: 70,
 };
 
 const toNumber = (value) => (Number.isFinite(Number(value)) ? Number(value) : null);
 
 const resolveBoolean = (value) => {
-  const raw = String(value || '').trim().toLowerCase();
+  const raw = String(value || '')
+    .trim()
+    .toLowerCase();
   if (!raw) {
     return false;
   }
@@ -27,7 +29,7 @@ export class AdvancedSignalFilter {
   constructor(options = {}) {
     this.options = {
       ...DEFAULTS,
-      ...(options || {})
+      ...(options || {}),
     };
   }
 
@@ -52,7 +54,7 @@ export class AdvancedSignalFilter {
       minConfidence: this.options.minConfidence,
       minStrength: this.options.minStrength,
       minDataQualityScore: this.options.minDataQualityScore,
-      maxNewsImpact: this.options.maxNewsImpact
+      maxNewsImpact: this.options.maxNewsImpact,
     };
   }
 
@@ -86,10 +88,12 @@ export class AdvancedSignalFilter {
     const spreadPips = toNumber(marketData?.spreadPips);
     const bid = toNumber(marketData?.eaQuote?.bid);
     const ask = toNumber(marketData?.eaQuote?.ask);
-    const mid = Number.isFinite(bid) && Number.isFinite(ask) && bid > 0 && ask > 0 ? (bid + ask) / 2 : null;
-    const spreadRelative = Number.isFinite(mid) && mid > 0 && Number.isFinite(bid) && Number.isFinite(ask)
-      ? Math.abs(ask - bid) / mid
-      : null;
+    const mid =
+      Number.isFinite(bid) && Number.isFinite(ask) && bid > 0 && ask > 0 ? (bid + ask) / 2 : null;
+    const spreadRelative =
+      Number.isFinite(mid) && mid > 0 && Number.isFinite(bid) && Number.isFinite(ask)
+        ? Math.abs(ask - bid) / mid
+        : null;
 
     const isFxLike = assetClass === 'forex' || assetClass === 'metals' || assetClass === 'crypto';
     if (isFxLike) {
@@ -138,8 +142,8 @@ export class AdvancedSignalFilter {
         dataQualityRecommendation: dqRecommendation || null,
         newsImpact,
         upcomingEvents,
-        assetClass
-      }
+        assetClass,
+      },
     };
   }
 }

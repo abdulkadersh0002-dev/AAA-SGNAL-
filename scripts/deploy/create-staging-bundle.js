@@ -49,7 +49,7 @@ async function buildManifest(stagingDir) {
     gitRef: process.env.GITHUB_REF_NAME || null,
     testsExecuted: parseTestSummary(process.env.PIPELINE_TEST_SUMMARY),
     nodeVersion: process.version,
-    notes: 'This bundle is intended for local/non-container deployment workflows.'
+    notes: 'This bundle is intended for local/non-container deployment workflows.',
   };
 
   await writeFile(path.join(stagingDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
@@ -79,7 +79,7 @@ async function main() {
   await writeReadme(stagingDir);
 
   const filesToCopy = [
-    { source: path.resolve('.env.example'), target: path.join(stagingDir, 'env.template') }
+    { source: path.resolve('.env.example'), target: path.join(stagingDir, 'env.template') },
   ];
 
   for (const entry of filesToCopy) {

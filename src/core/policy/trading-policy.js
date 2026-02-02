@@ -13,8 +13,16 @@ export function resolveNewsGuardThresholds(engineConfig = {}) {
   const configMinutes = toFiniteNumber(engineConfig.newsBlackoutMinutes);
 
   return {
-    impactThreshold: Number.isFinite(envImpact) ? envImpact : Number.isFinite(configImpact) ? configImpact : 60,
-    blackoutMinutes: Number.isFinite(envMinutes) ? envMinutes : Number.isFinite(configMinutes) ? configMinutes : 30
+    impactThreshold: Number.isFinite(envImpact)
+      ? envImpact
+      : Number.isFinite(configImpact)
+        ? configImpact
+        : 60,
+    blackoutMinutes: Number.isFinite(envMinutes)
+      ? envMinutes
+      : Number.isFinite(configMinutes)
+        ? configMinutes
+        : 30,
   };
 }
 

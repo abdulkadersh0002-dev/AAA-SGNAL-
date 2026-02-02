@@ -29,7 +29,7 @@ export default class ClientTokenService {
     return jwt.sign(payload, secret, {
       expiresIn: options.expiresIn || DEFAULT_ACCESS_EXPIRY,
       issuer: 'SignalsStrategy',
-      audience: 'client-app'
+      audience: 'client-app',
     });
   }
 
@@ -41,7 +41,7 @@ export default class ClientTokenService {
     return jwt.sign(payload, secret, {
       expiresIn: options.expiresIn || DEFAULT_REFRESH_EXPIRY,
       issuer: 'SignalsStrategy',
-      audience: 'client-app'
+      audience: 'client-app',
     });
   }
 
@@ -50,7 +50,7 @@ export default class ClientTokenService {
     return jwt.sign(payload, secret, {
       expiresIn: options.expiresIn || DEFAULT_CHALLENGE_EXPIRY,
       issuer: 'SignalsStrategy',
-      audience: 'client-app'
+      audience: 'client-app',
     });
   }
 
@@ -59,7 +59,7 @@ export default class ClientTokenService {
     return jwt.verify(token, secret, {
       issuer: 'SignalsStrategy',
       audience: 'client-app',
-      ...options
+      ...options,
     });
   }
 
@@ -68,7 +68,7 @@ export default class ClientTokenService {
     return jwt.verify(token, secret, {
       issuer: 'SignalsStrategy',
       audience: 'client-app',
-      ...options
+      ...options,
     });
   }
 
@@ -77,7 +77,7 @@ export default class ClientTokenService {
     return jwt.verify(token, secret, {
       issuer: 'SignalsStrategy',
       audience: 'client-app',
-      ...options
+      ...options,
     });
   }
 

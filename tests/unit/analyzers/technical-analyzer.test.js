@@ -12,7 +12,7 @@ test('calculateOverallScore uses timeframe weights', () => {
     M15: { score: 20 },
     H1: { score: 40 },
     H4: { score: -10 },
-    D1: { score: 5 }
+    D1: { score: 5 },
   });
   const expected = (20 * 0.2 + 40 * 0.25 + -10 * 0.25 + 5 * 0.3) / (0.2 + 0.25 + 0.25 + 0.3);
   assert.equal(score, expected);
@@ -32,7 +32,7 @@ test('generateSignals emits entries for strong timeframe scores', () => {
   const signals = analyzer.generateSignals({
     M15: { score: 30, lastPrice: 1.1, direction: 'BUY', patterns: [{ name: 'EMA Cross' }] },
     H1: { score: -35, lastPrice: 1.09, direction: 'SELL', patterns: [{ name: 'MACD' }] },
-    H4: { score: 10, lastPrice: 1.08, direction: 'NEUTRAL', patterns: [] }
+    H4: { score: 10, lastPrice: 1.08, direction: 'NEUTRAL', patterns: [] },
   });
 
   assert.equal(signals.length, 2);

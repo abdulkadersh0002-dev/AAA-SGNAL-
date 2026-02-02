@@ -29,7 +29,7 @@ function summarizeProviderHealth(priceDataFetcher, heartbeat, requireRealtime) {
       label: 'Price Data Feeds',
       state: 'operational',
       detail: 'EA bridge provides live prices',
-      meta: { providers: [] }
+      meta: { providers: [] },
     };
   }
   if (!priceDataFetcher) {
@@ -38,7 +38,7 @@ function summarizeProviderHealth(priceDataFetcher, heartbeat, requireRealtime) {
       label: 'Price Data Feeds',
       state: 'critical',
       detail: 'Price data fetcher unavailable',
-      meta: { providers: [] }
+      meta: { providers: [] },
     };
   }
 
@@ -67,8 +67,8 @@ function summarizeProviderHealth(priceDataFetcher, heartbeat, requireRealtime) {
         ? `Providers active: ${configuredProviders.join(', ')}`
         : 'No live price providers configured',
       meta: {
-        providers: configuredProviders.map((provider) => ({ provider, status: 'configured' }))
-      }
+        providers: configuredProviders.map((provider) => ({ provider, status: 'configured' })),
+      },
     };
   }
 
@@ -91,7 +91,7 @@ function summarizeProviderHealth(priceDataFetcher, heartbeat, requireRealtime) {
       successRate: snapshot.successRate ?? null,
       lastSuccessAt: snapshot.lastSuccessAt || null,
       lastFailureAt: snapshot.lastFailureAt || null,
-      dataConfidence: snapshot.dataConfidence ?? null
+      dataConfidence: snapshot.dataConfidence ?? null,
     };
   });
 
@@ -130,8 +130,8 @@ function summarizeProviderHealth(priceDataFetcher, heartbeat, requireRealtime) {
     meta: {
       providers,
       aggregateConfidence: aggregateConfidence != null ? toPercent(aggregateConfidence) : null,
-      lastErrorSeconds
-    }
+      lastErrorSeconds,
+    },
   };
 }
 
@@ -142,7 +142,7 @@ function summarizeNewsHealth(newsAnalyzer) {
       id: 'news',
       label: 'News & Sentiment',
       state: 'critical',
-      detail: 'News analyzer unavailable'
+      detail: 'News analyzer unavailable',
     };
   }
 
@@ -160,8 +160,8 @@ function summarizeNewsHealth(newsAnalyzer) {
           : 'RSS aggregator configured without feeds',
       meta: {
         rssOnly: true,
-        feedCount
-      }
+        feedCount,
+      },
     };
   }
 
@@ -188,8 +188,8 @@ function summarizeNewsHealth(newsAnalyzer) {
     state,
     detail,
     meta: {
-      configured: Object.keys(apiKeys)
-    }
+      configured: Object.keys(apiKeys),
+    },
   };
 }
 
@@ -199,7 +199,7 @@ function summarizeEconomicHealth(economicAnalyzer) {
       id: 'macro',
       label: 'Economic Analyzer',
       state: 'operational',
-      detail: 'EA-only mode (optional)'
+      detail: 'EA-only mode (optional)',
     };
   }
   if (!economicAnalyzer) {
@@ -207,7 +207,7 @@ function summarizeEconomicHealth(economicAnalyzer) {
       id: 'macro',
       label: 'Economic Analyzer',
       state: 'critical',
-      detail: 'Economic analyzer unavailable'
+      detail: 'Economic analyzer unavailable',
     };
   }
 
@@ -230,8 +230,8 @@ function summarizeEconomicHealth(economicAnalyzer) {
     detail,
     meta: {
       cacheSize,
-      configured: hasKey
-    }
+      configured: hasKey,
+    },
   };
 }
 
@@ -241,7 +241,7 @@ function summarizeSignalEngine(tradeManager, tradingEngine) {
       id: 'signals',
       label: 'Signal Engine',
       state: 'critical',
-      detail: 'Trading engine unavailable'
+      detail: 'Trading engine unavailable',
     };
   }
 
@@ -271,8 +271,8 @@ function summarizeSignalEngine(tradeManager, tradingEngine) {
     meta: {
       pairs,
       enabled: Boolean(status.enabled),
-      totalTrades
-    }
+      totalTrades,
+    },
   };
 }
 
@@ -342,15 +342,15 @@ function summarizeEaBridgeHealth(eaBridgeService) {
         sessions: count,
         latestQuoteSymbol,
         latestQuoteAgeMs,
-        maxAgeMs
-      }
+        maxAgeMs,
+      },
     };
   } catch (_error) {
     return {
       id: 'ea_bridge',
       label: 'EA Bridge',
       state: 'degraded',
-      detail: 'EA bridge status unavailable'
+      detail: 'EA bridge status unavailable',
     };
   }
 }
@@ -359,7 +359,7 @@ export function buildModuleHealthSummary({
   tradingEngine,
   tradeManager,
   heartbeatMonitor,
-  eaBridgeService
+  eaBridgeService,
 }) {
   const requireRealtime = requireRealTimeData();
   const heartbeat = summarizeHeartbeat(heartbeatMonitor);
@@ -386,16 +386,16 @@ export function buildModuleHealthSummary({
     overall: {
       state: overallState,
       requireRealTime: requireRealtime,
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
     },
     modules,
     heartbeat: heartbeat
       ? {
           status: heartbeat.status,
           timestamp: heartbeat.timestamp,
-          summary: heartbeat.summary
+          summary: heartbeat.summary,
         }
-      : null
+      : null,
   };
 }
 
@@ -407,7 +407,7 @@ export function buildHealthzPayload(context) {
     status: summary.overall.state,
     requireRealTime: summary.overall.requireRealTime,
     updatedAt: summary.overall.updatedAt,
-    modules: summary.modules
+    modules: summary.modules,
   };
 }
 
@@ -418,7 +418,7 @@ export function buildProviderAvailabilitySnapshot({
   priceDataFetcher,
   timeframes,
   requireHealthyQuality = true,
-  qualityThreshold
+  qualityThreshold,
 } = {}) {
   const timestamp = Date.now();
 
@@ -432,7 +432,7 @@ export function buildProviderAvailabilitySnapshot({
       dataConfidence: null,
       providerOrder: [],
       rateLimits: {},
-      defaultAvailability: null
+      defaultAvailability: null,
     };
   }
 
@@ -489,8 +489,8 @@ export function buildProviderAvailabilitySnapshot({
         avgLatencyMs: metrics.avgLatencyMs ?? null,
         normalizedQuality: metrics.normalizedQuality ?? null,
         healthStatus: metrics.healthStatus ?? 'unknown',
-        rateLimited: metrics.rateLimited ?? 0
-      }
+        rateLimited: metrics.rateLimited ?? 0,
+      },
     };
   });
 
@@ -501,7 +501,7 @@ export function buildProviderAvailabilitySnapshot({
   const timeframeReports = selectedTimeframes.map((timeframe) => {
     const viabilityOptions = {
       includeDetails: true,
-      requireHealthyQuality
+      requireHealthyQuality,
     };
     if (Number.isFinite(effectiveQualityThreshold)) {
       viabilityOptions.qualityThreshold = effectiveQualityThreshold;
@@ -517,7 +517,7 @@ export function buildProviderAvailabilitySnapshot({
         qualitySatisfied: false,
         inspectedAt: timestamp,
         reasons: ['viability_unavailable'],
-        availabilityDetails: []
+        availabilityDetails: [],
       };
     }
     const blockedProviders = Array.isArray(viability.blockedProviders)
@@ -544,7 +544,7 @@ export function buildProviderAvailabilitySnapshot({
       qualitySatisfied: viability.qualitySatisfied !== false,
       inspectedAt: Number.isFinite(viability.inspectedAt) ? viability.inspectedAt : timestamp,
       reasons: Array.isArray(viability.reasons) ? [...viability.reasons] : [],
-      availabilityDetails
+      availabilityDetails,
     };
   });
 
@@ -557,7 +557,7 @@ export function buildProviderAvailabilitySnapshot({
       maxRequests: entry?.maxRequests ?? null,
       resetInMs: entry?.resetIn ?? null,
       backoffSeconds: entry?.backoffSeconds ?? null,
-      backoffUntil: entry?.backoffUntil ?? null
+      backoffUntil: entry?.backoffUntil ?? null,
     };
   }
 
@@ -574,7 +574,7 @@ export function buildProviderAvailabilitySnapshot({
     dataConfidence,
     providerOrder,
     rateLimits,
-    defaultAvailability: health?.availability ?? null
+    defaultAvailability: health?.availability ?? null,
   };
 }
 
@@ -582,7 +582,7 @@ const DEFAULT_PROVIDER_CLASSIFICATION = {
   degradedRatio: 0.3,
   criticalRatio: 0.75,
   qualityWarningThreshold: 60,
-  qualityCriticalThreshold: 45
+  qualityCriticalThreshold: 45,
 };
 
 const numberOrNull = (value) => {
@@ -606,14 +606,14 @@ export function classifyProviderAvailabilitySnapshot(snapshot, options = {}) {
         blockedProviderRatio: 0,
         blockedTimeframeRatio: 0,
         aggregateQuality: null,
-        normalizedQuality: null
+        normalizedQuality: null,
       },
       context: {
         unavailableProviders: [],
         breakerProviders: [],
         blockedTimeframes: [],
-        reasons: []
-      }
+        reasons: [],
+      },
     };
   }
 
@@ -627,7 +627,7 @@ export function classifyProviderAvailabilitySnapshot(snapshot, options = {}) {
         acc.enabled = Boolean(value);
       }
       return acc;
-    }, {})
+    }, {}),
   };
 
   const providers = Array.isArray(snapshot.providers) ? snapshot.providers : [];
@@ -747,7 +747,7 @@ export function classifyProviderAvailabilitySnapshot(snapshot, options = {}) {
       blockedProviderRatio,
       blockedTimeframeRatio,
       aggregateQuality,
-      normalizedQuality
+      normalizedQuality,
     },
     context: {
       unavailableProviders: unavailableProviders.map((entry) => entry.provider),
@@ -761,8 +761,8 @@ export function classifyProviderAvailabilitySnapshot(snapshot, options = {}) {
       aggregateQuality,
       normalizedQuality,
       blockedProviderRatio,
-      blockedTimeframeRatio
-    }
+      blockedTimeframeRatio,
+    },
   };
 }
 
@@ -783,7 +783,7 @@ export function summarizeProviderAvailabilityHistory(history = [], options = {})
       windowEnd: null,
       windowMs: null,
       averageAggregateQuality: null,
-      averageNormalizedQuality: null
+      averageNormalizedQuality: null,
     };
   }
 
@@ -809,7 +809,7 @@ export function summarizeProviderAvailabilityHistory(history = [], options = {})
       windowEnd: null,
       windowMs: null,
       averageAggregateQuality: null,
-      averageNormalizedQuality: null
+      averageNormalizedQuality: null,
     };
   }
 
@@ -901,6 +901,6 @@ export function summarizeProviderAvailabilityHistory(history = [], options = {})
     averageAggregateQuality:
       aggregateQualityCount > 0 ? aggregateQualityTotal / aggregateQualityCount : null,
     averageNormalizedQuality:
-      normalizedQualityCount > 0 ? normalizedQualityTotal / normalizedQualityCount : null
+      normalizedQualityCount > 0 ? normalizedQualityTotal / normalizedQualityCount : null,
   };
 }

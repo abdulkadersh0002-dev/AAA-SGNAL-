@@ -5,7 +5,7 @@ import {
   badRequest,
   notFound,
   serverError,
-  serviceUnavailable
+  serviceUnavailable,
 } from '../../../src/utils/http-response.js';
 
 function createRes({ requestId = null } = {}) {
@@ -20,7 +20,7 @@ function createRes({ requestId = null } = {}) {
     json(payload) {
       this.body = payload;
       return this;
-    }
+    },
   };
   return res;
 }

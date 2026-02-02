@@ -18,7 +18,7 @@ const normalizeKeys = (raw) => {
         entries.push({
           id: item.id || item.name || item.key,
           value: item.value || item.key,
-          roles: Array.isArray(item.roles) ? item.roles : []
+          roles: Array.isArray(item.roles) ? item.roles : [],
         });
       } else {
         Object.entries(item).forEach(([key, value]) => {
@@ -26,7 +26,7 @@ const normalizeKeys = (raw) => {
             entries.push({
               id: value.id || key,
               value: value.value || key,
-              roles: value.roles || []
+              roles: value.roles || [],
             });
           } else if (typeof value === 'string') {
             entries.push({ id: key, value, roles: [] });
@@ -48,7 +48,7 @@ const normalizeKeys = (raw) => {
         entries.push({
           id: value.id || id,
           value: value.value || value.key || id,
-          roles: value.roles || []
+          roles: value.roles || [],
         });
       }
     });
@@ -69,7 +69,7 @@ const normalizeKeys = (raw) => {
     }
     map.set(entry.value, {
       id: entry.id || entry.value,
-      roles: Array.isArray(entry.roles) ? entry.roles : []
+      roles: Array.isArray(entry.roles) ? entry.roles : [],
     });
   });
   return map;
@@ -111,12 +111,12 @@ export const createApiAuthMiddleware = (options = {}) => {
   const exemptRoutes = options.exemptRoutes || [
     { method: 'GET', path: /^\/api\/health(\/.*)?$/ },
     { method: 'GET', path: /^\/api\/health\/heartbeat(\/.*)?$/ },
-    { method: 'GET', path: /^\/metrics$/ }
+    { method: 'GET', path: /^\/metrics$/ },
   ];
 
   const cache = {
     expiresAt: 0,
-    map: new Map()
+    map: new Map(),
   };
 
   const shouldSkip = (req) => {
@@ -170,7 +170,7 @@ export const createApiAuthMiddleware = (options = {}) => {
       return res.status(503).json({
         success: false,
         error: 'API authentication temporarily unavailable',
-        ...(_requestId ? { requestId: _requestId } : null)
+        ...(_requestId ? { requestId: _requestId } : null),
       });
     }
 
@@ -187,13 +187,13 @@ export const createApiAuthMiddleware = (options = {}) => {
       auditLogger?.record('auth.missing', {
         method: req.method,
         path: req.originalUrl || req.url,
-        ip: req.ip
+        ip: req.ip,
       });
       const _requestId = res?.locals?.requestId;
       return res.status(401).json({
         success: false,
         error: 'Missing API key',
-        ...(_requestId ? { requestId: _requestId } : null)
+        ...(_requestId ? { requestId: _requestId } : null),
       });
     }
 
@@ -202,20 +202,20 @@ export const createApiAuthMiddleware = (options = {}) => {
       auditLogger?.record('auth.denied', {
         method: req.method,
         path: req.originalUrl || req.url,
-        ip: req.ip
+        ip: req.ip,
       });
       const _requestId = res?.locals?.requestId;
       return res.status(403).json({
         success: false,
         error: 'Invalid API key',
-        ...(_requestId ? { requestId: _requestId } : null)
+        ...(_requestId ? { requestId: _requestId } : null),
       });
     }
 
     const identity = {
       id: entry.id,
       roles: Array.from(new Set(entry.roles || [])),
-      key: supplied
+      key: supplied,
     };
 
     req.identity = identity;
@@ -224,7 +224,7 @@ export const createApiAuthMiddleware = (options = {}) => {
       method: req.method,
       path: req.originalUrl || req.url,
       id: identity.id,
-      roles: identity.roles
+      roles: identity.roles,
     });
 
     return next();
@@ -241,7 +241,7 @@ export const createApiAuthMiddleware = (options = {}) => {
         return res.status(403).json({
           success: false,
           error: 'Forbidden',
-          ...(_requestId ? { requestId: _requestId } : null)
+          ...(_requestId ? { requestId: _requestId } : null),
         });
       }
       const ok = roles.every((role) => identity.roles.includes(role));
@@ -250,13 +250,13 @@ export const createApiAuthMiddleware = (options = {}) => {
           method: req.method,
           path: req.originalUrl || req.url,
           id: identity.id,
-          required: roles
+          required: roles,
         });
         const _requestId = res?.locals?.requestId;
         return res.status(403).json({
           success: false,
           error: 'Forbidden',
-          ...(_requestId ? { requestId: _requestId } : null)
+          ...(_requestId ? { requestId: _requestId } : null),
         });
       }
       return next();
@@ -274,7 +274,7 @@ export const createApiAuthMiddleware = (options = {}) => {
         return res.status(403).json({
           success: false,
           error: 'Forbidden',
-          ...(_requestId ? { requestId: _requestId } : null)
+          ...(_requestId ? { requestId: _requestId } : null),
         });
       }
       const ok = identity.roles.some((role) => roles.includes(role));
@@ -283,13 +283,13 @@ export const createApiAuthMiddleware = (options = {}) => {
           method: req.method,
           path: req.originalUrl || req.url,
           id: identity.id,
-          anyOf: roles
+          anyOf: roles,
         });
         const _requestId = res?.locals?.requestId;
         return res.status(403).json({
           success: false,
           error: 'Forbidden',
-          ...(_requestId ? { requestId: _requestId } : null)
+          ...(_requestId ? { requestId: _requestId } : null),
         });
       }
       return next();
@@ -301,6 +301,6 @@ export const createApiAuthMiddleware = (options = {}) => {
     authenticate,
     requireRoles,
     requireAnyRole,
-    loadKeys
+    loadKeys,
   };
 };

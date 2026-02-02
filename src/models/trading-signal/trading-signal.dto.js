@@ -36,7 +36,7 @@ export const TradingSignalSchema = z
         expiresAt: z.number().nullable().optional(),
         ttlMs: z.number().nullable().optional(),
         evaluatedAt: z.number().nullable().optional(),
-        reason: z.string().nullable().optional()
+        reason: z.string().nullable().optional(),
       })
       .nullable()
       .optional(),
@@ -49,7 +49,7 @@ export const TradingSignalSchema = z
         action: z.enum(['BUY', 'SELL', 'NEUTRAL']),
         reason: z.string().nullable().optional(),
         reasons: z.array(z.string()).optional(),
-        tradeValid: z.boolean().nullable().optional()
+        tradeValid: z.boolean().nullable().optional(),
       })
       .nullable()
       .optional(),
@@ -78,10 +78,10 @@ export const TradingSignalSchema = z
                     id: z.string(),
                     label: z.string().nullable().optional(),
                     reason: z.string().nullable().optional(),
-                    weight: z.number().nullable().optional()
+                    weight: z.number().nullable().optional(),
                   })
                 )
-                .optional()
+                .optional(),
             })
             .nullable()
             .optional(),
@@ -91,18 +91,18 @@ export const TradingSignalSchema = z
           missingInputs: z
             .object({
               missing: z.array(z.string()).optional(),
-              details: z.record(z.unknown()).optional()
+              details: z.record(z.unknown()).optional(),
             })
             .optional(),
           nextSteps: z.array(z.string()).optional(),
           contributors: z.record(z.unknown()).optional(),
           modifiers: z.record(z.unknown()).optional(),
-          context: z.record(z.unknown()).optional()
+          context: z.record(z.unknown()).optional(),
         })
-        .optional()
+        .optional(),
     }),
     explainability: z.unknown().nullable(),
-    reasoning: z.array(z.string()).nullable().optional()
+    reasoning: z.array(z.string()).nullable().optional(),
   })
   .strict();
 
@@ -126,7 +126,7 @@ export function createTradingSignalDTO(raw) {
       riskManagement: {},
       isValid: { isValid: false, checks: {}, reason: 'Empty signal' },
       explainability: null,
-      reasoning: null
+      reasoning: null,
     };
   }
 
@@ -162,11 +162,10 @@ export function createTradingSignalDTO(raw) {
                 ? null
                 : Number(raw.validity.ttlMs),
             evaluatedAt:
-              raw.validity.evaluatedAt == null ||
-              !Number.isFinite(Number(raw.validity.evaluatedAt))
+              raw.validity.evaluatedAt == null || !Number.isFinite(Number(raw.validity.evaluatedAt))
                 ? null
                 : Number(raw.validity.evaluatedAt),
-            reason: raw.validity.reason != null ? String(raw.validity.reason) : null
+            reason: raw.validity.reason != null ? String(raw.validity.reason) : null,
           }
         : null,
     direction: raw.direction || 'NEUTRAL',
@@ -187,7 +186,7 @@ export function createTradingSignalDTO(raw) {
             tradeValid:
               raw.finalDecision.tradeValid === null || raw.finalDecision.tradeValid === undefined
                 ? null
-                : Boolean(raw.finalDecision.tradeValid)
+                : Boolean(raw.finalDecision.tradeValid),
           }
         : null,
     components: raw.components || {},
@@ -205,7 +204,7 @@ export function createTradingSignalDTO(raw) {
         return Object.fromEntries(
           Object.entries(checks).map(([key, value]) => [
             key,
-            value === null ? false : Boolean(value)
+            value === null ? false : Boolean(value),
           ])
         );
       })(),
@@ -244,12 +243,12 @@ export function createTradingSignalDTO(raw) {
               context:
                 raw.isValid.decision.context && typeof raw.isValid.decision.context === 'object'
                   ? raw.isValid.decision.context
-                  : undefined
+                  : undefined,
             }
-          : undefined
+          : undefined,
     },
     explainability: raw.explainability ?? null,
-    reasoning: Array.isArray(raw.reasoning) ? raw.reasoning : null
+    reasoning: Array.isArray(raw.reasoning) ? raw.reasoning : null,
   };
 }
 

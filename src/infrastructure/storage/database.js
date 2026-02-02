@@ -26,7 +26,7 @@ function getConfig() {
     idleTimeoutMillis: 30000,
     connectionTimeoutMillis: 10000,
     statement_timeout: 15000,
-    query_timeout: 15000
+    query_timeout: 15000,
   };
 }
 

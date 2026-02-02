@@ -25,7 +25,7 @@ export function splitIntoWalkForwardWindows(bars = [], options = {}) {
       startTs: timestampOf(segment[0]?.timestamp ?? segment[0]?.time),
       endTs: timestampOf(
         segment[segment.length - 1]?.timestamp ?? segment[segment.length - 1]?.time
-      )
+      ),
     });
   }
 
@@ -38,7 +38,7 @@ export function runWalkForwardValidation({
   bars = [],
   signals = [],
   backtester,
-  options = {}
+  options = {},
 }) {
   if (!backtester || typeof backtester.run !== 'function') {
     throw new Error('Backtester with run() method is required for walk-forward validation');
@@ -60,7 +60,7 @@ export function runWalkForwardValidation({
         timeframe,
         trades: [],
         metrics: buildPerformanceSummary([], {}),
-        window
+        window,
       });
       return;
     }
@@ -69,7 +69,7 @@ export function runWalkForwardValidation({
       pair,
       timeframe,
       bars: window.bars,
-      signals: windowSignals
+      signals: windowSignals,
     });
 
     results.push({
@@ -79,7 +79,7 @@ export function runWalkForwardValidation({
       trades: runResult.trades,
       metrics: runResult.metrics,
       window,
-      equityCurve: runResult.equityCurve
+      equityCurve: runResult.equityCurve,
     });
   });
 
@@ -91,7 +91,7 @@ export function runWalkForwardValidation({
   return {
     windows,
     results,
-    aggregateMetrics
+    aggregateMetrics,
   };
 }
 

@@ -11,7 +11,7 @@ const TIMEFRAME_SECONDS = {
   H4: 14400,
   H6: 21600,
   H12: 43200,
-  D1: 86400
+  D1: 86400,
 };
 
 const SPIKE_THRESHOLDS = {
@@ -21,21 +21,21 @@ const SPIKE_THRESHOLDS = {
   M30: 1.4,
   H1: 1.2,
   H4: 0.9,
-  D1: 0.6
+  D1: 0.6,
 };
 
 const SPREAD_THRESHOLDS = {
   majors: { warn: 2.2, block: 3.8 },
   yen: { warn: 2.6, block: 4.2 },
   minors: { warn: 2.8, block: 5.0 },
-  crosses: { warn: 3.4, block: 6.2 }
+  crosses: { warn: 3.4, block: 6.2 },
 };
 
 const AUTO_REENABLE_DEFAULTS = {
   enabled: true,
   minScore: 78,
   minHealthyCount: 2,
-  windowMs: 4 * 60 * 1000
+  windowMs: 4 * 60 * 1000,
 };
 
 function normalizePairCategory(pair) {
@@ -94,8 +94,8 @@ function priceToPips(pair, priceDiff) {
   const pipSize = Number.isFinite(metadata?.pipSize)
     ? Number(metadata.pipSize)
     : String(pair || '')
-        .toUpperCase()
-        .endsWith('JPY')
+          .toUpperCase()
+          .endsWith('JPY')
       ? 0.01
       : 0.0001;
 
@@ -120,7 +120,7 @@ export const dataQualityGuard = {
         : AUTO_REENABLE_DEFAULTS.minHealthyCount,
       windowMs: Number.isFinite(raw.autoReenableWindowMs)
         ? raw.autoReenableWindowMs
-        : AUTO_REENABLE_DEFAULTS.windowMs
+        : AUTO_REENABLE_DEFAULTS.windowMs,
     };
   },
 
@@ -166,10 +166,10 @@ export const dataQualityGuard = {
     for (const timeframe of timeframes) {
       try {
         const priceBars = await this.priceDataFetcher.fetchPriceData(pair, timeframe, bars, {
-          purpose: 'quality-check'
+          purpose: 'quality-check',
         });
         const report = await this.evaluateTimeframeQuality(pair, priceBars, timeframe, {
-          relaxForSynthetic
+          relaxForSynthetic,
         });
         timeframeReports[timeframe] = report;
         aggregateScore += report.score;
@@ -203,7 +203,7 @@ export const dataQualityGuard = {
           score: 40,
           barsEvaluated: 0,
           issues: ['fetch_failed'],
-          error: error.message
+          error: error.message,
         };
         aggregateScore += 40;
         assessedCount++;
@@ -288,19 +288,19 @@ export const dataQualityGuard = {
         status: spreadStatus,
         pips: spreadPips,
         provider: spreadSnapshot?.provider || null,
-        timestamp: spreadSnapshot?.timestamp || null
+        timestamp: spreadSnapshot?.timestamp || null,
       },
       weekendGap: {
         severity: worstWeekendGapSeverity,
-        maxPips: maxWeekendGapPips
+        maxPips: maxWeekendGapPips,
       },
       syntheticRelaxed: relaxForSynthetic,
       syntheticContext: relaxForSynthetic
         ? {
             suppressedIssues,
-            notes: spreadStatus === 'critical' ? ['spread_status_critical'] : []
+            notes: spreadStatus === 'critical' ? ['spread_status_critical'] : [],
           }
-        : null
+        : null,
     };
 
     if (!this.dataQualityAssessments) {
@@ -347,7 +347,7 @@ export const dataQualityGuard = {
               : 'quality_score',
         score: adjustedScore,
         spreadPips,
-        weekendGapPips: maxWeekendGapPips
+        weekendGapPips: maxWeekendGapPips,
       });
       this.config?.auditLogger?.record?.('data_quality.circuit_breaker.activated', {
         pair,
@@ -355,7 +355,7 @@ export const dataQualityGuard = {
         score: adjustedScore,
         spreadPips,
         weekendGapPips: maxWeekendGapPips,
-        expiresAt: breakerEntry?.expiresAt || null
+        expiresAt: breakerEntry?.expiresAt || null,
       });
       report.recommendation = 'block';
       if (!issues.includes('pair:circuit_breaker_triggered')) {
@@ -369,7 +369,7 @@ export const dataQualityGuard = {
     const streak = this.updatePairQualityStreak(pair, {
       assessedAt,
       status,
-      score: adjustedScore
+      score: adjustedScore,
     });
 
     if (
@@ -387,14 +387,14 @@ export const dataQualityGuard = {
         at: assessedAt,
         reason: 'auto_reenable',
         healthyCount: streak.healthyCount,
-        healthySince: streak.healthySince
+        healthySince: streak.healthySince,
       };
       this.config?.auditLogger?.record?.('data_quality.circuit_breaker.cleared', {
         pair,
         reason: 'auto_reenable',
         healthyCount: streak.healthyCount,
         healthySince: streak.healthySince,
-        score: adjustedScore
+        score: adjustedScore,
       });
     }
 
@@ -415,7 +415,7 @@ export const dataQualityGuard = {
           status,
           recommendation,
           issues,
-          timeframeReports
+          timeframeReports,
         });
       } catch (error) {
         console.error('Failed to persist data quality metric:', error.message);
@@ -447,9 +447,9 @@ export const dataQualityGuard = {
       weekendGap: {
         detected: false,
         pips: 0,
-        severity: 'none'
+        severity: 'none',
       },
-      suppressedIssues: []
+      suppressedIssues: [],
     };
 
     if (!Array.isArray(bars) || bars.length < 5) {
@@ -638,7 +638,7 @@ export const dataQualityGuard = {
       healthySince: 0,
       lastAssessmentAt: 0,
       lastScore: null,
-      lastStatus: null
+      lastStatus: null,
     };
 
     const isHealthy = status === 'healthy' && Number.isFinite(score);
@@ -690,10 +690,10 @@ export const dataQualityGuard = {
       context: {
         score: details.score ?? null,
         spreadPips: details.spreadPips ?? null,
-        weekendGapPips: details.weekendGapPips ?? null
-      }
+        weekendGapPips: details.weekendGapPips ?? null,
+      },
     };
     map.set(pair, entry);
     return entry;
-  }
+  },
 };

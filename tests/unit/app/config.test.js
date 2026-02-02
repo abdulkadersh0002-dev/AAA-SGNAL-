@@ -6,7 +6,7 @@ import {
   parseFloatSafe,
   parseIntSafe,
   parseJsonSafe,
-  parseListSafe
+  parseListSafe,
 } from '../../../src/app/config.js';
 
 describe('app config', () => {
@@ -89,7 +89,7 @@ describe('app config', () => {
         ALERT_SMTP_PORT: '2525',
         ALERT_SMTP_SECURE: 'true',
         ALERT_SMTP_USER: 'user',
-        ALERT_SMTP_PASSWORD: 'pass'
+        ALERT_SMTP_PASSWORD: 'pass',
       });
 
       assert.ok(enabled.alerting.email);
@@ -107,7 +107,7 @@ describe('app config', () => {
       const enabled = buildAppConfig({
         ENABLE_BROKER_OANDA: 'true',
         OANDA_ACCESS_TOKEN: 'token',
-        OANDA_ACCOUNT_ID: 'account'
+        OANDA_ACCOUNT_ID: 'account',
       });
       assert.equal(enabled.brokers.oanda.enabled, true);
     });

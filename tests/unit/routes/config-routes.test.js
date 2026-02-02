@@ -17,7 +17,7 @@ async function startEphemeralServer(app) {
   }
   return {
     server,
-    baseUrl: `http://127.0.0.1:${port}`
+    baseUrl: `http://127.0.0.1:${port}`,
   };
 }
 
@@ -25,7 +25,7 @@ function createLogger() {
   return {
     info() {},
     warn() {},
-    error() {}
+    error() {},
   };
 }
 
@@ -58,7 +58,7 @@ describe('config routes (unit)', () => {
         }
         tradingPairs.splice(idx, 1);
         return { success: true, message: 'Pair removed', pairs: tradingPairs };
-      }
+      },
     };
 
     tradingEngine = {
@@ -68,8 +68,8 @@ describe('config routes (unit)', () => {
         maxDailyRisk: 0.06,
         maxConcurrentTrades: 5,
         signalAmplifier: 2.5,
-        directionThreshold: 12
-      }
+        directionThreshold: 12,
+      },
     };
 
     const app = express();
@@ -84,7 +84,7 @@ describe('config routes (unit)', () => {
         auditLogger: { record: async () => {} },
         logger: createLogger(),
         requireConfigRead: (req, res, next) => next(),
-        requireConfigWrite: (req, res, next) => next()
+        requireConfigWrite: (req, res, next) => next(),
       })
     );
 
@@ -118,7 +118,7 @@ describe('config routes (unit)', () => {
     const bad = await fetch(`${baseUrl}/api/pairs/add`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({})
+      body: JSON.stringify({}),
     });
     assert.equal(bad.status, 400);
     const badBody = await bad.json();
@@ -128,7 +128,7 @@ describe('config routes (unit)', () => {
     const good = await fetch(`${baseUrl}/api/pairs/add`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ pair: 'GBPUSD' })
+      body: JSON.stringify({ pair: 'GBPUSD' }),
     });
     assert.equal(good.status, 200);
     const goodBody = await good.json();
@@ -140,7 +140,7 @@ describe('config routes (unit)', () => {
     const bad = await fetch(`${baseUrl}/api/pairs/remove`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({})
+      body: JSON.stringify({}),
     });
     assert.equal(bad.status, 400);
 
@@ -148,13 +148,13 @@ describe('config routes (unit)', () => {
     await fetch(`${baseUrl}/api/pairs/add`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ pair: 'GBPUSD' })
+      body: JSON.stringify({ pair: 'GBPUSD' }),
     });
 
     const good = await fetch(`${baseUrl}/api/pairs/remove`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ pair: 'GBPUSD' })
+      body: JSON.stringify({ pair: 'GBPUSD' }),
     });
     assert.equal(good.status, 200);
     const body = await good.json();
@@ -175,14 +175,14 @@ describe('config routes (unit)', () => {
     const bad = await fetch(`${baseUrl}/api/config/update`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ riskPerTrade: 10 })
+      body: JSON.stringify({ riskPerTrade: 10 }),
     });
     assert.equal(bad.status, 400);
 
     const good = await fetch(`${baseUrl}/api/config/update`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ riskPerTrade: 0.01, maxConcurrentTrades: 3 })
+      body: JSON.stringify({ riskPerTrade: 0.01, maxConcurrentTrades: 3 }),
     });
     assert.equal(good.status, 200);
     const body = await good.json();

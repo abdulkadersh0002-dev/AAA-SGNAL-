@@ -13,7 +13,7 @@ const makeCandle = ({ t, o, h, l, c, v }) => ({
   high: h,
   low: l,
   close: c,
-  volume: v
+  volume: v,
 });
 
 const genBaseSeries = ({ start = 1.1, count = 40, step = 0.0002, startTime = 1700000000 } = {}) => {
@@ -31,7 +31,7 @@ const genBaseSeries = ({ start = 1.1, count = 40, step = 0.0002, startTime = 170
         h: high,
         l: low,
         c,
-        v: 100 + (i % 5) * 10
+        v: 100 + (i % 5) * 10,
       })
     );
     price = c;
@@ -53,7 +53,7 @@ describe('analyzeCandleSeries SMC', () => {
       h: prevHigh + 0.0012,
       l: lastClose - 0.0003,
       c: prevHigh - 0.0002,
-      v: 260
+      v: 260,
     });
 
     series.push(sweepCandle);
@@ -83,7 +83,7 @@ describe('analyzeCandleSeries SMC', () => {
         h: last + 0.0002,
         l: last - 0.0006,
         c: last - 0.0005,
-        v: 140
+        v: 140,
       })
     );
 
@@ -97,7 +97,7 @@ describe('analyzeCandleSeries SMC', () => {
         h: p1 + 0.0022,
         l: p1 - 0.0001,
         c: p1 + 0.0019,
-        v: 200
+        v: 200,
       })
     );
 
@@ -121,7 +121,7 @@ describe('analyzeCandleSeries SMC', () => {
     // Inflate last candle volume
     series[series.length - 1] = {
       ...series[series.length - 1],
-      volume: 2000
+      volume: 2000,
     };
 
     const analysis = analyzeCandleSeries(series, { timeframe: 'M15' });
@@ -148,7 +148,7 @@ describe('analyzeCandleSeries SMC', () => {
       h: 1.1006,
       l: 1.0998,
       c: 1.1001,
-      v: 120
+      v: 120,
     });
 
     series[i1] = makeCandle({
@@ -157,7 +157,7 @@ describe('analyzeCandleSeries SMC', () => {
       h: 1.1011,
       l: 1.1007,
       c: 1.101,
-      v: 110
+      v: 110,
     });
 
     series[i2] = makeCandle({
@@ -166,7 +166,7 @@ describe('analyzeCandleSeries SMC', () => {
       h: 1.1032,
       l: 1.1022,
       c: 1.103,
-      v: 130
+      v: 130,
     });
 
     const analysis = analyzeCandleSeries(series, { timeframe: 'M15' });

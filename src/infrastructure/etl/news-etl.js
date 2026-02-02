@@ -22,7 +22,7 @@ export async function ingestHistoricalNews(sources = [], options = {}) {
         error: error.message,
         processed: 0,
         persisted: 0,
-        skipped: 0
+        skipped: 0,
       });
     }
   }
@@ -73,7 +73,7 @@ async function processNewsSource(source, options) {
         defaultFeedId,
         defaultSource,
         defaultCategory,
-        sourceMetadata: source.metadata || {}
+        sourceMetadata: source.metadata || {},
       });
 
       if (!mapped) {
@@ -95,7 +95,7 @@ async function processNewsSource(source, options) {
     processed,
     persisted: dryRun ? 0 : persisted,
     skipped,
-    dryRun
+    dryRun,
   };
 }
 
@@ -114,7 +114,7 @@ async function* iterateNewsRecords(filePath, format) {
       parse({
         columns: true,
         skip_empty_lines: true,
-        trim: true
+        trim: true,
       })
     );
 
@@ -179,7 +179,7 @@ function mapNewsRecord(record, context) {
     'published_at',
     'published',
     'date',
-    'time'
+    'time',
   ]);
   const publishedAt = parseTimestamp(publishedValue, { timezone });
   if (!publishedAt) {
@@ -206,7 +206,7 @@ function mapNewsRecord(record, context) {
   const impact = toNumber(selectField(record, columns.impact, ['impact']));
   const collected =
     parseTimestamp(selectField(record, columns.collectedAt, ['collected_at', 'ingested_at']), {
-      timezone
+      timezone,
     }) || new Date();
   const keywordsRaw = ensureArray(
     selectField(record, columns.keywords, ['keywords', 'tags', 'tickers'])
@@ -219,7 +219,7 @@ function mapNewsRecord(record, context) {
   const metadata = {
     ...sourceMetadata,
     rawId: toStringValue(selectField(record, columns.id, ['id', 'guid'])),
-    author: toStringValue(selectField(record, columns.author, ['author', 'byline']))
+    author: toStringValue(selectField(record, columns.author, ['author', 'byline'])),
   };
 
   return {
@@ -234,7 +234,7 @@ function mapNewsRecord(record, context) {
     keywords,
     sentiment,
     impact,
-    metadata
+    metadata,
   };
 }
 
@@ -267,7 +267,7 @@ async function insertNewsBatch(client, rows) {
     'keywords',
     'sentiment',
     'impact',
-    'metadata'
+    'metadata',
   ];
 
   const values = [];

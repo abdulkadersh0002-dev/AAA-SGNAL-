@@ -91,7 +91,7 @@ function evaluateTrade({
   pipPrecision,
   pair,
   transactionCostModel,
-  units
+  units,
 }) {
   const entryBar = bars[entryIndex];
   if (!entryBar) {
@@ -111,7 +111,7 @@ function evaluateTrade({
     const { price, reason } = determineExitPrice(direction, entryPrice, bars[idx], {
       takeProfitPips,
       stopLossPips,
-      pipPrecision
+      pipPrecision,
     });
     exitPrice = price;
     exitReason = reason;
@@ -130,7 +130,7 @@ function evaluateTrade({
     direction,
     entryPrice,
     exitPrice,
-    units
+    units,
   });
 
   const netPips = grossPips - transactionCosts.totalCost / transactionCosts.pipValue;
@@ -149,7 +149,7 @@ function evaluateTrade({
     returnPct: toFixedNumber(returnPct, 6),
     transactionCosts,
     units,
-    holdBars
+    holdBars,
   };
 }
 
@@ -180,8 +180,8 @@ export class VectorizedBacktester {
         metrics: buildPerformanceSummary([], {}),
         equityCurve: [],
         meta: {
-          reason: 'insufficient-data'
-        }
+          reason: 'insufficient-data',
+        },
       };
     }
 
@@ -223,7 +223,7 @@ export class VectorizedBacktester {
         stopLossPips,
         pipPrecision,
         transactionCostModel: this.transactionCostModel,
-        units: signal.units ?? this.units
+        units: signal.units ?? this.units,
       });
 
       if (!trade) {
@@ -251,9 +251,9 @@ export class VectorizedBacktester {
           spreadPips: this.transactionCostModel.spreadPips,
           slippagePips: this.transactionCostModel.slippagePips,
           commissionPerLot: this.transactionCostModel.commissionPerLot,
-          lotSize: this.transactionCostModel.lotSize
-        }
-      }
+          lotSize: this.transactionCostModel.lotSize,
+        },
+      },
     };
   }
 }

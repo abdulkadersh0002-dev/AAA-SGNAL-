@@ -4,7 +4,7 @@ import FinnhubProvider from './providers/finnhub-provider.js';
 import {
   allowSyntheticData,
   requireRealTimeData,
-  assertRealTimeDataAvailability
+  assertRealTimeDataAvailability,
 } from '../../config/runtime-flags.js';
 import { appConfig } from '../../app/config.js';
 import {
@@ -12,7 +12,7 @@ import {
   getProviderSymbol,
   getSyntheticBasePrice,
   getSyntheticVolatility,
-  getPipSize
+  getPipSize,
 } from '../../config/pair-catalog.js';
 import { recordDataQuality } from '../services/metrics.js';
 
@@ -30,21 +30,21 @@ const PROVIDER_LABELS = {
   twelveData: 'Twelve Data',
   polygon: 'Polygon.io',
   finnhub: 'Finnhub',
-  alphaVantage: 'Alpha Vantage'
+  alphaVantage: 'Alpha Vantage',
 };
 
 const DEFAULT_RATE_LIMITS = {
   twelveData: { windowMs: 60_000, maxRequests: 55, cooldownMs: 12_000 },
   polygon: { windowMs: 60_000, maxRequests: 120, cooldownMs: 10_000 },
   finnhub: { windowMs: 60_000, maxRequests: 60, cooldownMs: 15_000 },
-  alphaVantage: { windowMs: 86_400_000, maxRequests: 500, cooldownMs: 60_000 }
+  alphaVantage: { windowMs: 86_400_000, maxRequests: 500, cooldownMs: 60_000 },
 };
 
 const DEFAULT_LATENCY_TARGETS = {
   twelveData: 1200,
   polygon: 900,
   finnhub: 1400,
-  alphaVantage: 2400
+  alphaVantage: 2400,
 };
 
 // Optimized cache TTLs for real data within API limits
@@ -60,7 +60,7 @@ const DEFAULT_CACHE_TTLS = {
   H6: 5_000_000, // 5h (was 7min) - Extended view
   H12: 10_000_000, // 10h (was 9min) - Half-day view
   D1: 18_000_000, // 18h (was 10min) - Daily candles stable
-  W1: 1_200_000 // 20min (unchanged) - Weekly updates rare
+  W1: 1_200_000, // 20min (unchanged) - Weekly updates rare
 };
 
 const TIMEFRAME_ALIASES = {
@@ -92,7 +92,7 @@ const TIMEFRAME_ALIASES = {
   '24h': 'D1',
   d1: 'D1',
   '1w': 'W1',
-  w1: 'W1'
+  w1: 'W1',
 };
 
 export const TIMEFRAME_DERIVATIONS = {
@@ -106,7 +106,7 @@ export const TIMEFRAME_DERIVATIONS = {
   H6: 21_600,
   H12: 43_200,
   D1: 86_400,
-  W1: 604_800
+  W1: 604_800,
 };
 
 const FAILURE_BREAKER_THRESHOLD = 3;
@@ -124,7 +124,7 @@ const POLYGON_INTERVALS = {
   H4: { multiplier: 4, unit: 'hour' },
   H6: { multiplier: 6, unit: 'hour' },
   H12: { multiplier: 12, unit: 'hour' },
-  D1: { multiplier: 1, unit: 'day' }
+  D1: { multiplier: 1, unit: 'day' },
 };
 
 const ALPHA_ENDPOINTS = {
@@ -133,7 +133,7 @@ const ALPHA_ENDPOINTS = {
   M15: { fn: 'FX_INTRADAY', interval: '15min' },
   M30: { fn: 'FX_INTRADAY', interval: '30min' },
   H1: { fn: 'FX_INTRADAY', interval: '60min' },
-  D1: { fn: 'FX_DAILY' }
+  D1: { fn: 'FX_DAILY' },
 };
 
 function normalizeTimeframe(input) {
@@ -205,7 +205,7 @@ export default class PriceDataFetcher {
       twelveData: apiKeys.twelveData || tradingApiKeys.twelveData || null,
       polygon: apiKeys.polygon || tradingApiKeys.polygon || null,
       finnhub: apiKeys.finnhub || tradingApiKeys.finnhub || null,
-      alphaVantage: apiKeys.alphaVantage || tradingApiKeys.alphaVantage || null
+      alphaVantage: apiKeys.alphaVantage || tradingApiKeys.alphaVantage || null,
     };
 
     this.logger = options.logger || console;
@@ -220,7 +220,7 @@ export default class PriceDataFetcher {
     );
 
     this.providerRequestIntervals = {
-      ...options.providerRequestIntervals
+      ...options.providerRequestIntervals,
     };
 
     this.fastTimeframes = new Set(
@@ -238,7 +238,7 @@ export default class PriceDataFetcher {
     this.rateLimits = this.initializeRateLimits(options.rateLimitOverrides || {});
     this.providerLatencyTargets = {
       ...DEFAULT_LATENCY_TARGETS,
-      ...(options.providerLatencyTargets || {})
+      ...(options.providerLatencyTargets || {}),
     };
 
     this.metrics = this.initializeMetrics();
@@ -251,7 +251,7 @@ export default class PriceDataFetcher {
     this.refreshTimers = new Map();
 
     this.cacheOptions = {
-      defaultTtlMs: options.defaultCacheTtlMs || 45_000
+      defaultTtlMs: options.defaultCacheTtlMs || 45_000,
     };
 
     this.barQuality = {
@@ -259,7 +259,7 @@ export default class PriceDataFetcher {
       maxAgeMultiplier: options.barQuality?.maxAgeMultiplier ?? 2.6,
       gapMultiplier: options.barQuality?.gapMultiplier ?? 1.8,
       maxGapRatio: options.barQuality?.maxGapRatio ?? 0.35,
-      enforceQuality: options.barQuality?.enforceQuality ?? requireRealTimeData()
+      enforceQuality: options.barQuality?.enforceQuality ?? requireRealTimeData(),
     };
 
     this.circuitBreakerConfig = {
@@ -268,7 +268,7 @@ export default class PriceDataFetcher {
       latencyMultiplier: options.latencyMultiplier ?? LATENCY_BREAKER_MULTIPLIER,
       latencyCooldownMs: options.latencyCooldownMs ?? BREAKER_DURATION_MS,
       qualityThreshold: options.qualityThreshold ?? QUALITY_BREAKER_THRESHOLD,
-      qualityCooldownMs: options.qualityCooldownMs ?? BREAKER_DURATION_MS
+      qualityCooldownMs: options.qualityCooldownMs ?? BREAKER_DURATION_MS,
     };
 
     this.providers = {};
@@ -281,7 +281,7 @@ export default class PriceDataFetcher {
       const base = DEFAULT_RATE_LIMITS[provider] || {
         windowMs: 60_000,
         maxRequests: 60,
-        cooldownMs: 10_000
+        cooldownMs: 10_000,
       };
       const override = overrides[provider] || {};
       const overrideMax = safeNumber(override.maxRequests);
@@ -297,7 +297,7 @@ export default class PriceDataFetcher {
         remaining: Number.isFinite(maxRequests) ? Math.max(0, maxRequests) : null,
         resetTime: Date.now() + (base.windowMs || 60_000),
         backoffUntil: 0,
-        lastRateLimit: 0
+        lastRateLimit: 0,
       };
     }
     return rateLimits;
@@ -316,9 +316,9 @@ export default class PriceDataFetcher {
         cached: 0,
         lastRequestAt: null,
         lastSuccessAt: null,
-        lastFailureAt: null
+        lastFailureAt: null,
       },
-      providers: providerMetrics
+      providers: providerMetrics,
     };
   }
 
@@ -332,7 +332,7 @@ export default class PriceDataFetcher {
         circuitBreaker: null,
         consecutiveFailures: 0,
         backoffUntil: 0,
-        rateLimited: 0
+        rateLimited: 0,
       };
       entries[provider] = entry;
       entries[provider.toLowerCase()] = entry;
@@ -366,7 +366,7 @@ export default class PriceDataFetcher {
       healthStatus: 'unknown',
       consecutiveFailures: 0,
       circuitBreaker: null,
-      backoffUntil: null
+      backoffUntil: null,
     };
   }
 
@@ -386,7 +386,7 @@ export default class PriceDataFetcher {
       generateSyntheticQuote: (pair, opts) => this.generateSyntheticQuote(pair, opts),
       convertTimeframe: (tf) => this.convertTimeframeForTwelveData(tf),
       cooldownMs: this.rateLimits.twelveData.cooldownMs,
-      requestIntervals: this.providerRequestIntervals
+      requestIntervals: this.providerRequestIntervals,
     });
 
     this.providers.finnhub = new FinnhubProvider({
@@ -404,7 +404,7 @@ export default class PriceDataFetcher {
         this.registerRateLimitHit(providerName || 'finnhub', meta),
       shouldUseSyntheticData: (opts) => this.shouldUseSyntheticData(opts),
       generateSyntheticQuote: (pair, opts) => this.generateSyntheticQuote(pair, opts),
-      cooldownMs: this.rateLimits.finnhub.cooldownMs
+      cooldownMs: this.rateLimits.finnhub.cooldownMs,
     });
   }
 
@@ -478,7 +478,7 @@ export default class PriceDataFetcher {
         disabled: false,
         circuitBreakerActive: false,
         backoffUntil: null,
-        remainingRequests: null
+        remainingRequests: null,
       };
     }
 
@@ -533,14 +533,14 @@ export default class PriceDataFetcher {
       disabled,
       circuitBreakerActive,
       backoffUntil: limit?.backoffUntil ?? null,
-      remainingRequests: limit?.remaining ?? null
+      remainingRequests: limit?.remaining ?? null,
     };
   }
 
   hasAvailableProvider(timeframeInput, options = {}) {
     const viability = this.isDataFetchViable(timeframeInput, {
       ...options,
-      includeDetails: true
+      includeDetails: true,
     });
     return viability?.availableProviders?.length > 0 || false;
   }
@@ -613,7 +613,7 @@ export default class PriceDataFetcher {
       return {
         allowed: true,
         reason: null,
-        waitMs: 0
+        waitMs: 0,
       };
     }
 
@@ -649,7 +649,7 @@ export default class PriceDataFetcher {
     return {
       allowed: false,
       reason,
-      waitMs
+      waitMs,
     };
   }
 
@@ -766,7 +766,7 @@ export default class PriceDataFetcher {
           provider: result.provider || null,
           timeframe,
           pair,
-          bars: requestedBars
+          bars: requestedBars,
         });
       }
       this.metrics.requests.success += 1;
@@ -928,9 +928,9 @@ export default class PriceDataFetcher {
           adjusted: true,
           sort: 'desc',
           limit: Math.min(5000, Math.max(bars * 2, 120)),
-          apiKey
+          apiKey,
         },
-        timeout: options.timeoutMs || 8000
+        timeout: options.timeoutMs || 8000,
       });
       const latencyMs = Date.now() - started;
 
@@ -947,7 +947,7 @@ export default class PriceDataFetcher {
         pair,
         timeframe: normalizedTimeframe,
         provider: 'polygon',
-        bars
+        bars,
       });
       const success = Array.isArray(processed) && processed.length > 0;
       if (!options.skipProviderTelemetry) {
@@ -991,7 +991,7 @@ export default class PriceDataFetcher {
       function: endpoint.fn,
       from_symbol: base,
       to_symbol: quote,
-      apikey: this.apiKeys.alphaVantage
+      apikey: this.apiKeys.alphaVantage,
     };
 
     if (endpoint.interval) {
@@ -1007,7 +1007,7 @@ export default class PriceDataFetcher {
     try {
       const { data } = await axios.get(url, {
         params,
-        timeout: options.timeoutMs || 12_000
+        timeout: options.timeoutMs || 12_000,
       });
 
       if (!data || data['Error Message']) {
@@ -1023,7 +1023,7 @@ export default class PriceDataFetcher {
         pair,
         timeframe,
         provider: 'alphaVantage',
-        bars
+        bars,
       });
     } catch (error) {
       if (error.response?.status === 429) {
@@ -1071,7 +1071,7 @@ export default class PriceDataFetcher {
             pair: context.pair,
             timeframe: context.timeframe,
             provider: context.provider,
-            quality
+            quality,
           },
           'Price series rejected due to data quality'
         );
@@ -1082,7 +1082,7 @@ export default class PriceDataFetcher {
           pair: context.pair,
           timeframe: context.timeframe,
           provider: context.provider,
-          quality
+          quality,
         },
         'Price series quality warning'
       );
@@ -1105,7 +1105,7 @@ export default class PriceDataFetcher {
       duplicates: 0,
       future: 0,
       invalid: 0,
-      adjustedOhlc: 0
+      adjustedOhlc: 0,
     };
     for (const entry of series) {
       let time = safeNumber(entry.time ?? entry.timestamp ?? entry[0]);
@@ -1150,7 +1150,7 @@ export default class PriceDataFetcher {
         low: adjustedLow,
         close,
         volume,
-        provider
+        provider,
       });
       stats.kept += 1;
     }
@@ -1205,7 +1205,7 @@ export default class PriceDataFetcher {
       maxGapMs,
       outOfOrder,
       lastTime,
-      stale
+      stale,
     };
   }
 
@@ -1227,7 +1227,7 @@ export default class PriceDataFetcher {
         high: safeNumber(value.high),
         low: safeNumber(value.low),
         close: safeNumber(value.close),
-        volume: safeNumber(value.volume) ?? 0
+        volume: safeNumber(value.volume) ?? 0,
       });
     }
     return normalized;
@@ -1264,7 +1264,7 @@ export default class PriceDataFetcher {
         high: safeNumber(high[i]),
         low: safeNumber(low[i]),
         close: safeNumber(close[i]),
-        volume: safeNumber(volume?.[i]) ?? 0
+        volume: safeNumber(volume?.[i]) ?? 0,
       });
     }
     return series;
@@ -1292,7 +1292,7 @@ export default class PriceDataFetcher {
         high: safeNumber(entry.h),
         low: safeNumber(entry.l),
         close: safeNumber(entry.c),
-        volume: safeNumber(entry.v) ?? 0
+        volume: safeNumber(entry.v) ?? 0,
       }))
       .filter((entry) => Number.isFinite(entry.time));
   }
@@ -1317,7 +1317,7 @@ export default class PriceDataFetcher {
         high: safeNumber(values['2. high'] ?? values.high),
         low: safeNumber(values['3. low'] ?? values.low),
         close: safeNumber(values['4. close'] ?? values.close),
-        volume: safeNumber(values['5. volume'] ?? values.volume) ?? 0
+        volume: safeNumber(values['5. volume'] ?? values.volume) ?? 0,
       });
     }
     return series.sort((a, b) => a.time - b.time);
@@ -1342,7 +1342,7 @@ export default class PriceDataFetcher {
       bid: Number.isFinite(bid) ? rounded(bid, 6) : null,
       ask: Number.isFinite(ask) ? rounded(ask, 6) : null,
       mid: Number.isFinite(mid) ? rounded(mid, 6) : null,
-      timestamp: Number.isFinite(time) ? time : Date.now()
+      timestamp: Number.isFinite(time) ? time : Date.now(),
     };
   }
 
@@ -1492,7 +1492,7 @@ export default class PriceDataFetcher {
     metrics.circuitBreaker = {
       reason,
       activatedAt: new Date(now).toISOString(),
-      expiresAt
+      expiresAt,
     };
     const health = this.getProviderHealthEntry(provider);
     if (health) {
@@ -1614,7 +1614,7 @@ export default class PriceDataFetcher {
       qualityThreshold,
       qualitySatisfied,
       inspectedAt: now,
-      reasons
+      reasons,
     };
 
     if (options.includeDetails) {
@@ -1655,7 +1655,7 @@ export default class PriceDataFetcher {
     this.dataCache.set(key, {
       series,
       expiresAt,
-      metadata
+      metadata,
     });
   }
 
@@ -1790,7 +1790,7 @@ export default class PriceDataFetcher {
   cacheQuote(key, quote, ttlMs) {
     this.quoteCache.set(key, {
       quote,
-      expiresAt: Date.now() + ttlMs
+      expiresAt: Date.now() + ttlMs,
     });
   }
 
@@ -1892,7 +1892,7 @@ export default class PriceDataFetcher {
         low: rounded(low, 6),
         close: rounded(close, 6),
         volume: rounded(volume, 0),
-        provider: 'synthetic'
+        provider: 'synthetic',
       });
     }
     return series;
@@ -1931,7 +1931,7 @@ export default class PriceDataFetcher {
       ask: rounded(ask, 6),
       mid: rounded(mid, 6),
       spreadPips,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     };
   }
 
@@ -1979,7 +1979,7 @@ export default class PriceDataFetcher {
         avgLatencyMs: metrics.avgLatencyMs,
         targetLatencyMs: this.providerLatencyTargets[provider] ?? null,
         healthStatus: metrics.healthStatus,
-        circuitBreaker: metrics.circuitBreaker || null
+        circuitBreaker: metrics.circuitBreaker || null,
       };
       weightedSum += quality * samples;
       weightTotal += samples;
@@ -1989,7 +1989,7 @@ export default class PriceDataFetcher {
     return {
       aggregate,
       normalized,
-      providers
+      providers,
     };
   }
 
@@ -2013,7 +2013,7 @@ export default class PriceDataFetcher {
         backoffUntil: limit.backoffUntil,
         resetTime: limit.resetTime,
         resetIn: Number.isFinite(limit.resetTime) ? Math.max(0, limit.resetTime - now) : null,
-        backoffSeconds: limit.backoffUntil > now ? Math.ceil((limit.backoffUntil - now) / 1000) : 0
+        backoffSeconds: limit.backoffUntil > now ? Math.ceil((limit.backoffUntil - now) / 1000) : 0,
       };
     }
 
@@ -2033,7 +2033,7 @@ export default class PriceDataFetcher {
         lastRequestAt: metrics.lastRequestAt,
         lastSuccessAt: metrics.lastSuccessAt,
         lastFailureAt: metrics.lastFailureAt,
-        qualityScore: metrics.qualityScore
+        qualityScore: metrics.qualityScore,
       };
     }
 
@@ -2053,17 +2053,17 @@ export default class PriceDataFetcher {
       status,
       metrics: {
         requests: { ...this.metrics.requests },
-        providers: providerMetrics
+        providers: providerMetrics,
       },
       rateLimits,
       providerHealth: providerHealthSnapshot,
       cache: {
         dataEntries: this.dataCache.size,
-        quoteEntries: this.quoteCache.size
+        quoteEntries: this.quoteCache.size,
       },
       dataConfidence,
       providerOrderPreview,
-      availability: defaultAvailability
+      availability: defaultAvailability,
     };
   }
 }

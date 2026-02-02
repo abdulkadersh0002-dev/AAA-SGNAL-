@@ -17,7 +17,7 @@ const FX_BASE_PRICES = {
   GBPAUD: 1.932,
   GBPCAD: 1.726,
   AUDCAD: 0.894,
-  AUDNZD: 1.082
+  AUDNZD: 1.082,
 };
 
 const FX_VOLATILITY = {
@@ -32,7 +32,7 @@ const FX_VOLATILITY = {
   EURJPY: 0.18,
   GBPJPY: 0.22,
   AUDJPY: 0.14,
-  CADJPY: 0.16
+  CADJPY: 0.16,
 };
 
 function createFxInstrument(config) {
@@ -63,12 +63,12 @@ function createFxInstrument(config) {
       twelveData: config.providers?.twelveData || `${base}/${quote}`,
       finnhub: config.providers?.finnhub || `OANDA:${pair}`,
       polygon: config.providers?.polygon || `C:${pair}`,
-      alphaVantage: config.providers?.alphaVantage || { from: base, to: quote }
+      alphaVantage: config.providers?.alphaVantage || { from: base, to: quote },
     },
     syntheticBasePrice: config.syntheticBasePrice ?? FX_BASE_PRICES[pair] ?? 1,
     syntheticVolatility: config.syntheticVolatility ?? FX_VOLATILITY[pair] ?? 0.001,
     enabled: config.enabled !== false,
-    notes: config.notes || null
+    notes: config.notes || null,
   };
 }
 
@@ -93,12 +93,12 @@ function createIndexInstrument(config) {
       twelveData: config.providers?.twelveData || config.base,
       finnhub: config.providers?.finnhub,
       polygon: config.providers?.polygon,
-      alphaVantage: config.providers?.alphaVantage || null
+      alphaVantage: config.providers?.alphaVantage || null,
     },
     syntheticBasePrice: config.syntheticBasePrice ?? 4000,
     syntheticVolatility: config.syntheticVolatility ?? 25,
     enabled: config.enabled !== false,
-    notes: config.notes || null
+    notes: config.notes || null,
   };
 }
 
@@ -123,12 +123,12 @@ function createCommodityInstrument(config) {
       twelveData: config.providers?.twelveData || `${config.base}/${config.quote || 'USD'}`,
       finnhub: config.providers?.finnhub,
       polygon: config.providers?.polygon,
-      alphaVantage: config.providers?.alphaVantage || null
+      alphaVantage: config.providers?.alphaVantage || null,
     },
     syntheticBasePrice: config.syntheticBasePrice ?? 100,
     syntheticVolatility: config.syntheticVolatility ?? 2.5,
     enabled: config.enabled !== false,
-    notes: config.notes || null
+    notes: config.notes || null,
   };
 }
 
@@ -153,12 +153,12 @@ function createCryptoInstrument(config) {
       twelveData: config.providers?.twelveData || `${config.base}/${config.quote || 'USD'}`,
       finnhub: config.providers?.finnhub,
       polygon: config.providers?.polygon,
-      alphaVantage: config.providers?.alphaVantage || null
+      alphaVantage: config.providers?.alphaVantage || null,
     },
     syntheticBasePrice: config.syntheticBasePrice ?? 30000,
     syntheticVolatility: config.syntheticVolatility ?? 400,
     enabled: config.enabled !== false,
-    notes: config.notes || null
+    notes: config.notes || null,
   };
 }
 
@@ -170,8 +170,8 @@ const forexInstruments = [
     liquidityNotes: 'High liquidity during London and New York overlap',
     sessions: [
       { label: 'London', start: '06:00', end: '15:00', weight: 1.4 },
-      { label: 'New York', start: '12:00', end: '21:00', weight: 1.5 }
-    ]
+      { label: 'New York', start: '12:00', end: '21:00', weight: 1.5 },
+    ],
   }),
   createFxInstrument({
     pair: 'GBPUSD',
@@ -180,8 +180,8 @@ const forexInstruments = [
     liquidityNotes: 'Volatile during UK data releases and NY open',
     sessions: [
       { label: 'London', start: '07:00', end: '16:00', weight: 1.5 },
-      { label: 'New York', start: '12:00', end: '21:00', weight: 1.4 }
-    ]
+      { label: 'New York', start: '12:00', end: '21:00', weight: 1.4 },
+    ],
   }),
   createFxInstrument({
     pair: 'USDJPY',
@@ -190,8 +190,8 @@ const forexInstruments = [
     liquidityNotes: 'Liquid during Tokyo and New York sessions',
     sessions: [
       { label: 'Tokyo', start: '23:00', end: '07:00', weight: 1.4 },
-      { label: 'New York', start: '12:00', end: '21:00', weight: 1.2 }
-    ]
+      { label: 'New York', start: '12:00', end: '21:00', weight: 1.2 },
+    ],
   }),
   createFxInstrument({
     pair: 'AUDUSD',
@@ -200,29 +200,29 @@ const forexInstruments = [
     liquidityNotes: 'Active during Sydney open and NY crossover',
     sessions: [
       { label: 'Sydney', start: '21:00', end: '05:00', weight: 1.4 },
-      { label: 'New York', start: '13:00', end: '21:00', weight: 1.2 }
-    ]
+      { label: 'New York', start: '13:00', end: '21:00', weight: 1.2 },
+    ],
   }),
   createFxInstrument({
     pair: 'USDCAD',
     region: 'US/Canada',
     volatilityTier: 'medium',
     liquidityNotes: 'Sensitive to oil releases during NY session',
-    sessions: [{ label: 'New York', start: '12:00', end: '21:00', weight: 1.5 }]
+    sessions: [{ label: 'New York', start: '12:00', end: '21:00', weight: 1.5 }],
   }),
   createFxInstrument({
     pair: 'NZDUSD',
     region: 'New Zealand/US',
     volatilityTier: 'low',
     liquidityNotes: 'Thinner liquidity outside Asia-Pacific hours',
-    sessions: [{ label: 'Wellington', start: '21:00', end: '04:00', weight: 1.3 }]
+    sessions: [{ label: 'Wellington', start: '21:00', end: '04:00', weight: 1.3 }],
   }),
   createFxInstrument({
     pair: 'USDCHF',
     region: 'US/Switzerland',
     volatilityTier: 'low',
     liquidityNotes: 'Safe haven activity during European hours',
-    sessions: [{ label: 'Zurich', start: '07:00', end: '15:00', weight: 1.3 }]
+    sessions: [{ label: 'Zurich', start: '07:00', end: '15:00', weight: 1.3 }],
   }),
   createFxInstrument({
     pair: 'EURGBP',
@@ -231,7 +231,7 @@ const forexInstruments = [
     liquidityNotes: 'Most active during European data releases',
     sessions: [{ label: 'London', start: '07:00', end: '16:00', weight: 1.5 }],
     timeframes: ['M15', 'H1', 'H4'],
-    enabled: false
+    enabled: false,
   }),
   createFxInstrument({
     pair: 'EURJPY',
@@ -240,10 +240,10 @@ const forexInstruments = [
     liquidityNotes: 'Reactive to BOJ and ECB policy windows',
     sessions: [
       { label: 'Tokyo', start: '23:00', end: '07:00', weight: 1.5 },
-      { label: 'London', start: '06:00', end: '15:00', weight: 1.4 }
+      { label: 'London', start: '06:00', end: '15:00', weight: 1.4 },
     ],
     timeframes: ['M15', 'H1', 'H4'],
-    enabled: false
+    enabled: false,
   }),
   createFxInstrument({
     pair: 'GBPJPY',
@@ -252,10 +252,10 @@ const forexInstruments = [
     liquidityNotes: 'One of the most volatile crosses, needs tighter cadence',
     sessions: [
       { label: 'Tokyo', start: '23:00', end: '07:00', weight: 1.4 },
-      { label: 'London', start: '07:00', end: '16:00', weight: 1.6 }
+      { label: 'London', start: '07:00', end: '16:00', weight: 1.6 },
     ],
     timeframes: ['M15', 'H1', 'H4'],
-    enabled: false
+    enabled: false,
   }),
   createFxInstrument({
     pair: 'AUDJPY',
@@ -264,10 +264,10 @@ const forexInstruments = [
     liquidityNotes: 'Asia-Pacific cross, elevated activity in Tokyo',
     sessions: [
       { label: 'Tokyo', start: '23:00', end: '07:00', weight: 1.4 },
-      { label: 'Sydney', start: '21:00', end: '05:00', weight: 1.2 }
+      { label: 'Sydney', start: '21:00', end: '05:00', weight: 1.2 },
     ],
     timeframes: ['M15', 'H1', 'H4'],
-    enabled: false
+    enabled: false,
   }),
   createFxInstrument({
     pair: 'CADJPY',
@@ -276,11 +276,11 @@ const forexInstruments = [
     liquidityNotes: 'Oil-sensitive cross with Asia/North America overlap',
     sessions: [
       { label: 'Tokyo', start: '23:00', end: '07:00', weight: 1.3 },
-      { label: 'New York', start: '12:00', end: '21:00', weight: 1.3 }
+      { label: 'New York', start: '12:00', end: '21:00', weight: 1.3 },
     ],
     timeframes: ['M15', 'H1', 'H4'],
-    enabled: false
-  })
+    enabled: false,
+  }),
 ];
 
 const indexInstruments = [
@@ -294,17 +294,17 @@ const indexInstruments = [
     liquidityNotes: 'US cash session most active; monitor earnings season.',
     sessions: [
       { label: 'North America', start: '13:30', end: '20:00', weight: 1.6 },
-      { label: 'Globex', start: '23:00', end: '05:00', weight: 1.1 }
+      { label: 'Globex', start: '23:00', end: '05:00', weight: 1.1 },
     ],
     aliases: ['S&P 500', 'US500', 'SPX', 'SP500', 'SPX500'],
     providers: {
       twelveData: 'SPX',
       finnhub: 'OANDA:SPX500_USD',
-      polygon: 'I:SPX'
+      polygon: 'I:SPX',
     },
     syntheticBasePrice: 4400,
     syntheticVolatility: 22,
-    enabled: false
+    enabled: false,
   }),
   createIndexInstrument({
     pair: 'NAS100USD',
@@ -316,17 +316,17 @@ const indexInstruments = [
     liquidityNotes: 'Tech-weighted; reacts strongly to growth sentiment and yields.',
     sessions: [
       { label: 'North America', start: '13:30', end: '20:00', weight: 1.7 },
-      { label: 'Globex', start: '23:00', end: '05:00', weight: 1.1 }
+      { label: 'Globex', start: '23:00', end: '05:00', weight: 1.1 },
     ],
     aliases: ['NASDAQ 100', 'NAS100', 'US100', 'NDX'],
     providers: {
       twelveData: 'NDX',
       finnhub: 'OANDA:NAS100_USD',
-      polygon: 'I:NDX'
+      polygon: 'I:NDX',
     },
     syntheticBasePrice: 15500,
     syntheticVolatility: 35,
-    enabled: false
+    enabled: false,
   }),
   createIndexInstrument({
     pair: 'GER40EUR',
@@ -338,18 +338,18 @@ const indexInstruments = [
     liquidityNotes: 'Concentrated liquidity during Frankfurt cash hours.',
     sessions: [
       { label: 'Frankfurt', start: '07:00', end: '15:30', weight: 1.5 },
-      { label: 'Overnight', start: '22:00', end: '03:00', weight: 1.1 }
+      { label: 'Overnight', start: '22:00', end: '03:00', weight: 1.1 },
     ],
     aliases: ['DAX', 'DAX40', 'GER40', 'DE40'],
     providers: {
       twelveData: 'DAX',
       finnhub: 'OANDA:DE30_EUR',
-      polygon: 'I:DAX'
+      polygon: 'I:DAX',
     },
     syntheticBasePrice: 16000,
     syntheticVolatility: 28,
-    enabled: false
-  })
+    enabled: false,
+  }),
 ];
 
 const commodityInstruments = [
@@ -364,17 +364,17 @@ const commodityInstruments = [
     liquidityNotes: 'Active during NY/London overlap; safe haven flows.',
     sessions: [
       { label: 'London Bullion', start: '08:00', end: '16:00', weight: 1.5 },
-      { label: 'Comex', start: '13:20', end: '18:30', weight: 1.4 }
+      { label: 'Comex', start: '13:20', end: '18:30', weight: 1.4 },
     ],
     aliases: ['Gold', 'XAU', 'Gold Spot'],
     providers: {
       twelveData: 'XAU/USD',
       finnhub: 'OANDA:XAUUSD',
-      polygon: 'C:XAUUSD'
+      polygon: 'C:XAUUSD',
     },
     syntheticBasePrice: 1950,
     syntheticVolatility: 4.5,
-    enabled: false
+    enabled: false,
   }),
   createCommodityInstrument({
     pair: 'XAGUSD',
@@ -387,17 +387,17 @@ const commodityInstruments = [
     liquidityNotes: 'Higher volatility than gold; industrial demand sensitive.',
     sessions: [
       { label: 'London Bullion', start: '08:00', end: '16:00', weight: 1.4 },
-      { label: 'Comex', start: '13:25', end: '18:25', weight: 1.3 }
+      { label: 'Comex', start: '13:25', end: '18:25', weight: 1.3 },
     ],
     aliases: ['Silver', 'XAG'],
     providers: {
       twelveData: 'XAG/USD',
       finnhub: 'OANDA:XAGUSD',
-      polygon: 'C:XAGUSD'
+      polygon: 'C:XAGUSD',
     },
     syntheticBasePrice: 24,
     syntheticVolatility: 0.6,
-    enabled: false
+    enabled: false,
   }),
   createCommodityInstrument({
     pair: 'USOILUSD',
@@ -410,18 +410,18 @@ const commodityInstruments = [
     liquidityNotes: 'Watch DOE/EIA releases; significant geopolitical sensitivity.',
     sessions: [
       { label: 'NYMEX', start: '13:00', end: '18:30', weight: 1.5 },
-      { label: 'Globex', start: '23:00', end: '05:00', weight: 1.2 }
+      { label: 'Globex', start: '23:00', end: '05:00', weight: 1.2 },
     ],
     aliases: ['WTI', 'Crude Oil', 'Oil'],
     providers: {
       twelveData: 'WTI/USD',
       finnhub: 'OANDA:WTICO_USD',
-      polygon: 'C:CL1'
+      polygon: 'C:CL1',
     },
     syntheticBasePrice: 75,
     syntheticVolatility: 1.8,
-    enabled: false
-  })
+    enabled: false,
+  }),
 ];
 
 const cryptoInstruments = [
@@ -437,11 +437,11 @@ const cryptoInstruments = [
     providers: {
       twelveData: 'BTC/USD',
       finnhub: 'BINANCE:BTCUSDT',
-      polygon: 'X:BTCUSD'
+      polygon: 'X:BTCUSD',
     },
     syntheticBasePrice: 36000,
     syntheticVolatility: 450,
-    enabled: false
+    enabled: false,
   }),
   createCryptoInstrument({
     pair: 'ETHUSD',
@@ -455,19 +455,19 @@ const cryptoInstruments = [
     providers: {
       twelveData: 'ETH/USD',
       finnhub: 'BINANCE:ETHUSDT',
-      polygon: 'X:ETHUSD'
+      polygon: 'X:ETHUSD',
     },
     syntheticBasePrice: 2200,
     syntheticVolatility: 65,
-    enabled: false
-  })
+    enabled: false,
+  }),
 ];
 
 export const pairCatalog = [
   ...forexInstruments,
   ...indexInstruments,
   ...commodityInstruments,
-  ...cryptoInstruments
+  ...cryptoInstruments,
 ];
 
 const instrumentIndex = new Map(

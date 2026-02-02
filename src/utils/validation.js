@@ -9,7 +9,7 @@ export function parseRequestBody(schema, req, res, options = {}) {
   const issues = parseResult.error?.issues || [];
   const details = issues.map((issue) => ({
     path: issue.path?.length ? issue.path.join('.') : 'body',
-    message: issue.message
+    message: issue.message,
   }));
 
   badRequest(res, options.errorMessage || 'Invalid request body', { details });
@@ -25,7 +25,7 @@ export function parseRequestQuery(schema, req, res, options = {}) {
   const issues = parseResult.error?.issues || [];
   const details = issues.map((issue) => ({
     path: issue.path?.length ? issue.path.join('.') : 'query',
-    message: issue.message
+    message: issue.message,
   }));
 
   badRequest(res, options.errorMessage || 'Invalid request query', { details });
@@ -41,10 +41,10 @@ export function parseRequestBodyWithValidator(validator, req, res, options = {})
       const issues = error?.issues || [];
       const details = issues.map((issue) => ({
         path: issue.path?.length ? issue.path.join('.') : 'body',
-        message: issue.message
+        message: issue.message,
       }));
       badRequest(res, options.errorMessage || 'Invalid request body', {
-        details: details.length ? details : undefined
+        details: details.length ? details : undefined,
       });
       return null;
     }

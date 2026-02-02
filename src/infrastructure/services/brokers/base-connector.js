@@ -21,7 +21,7 @@ class BaseBrokerConnector {
       broker: this.name,
       mode: this.accountMode,
       connected: false,
-      details: 'Not implemented'
+      details: 'Not implemented',
     };
   }
 

@@ -68,7 +68,7 @@ export default class JobQueue {
       maxAttempts: Number.isFinite(options.maxAttempts)
         ? Math.max(0, Number(options.maxAttempts))
         : this.retryAttempts,
-      lastError: null
+      lastError: null,
     };
 
     this.pending.push(job);
@@ -76,7 +76,7 @@ export default class JobQueue {
     this.auditLogger?.record?.('job_queue.enqueued', {
       jobId: job.id,
       type: job.type,
-      runAt: job.runAt
+      runAt: job.runAt,
     });
     this.schedule();
     return job;
@@ -144,7 +144,7 @@ export default class JobQueue {
     this.auditLogger?.record?.('job_queue.started', {
       jobId: job.id,
       type: job.type,
-      attempt: job.attempts
+      attempt: job.attempts,
     });
 
     try {
@@ -155,7 +155,7 @@ export default class JobQueue {
       this.auditLogger?.record?.('job_queue.completed', {
         jobId: job.id,
         type: job.type,
-        durationMs: job.completedAt - job.createdAt
+        durationMs: job.completedAt - job.createdAt,
       });
     } catch (error) {
       job.status = 'failed';
@@ -164,7 +164,7 @@ export default class JobQueue {
         jobId: job.id,
         type: job.type,
         attempt: job.attempts,
-        error: job.lastError
+        error: job.lastError,
       });
 
       if (job.attempts <= job.maxAttempts) {
@@ -192,7 +192,7 @@ export default class JobQueue {
     this.auditLogger?.record?.('job_queue.dead_letter', {
       jobId: job.id,
       type: job.type,
-      error: job.lastError || null
+      error: job.lastError || null,
     });
   }
 
@@ -202,7 +202,7 @@ export default class JobQueue {
       pending: this.pending.length,
       inFlight: this.inFlight.size,
       deadLetter: this.deadLetter.length,
-      concurrency: this.concurrency
+      concurrency: this.concurrency,
     };
   }
 }

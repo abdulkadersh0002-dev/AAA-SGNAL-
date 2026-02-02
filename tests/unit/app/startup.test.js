@@ -30,7 +30,7 @@ function createLoggerSpy() {
   const calls = {
     info: [],
     warn: [],
-    error: []
+    error: [],
   };
 
   return {
@@ -38,8 +38,8 @@ function createLoggerSpy() {
     logger: {
       info: (...args) => calls.info.push(args),
       warn: (...args) => calls.warn.push(args),
-      error: (...args) => calls.error.push(args)
-    }
+      error: (...args) => calls.error.push(args),
+    },
   };
 }
 
@@ -82,8 +82,8 @@ describe('startup startServer', () => {
       createWebSocketLayer: () => ({
         broadcast() {},
         attach() {},
-        shutdown() {}
-      })
+        shutdown() {},
+      }),
     };
 
     startServer({
@@ -91,10 +91,10 @@ describe('startup startServer', () => {
         port: 5000,
         nodeEnv: 'development',
         enablePortFallback: true,
-        portFallbackAttempts: 2
+        portFallbackAttempts: 2,
       },
       logger,
-      factories
+      factories,
     });
 
     await waitFor(
@@ -116,8 +116,8 @@ describe('startup startServer', () => {
       createWebSocketLayer: () => ({
         broadcast() {},
         attach() {},
-        shutdown() {}
-      })
+        shutdown() {},
+      }),
     };
 
     let exitCode;
@@ -130,10 +130,10 @@ describe('startup startServer', () => {
         port: 5000,
         nodeEnv: 'production',
         enablePortFallback: true,
-        portFallbackAttempts: 10
+        portFallbackAttempts: 10,
       },
       logger,
-      factories
+      factories,
     });
 
     await waitFor(() => exitCode === 1 && calls.error.length >= 1);
@@ -153,8 +153,8 @@ describe('startup startServer', () => {
       createWebSocketLayer: () => ({
         broadcast() {},
         attach() {},
-        shutdown() {}
-      })
+        shutdown() {},
+      }),
     };
 
     let exitCode;
@@ -167,10 +167,10 @@ describe('startup startServer', () => {
         port: 5000,
         nodeEnv: 'development',
         enablePortFallback: false,
-        portFallbackAttempts: 10
+        portFallbackAttempts: 10,
       },
       logger,
-      factories
+      factories,
     });
 
     await waitFor(() => exitCode === 1 && calls.error.length >= 1);

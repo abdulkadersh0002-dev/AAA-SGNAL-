@@ -2,7 +2,7 @@ export const createClientSessionMiddleware = ({
   tokenService,
   userService,
   auditLogger,
-  logger
+  logger,
 }) => {
   if (!tokenService || !userService) {
     throw new Error('Client session middleware requires tokenService and userService');
@@ -14,7 +14,7 @@ export const createClientSessionMiddleware = ({
       if (!header.toLowerCase().startsWith('bearer ')) {
         auditLogger?.record?.('client.auth.missing', {
           path: req.originalUrl || req.url,
-          ip: req.ip
+          ip: req.ip,
         });
         return res.status(401).json({ success: false, error: 'Missing bearer token' });
       }
@@ -33,7 +33,7 @@ export const createClientSessionMiddleware = ({
       if (!user) {
         auditLogger?.record?.('client.auth.unknown-user', {
           path: req.originalUrl || req.url,
-          userId: payload.sub
+          userId: payload.sub,
         });
         return res.status(401).json({ success: false, error: 'Account disabled' });
       }
@@ -42,7 +42,7 @@ export const createClientSessionMiddleware = ({
         auditLogger?.record?.('client.auth.inactive', {
           path: req.originalUrl || req.url,
           userId: user.id,
-          status: user.status
+          status: user.status,
         });
         return res.status(403).json({ success: false, error: 'Account inactive' });
       }
@@ -50,7 +50,7 @@ export const createClientSessionMiddleware = ({
       if ((user.tokenVersion ?? 0) !== (payload.ver ?? 0)) {
         auditLogger?.record?.('client.auth.token-version-mismatch', {
           path: req.originalUrl || req.url,
-          userId: user.id
+          userId: user.id,
         });
         return res.status(401).json({ success: false, error: 'Session expired' });
       }
@@ -59,7 +59,7 @@ export const createClientSessionMiddleware = ({
         id: user.id,
         username: user.username,
         roles: user.roles,
-        status: user.status
+        status: user.status,
       };
       res.locals.clientUser = req.clientUser;
       return next();
@@ -67,7 +67,7 @@ export const createClientSessionMiddleware = ({
       logger?.warn?.({ err: error }, 'Client session authentication failed');
       auditLogger?.record?.('client.auth.error', {
         path: req.originalUrl || req.url,
-        error: error?.message
+        error: error?.message,
       });
       return res.status(401).json({ success: false, error: 'Invalid session' });
     }
@@ -88,7 +88,7 @@ export const createClientSessionMiddleware = ({
         auditLogger?.record?.('client.auth.forbidden', {
           path: req.originalUrl || req.url,
           userId: identity.id,
-          required: normalized
+          required: normalized,
         });
         return res.status(403).json({ success: false, error: 'Forbidden' });
       }
@@ -111,7 +111,7 @@ export const createClientSessionMiddleware = ({
         auditLogger?.record?.('client.auth.forbidden-any', {
           path: req.originalUrl || req.url,
           userId: identity.id,
-          options: normalized
+          options: normalized,
         });
         return res.status(403).json({ success: false, error: 'Forbidden' });
       }
@@ -122,6 +122,6 @@ export const createClientSessionMiddleware = ({
   return {
     authenticate,
     requireRoles,
-    requireAnyRole
+    requireAnyRole,
   };
 };

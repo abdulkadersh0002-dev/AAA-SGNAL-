@@ -16,7 +16,7 @@ const DEFAULT_FIELDS = [
   'user_agent',
   'last_seen_at',
   'created_at',
-  'updated_at'
+  'updated_at',
 ];
 
 const sanitizeDevice = (row) => {
@@ -36,7 +36,7 @@ const sanitizeDevice = (row) => {
     user_agent: row.user_agent,
     last_seen_at: row.last_seen_at,
     created_at: row.created_at,
-    updated_at: row.updated_at
+    updated_at: row.updated_at,
   };
 };
 
@@ -79,7 +79,7 @@ export default class ClientDeviceService {
     buildNumber,
     locale,
     timezone,
-    userAgent
+    userAgent,
   }) {
     if (!userId) {
       throw new Error('userId required');
@@ -88,7 +88,7 @@ export default class ClientDeviceService {
     const normalizedToken = this.normalizeToken({
       platform: normalizedPlatform,
       token,
-      subscription
+      subscription,
     });
     if (!normalizedToken) {
       throw new Error('device token could not be derived');
@@ -116,7 +116,7 @@ export default class ClientDeviceService {
       buildNumber: sanitize(buildNumber, 40),
       locale: sanitize(locale, 24),
       timezone: sanitize(timezone, 64),
-      userAgent: sanitize(userAgent, 255)
+      userAgent: sanitize(userAgent, 255),
     };
 
     const existing = await this.query(
@@ -149,7 +149,7 @@ export default class ClientDeviceService {
           deviceValues.buildNumber,
           deviceValues.locale,
           deviceValues.timezone,
-          deviceValues.userAgent
+          deviceValues.userAgent,
         ]
       );
       this.logger?.debug?.(
@@ -181,7 +181,7 @@ export default class ClientDeviceService {
         deviceValues.buildNumber,
         deviceValues.locale,
         deviceValues.timezone,
-        deviceValues.userAgent
+        deviceValues.userAgent,
       ]
     );
     this.logger?.info?.({ userId, platform: normalizedPlatform }, 'Client device registered');

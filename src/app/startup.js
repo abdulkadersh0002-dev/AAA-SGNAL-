@@ -19,7 +19,7 @@ export function startServer({
   providerAvailabilityState,
   runtimeSummary,
   onClose,
-  factories
+  factories,
 }) {
   const createWebSocketLayerImpl = factories?.createWebSocketLayer || createWebSocketLayer;
   const createHttpAppImpl = factories?.createHttpApp || createHttpApp;
@@ -28,7 +28,7 @@ export function startServer({
   const websocketLayer = createWebSocketLayerImpl({
     server: null, // WebSocket layer attaches once HTTP server exists
     config: serverConfig,
-    logger
+    logger,
   });
 
   const app = createHttpAppImpl({
@@ -46,7 +46,7 @@ export function startServer({
     broadcast: websocketLayer.broadcast,
     metricsRegistry,
     providerAvailabilityState,
-    runtimeSummary
+    runtimeSummary,
   });
 
   const server = createServerImpl(app);
@@ -85,7 +85,7 @@ export function startServer({
             err: error,
             port,
             enablePortFallback: Boolean(serverConfig.enablePortFallback),
-            nodeEnv: serverConfig.nodeEnv
+            nodeEnv: serverConfig.nodeEnv,
           },
           'Port already in use. Set PORT to a free port (or ENABLE_PORT_FALLBACK=true in development).'
         );

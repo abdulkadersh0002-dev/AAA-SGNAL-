@@ -1,12 +1,12 @@
 /**
  * Database Metrics API Routes
- * 
+ *
  * Provides endpoints for monitoring database performance:
  * - Query performance statistics
  * - Connection pool metrics
  * - Slow query analysis
  * - Cache statistics
- * 
+ *
  * Part of 64 improvements roadmap - Improvement #5
  */
 
@@ -19,7 +19,7 @@ import {
   clearQueryCache,
   resetQueryStats,
   setSlowQueryThreshold,
-  healthCheck
+  healthCheck,
 } from '../../infrastructure/storage/enhanced-database.js';
 
 const router = Router();
@@ -35,7 +35,7 @@ router.get('/health', async (req, res) => {
   } catch (error) {
     res.status(500).json({
       healthy: false,
-      error: error.message
+      error: error.message,
     });
   }
 });
@@ -46,13 +46,13 @@ router.get('/health', async (req, res) => {
  */
 router.get('/pool', (req, res) => {
   const stats = getPoolStats();
-  
+
   if (!stats) {
     return res.status(503).json({
-      error: 'Database pool not configured'
+      error: 'Database pool not configured',
     });
   }
-  
+
   res.json(stats);
 });
 
@@ -63,10 +63,10 @@ router.get('/pool', (req, res) => {
 router.get('/queries', (req, res) => {
   const { name } = req.query;
   const stats = getQueryStats(name);
-  
+
   res.json({
     queryStats: stats,
-    totalQueries: stats ? Object.keys(stats).length : 0
+    totalQueries: stats ? Object.keys(stats).length : 0,
   });
 });
 
@@ -77,10 +77,10 @@ router.get('/queries', (req, res) => {
 router.get('/slow-queries', (req, res) => {
   const limit = parseInt(req.query.limit) || 10;
   const slowQueries = getSlowQueries(limit);
-  
+
   res.json({
     queries: slowQueries,
-    count: slowQueries.length
+    count: slowQueries.length,
   });
 });
 
@@ -100,7 +100,7 @@ router.get('/performance', (req, res) => {
 router.post('/cache/clear', (req, res) => {
   clearQueryCache();
   res.json({
-    message: 'Query cache cleared successfully'
+    message: 'Query cache cleared successfully',
   });
 });
 
@@ -111,7 +111,7 @@ router.post('/cache/clear', (req, res) => {
 router.post('/stats/reset', (req, res) => {
   resetQueryStats();
   res.json({
-    message: 'Query statistics reset successfully'
+    message: 'Query statistics reset successfully',
   });
 });
 
@@ -121,17 +121,17 @@ router.post('/stats/reset', (req, res) => {
  */
 router.put('/slow-query-threshold', (req, res) => {
   const { threshold } = req.body;
-  
+
   if (!threshold || typeof threshold !== 'number' || threshold < 0) {
     return res.status(400).json({
-      error: 'Invalid threshold value. Must be a positive number in milliseconds.'
+      error: 'Invalid threshold value. Must be a positive number in milliseconds.',
     });
   }
-  
+
   setSlowQueryThreshold(threshold);
   res.json({
     message: 'Slow query threshold updated successfully',
-    threshold
+    threshold,
   });
 });
 
@@ -143,17 +143,17 @@ router.get('/overview', async (req, res) => {
   try {
     const [health, performance] = await Promise.all([
       healthCheck(),
-      Promise.resolve(getPerformanceSummary())
+      Promise.resolve(getPerformanceSummary()),
     ]);
-    
+
     res.json({
       health,
       performance,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
   } catch (error) {
     res.status(500).json({
-      error: error.message
+      error: error.message,
     });
   }
 });

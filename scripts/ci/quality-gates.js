@@ -91,7 +91,7 @@ function main() {
     DB_HOST: exampleEnv.DB_HOST || 'localhost',
     DB_USER: exampleEnv.DB_USER || 'ci-user',
     DB_PASSWORD: exampleEnv.DB_PASSWORD || 'ci-password',
-    DB_NAME: exampleEnv.DB_NAME || 'ci-database'
+    DB_NAME: exampleEnv.DB_NAME || 'ci-database',
   };
 
   let config;
@@ -105,40 +105,40 @@ function main() {
     { ok: Number.isFinite(config.server.port), message: 'server.port is not numeric' },
     {
       ok: typeof config.server.enableWebSockets === 'boolean',
-      message: 'server.enableWebSockets is not boolean'
+      message: 'server.enableWebSockets is not boolean',
     },
     {
       ok: config.database.host === overrides.DB_HOST,
-      message: 'database.host override did not apply'
+      message: 'database.host override did not apply',
     },
     {
       ok: config.database.user === overrides.DB_USER,
-      message: 'database.user override did not apply'
+      message: 'database.user override did not apply',
     },
     {
       ok: config.database.password === overrides.DB_PASSWORD,
-      message: 'database.password override did not apply'
+      message: 'database.password override did not apply',
     },
     {
       ok: typeof config.services.riskReports.enabled === 'boolean',
-      message: 'riskReports.enabled is not boolean'
+      message: 'riskReports.enabled is not boolean',
     },
     {
       ok: typeof config.services.performanceDigests.enabled === 'boolean',
-      message: 'performanceDigests.enabled is not boolean'
+      message: 'performanceDigests.enabled is not boolean',
     },
     {
       ok: typeof config.services.autoTrading.autostart === 'boolean',
-      message: 'autoTrading.autostart is not boolean'
+      message: 'autoTrading.autostart is not boolean',
     },
     {
       ok: Array.isArray(config.priceData.fastTimeframes || []),
-      message: 'priceData.fastTimeframes not array'
+      message: 'priceData.fastTimeframes not array',
     },
     {
       ok: Array.isArray(config.priceData.slowTimeframes || []),
-      message: 'priceData.slowTimeframes not array'
-    }
+      message: 'priceData.slowTimeframes not array',
+    },
   ];
 
   const serviceChecks = Object.entries(config.services)
@@ -148,7 +148,7 @@ function main() {
     )
     .map(([name, value]) => ({
       ok: typeof value.enabled === 'boolean',
-      message: `${name}.enabled is not boolean`
+      message: `${name}.enabled is not boolean`,
     }));
 
   checks.push(...serviceChecks);

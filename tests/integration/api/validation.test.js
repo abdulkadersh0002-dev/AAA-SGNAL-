@@ -12,9 +12,9 @@ test('API validation errors include details', async (t) => {
   const response = await fetch(server.url('/api/signal/generate'), {
     method: 'POST',
     headers: {
-      'content-type': 'application/json'
+      'content-type': 'application/json',
     },
-    body: JSON.stringify({})
+    body: JSON.stringify({}),
   });
 
   assert.equal(response.status, 400);

@@ -14,7 +14,7 @@ async function startEphemeralServer(app) {
   }
   return {
     server,
-    baseUrl: `http://127.0.0.1:${port}`
+    baseUrl: `http://127.0.0.1:${port}`,
   };
 }
 
@@ -22,7 +22,7 @@ function createLogger() {
   return {
     info() {},
     warn() {},
-    error() {}
+    error() {},
   };
 }
 
@@ -34,25 +34,25 @@ describe('Feature routes (integration)', () => {
     const tradingEngine = {
       config: {
         riskCommandCenter: {
-          enabled: false
-        }
+          enabled: false,
+        },
       },
       featureStore: {
-        getStats: () => ({ totalKeys: 1, totalEntries: 2, recent: [] })
-      }
+        getStats: () => ({ totalKeys: 1, totalEntries: 2, recent: [] }),
+      },
     };
 
     const tradeManager = {
       tradingPairs: ['EURUSD'],
       getStatus: () => ({ enabled: true, pairs: ['EURUSD'] }),
-      closeAllTrades: async () => ({ success: true, closed: 0 })
+      closeAllTrades: async () => ({ success: true, closed: 0 }),
     };
 
     const app = createHttpApp({
       tradingEngine,
       tradeManager,
       heartbeatMonitor: {
-        getHeartbeat: () => ({ status: 'ok', timestamp: Date.now(), summary: { ok: true } })
+        getHeartbeat: () => ({ status: 'ok', timestamp: Date.now(), summary: { ok: true } }),
       },
       brokerRouter: null,
       eaBridgeService: null,
@@ -63,8 +63,8 @@ describe('Feature routes (integration)', () => {
       metricsRegistry: {
         register: {
           contentType: 'text/plain; version=0.0.4',
-          metrics: async () => 'metric 1\n'
-        }
+          metrics: async () => 'metric 1\n',
+        },
       },
       providerAvailabilityState: {
         buildSnapshot: () => ({
@@ -76,13 +76,13 @@ describe('Feature routes (integration)', () => {
           dataConfidence: null,
           providerOrder: [],
           rateLimits: {},
-          defaultAvailability: null
+          defaultAvailability: null,
         }),
         providerAvailabilityAlertConfig: {},
         history: [],
         historyLimit: 10,
-        loadProviderAvailabilityHistory: null
-      }
+        loadProviderAvailabilityHistory: null,
+      },
     });
 
     const started = await startEphemeralServer(app);

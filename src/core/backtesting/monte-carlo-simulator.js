@@ -24,7 +24,7 @@ export function runMonteCarloSimulations(trades = [], options = {}) {
       percentile5ReturnPct: 0,
       percentile95ReturnPct: 0,
       worstRunPct: 0,
-      bestRunPct: 0
+      bestRunPct: 0,
     };
   }
 
@@ -50,7 +50,7 @@ export function runMonteCarloSimulations(trades = [], options = {}) {
     percentile5ReturnPct: toFixedNumber(percentile(cumulativeResults, 0.05) * 100, 3),
     percentile95ReturnPct: toFixedNumber(percentile(cumulativeResults, 0.95) * 100, 3),
     worstRunPct: toFixedNumber(Math.min(...cumulativeResults) * 100, 3),
-    bestRunPct: toFixedNumber(Math.max(...cumulativeResults) * 100, 3)
+    bestRunPct: toFixedNumber(Math.max(...cumulativeResults) * 100, 3),
   };
 }
 

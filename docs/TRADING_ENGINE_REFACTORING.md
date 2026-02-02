@@ -3,6 +3,7 @@
 ## Current State
 
 **File**: `src/core/engine/trading-engine.js`
+
 - **Size**: 244KB
 - **Lines**: 7,090
 - **Status**: Monolithic, complex, hard to maintain
@@ -24,19 +25,23 @@ Create clean module interfaces and base implementations.
 ### Phase 2: Extract Core Modules
 
 #### Module 1: Signal Generator
+
 **Responsibility**: Generate trading signals from market analysis
 **Size**: ~1,500 lines
 **Features**:
+
 - Pattern recognition
 - Technical indicator calculation
 - Signal scoring and filtering
 - Entry/exit signal generation
 - Multi-timeframe analysis
 
-#### Module 2: Risk Manager  
+#### Module 2: Risk Manager
+
 **Responsibility**: Calculate risk parameters and position sizing
 **Size**: ~1,200 lines
 **Features**:
+
 - Position sizing calculation
 - Stop-loss/take-profit calculation
 - Risk/reward analysis
@@ -45,9 +50,11 @@ Create clean module interfaces and base implementations.
 - Kelly criterion implementation
 
 #### Module 3: Execution Engine
+
 **Responsibility**: Execute trades and manage orders
 **Size**: ~1,800 lines
 **Features**:
+
 - Order placement
 - Order management
 - Broker communication
@@ -55,9 +62,11 @@ Create clean module interfaces and base implementations.
 - Error handling and retries
 
 #### Module 4: Monitoring Engine
+
 **Responsibility**: Monitor active trades and performance
 **Size**: ~1,000 lines  
 **Features**:
+
 - Active trade tracking
 - Performance metrics calculation
 - Real-time updates
@@ -65,9 +74,11 @@ Create clean module interfaces and base implementations.
 - Trade lifecycle management
 
 #### Module 5: Strategy Manager
+
 **Responsibility**: Manage trading strategies
 **Size**: ~800 lines
 **Features**:
+
 - Strategy selection
 - Parameter optimization
 - Multi-strategy coordination
@@ -76,6 +87,7 @@ Create clean module interfaces and base implementations.
 ### Phase 3: Main Orchestrator
 
 **New trading-engine.js**: ~500 lines
+
 - Coordinate all modules
 - Handle configuration
 - Manage dependencies

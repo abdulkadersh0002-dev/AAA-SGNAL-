@@ -15,7 +15,7 @@ async function startEphemeralServer(app) {
   }
   return {
     server,
-    baseUrl: `http://127.0.0.1:${port}`
+    baseUrl: `http://127.0.0.1:${port}`,
   };
 }
 
@@ -23,13 +23,13 @@ function createLogger() {
   return {
     info() {},
     warn() {},
-    error() {}
+    error() {},
   };
 }
 
 function createAuditLogger() {
   return {
-    record: async () => {}
+    record: async () => {},
   };
 }
 
@@ -68,7 +68,7 @@ describe('API contracts (integration)', () => {
       },
       closeAllTrades: async () => ({ success: true, closed: 0 }),
       startAutoTrading: async () => ({ success: true, message: 'started' }),
-      stopAutoTrading: () => ({ success: true, message: 'stopped' })
+      stopAutoTrading: () => ({ success: true, message: 'stopped' }),
     };
 
     const activeTrades = new Map();
@@ -81,7 +81,7 @@ describe('API contracts (integration)', () => {
         maxDailyRisk: 0.06,
         maxConcurrentTrades: 5,
         signalAmplifier: 2.5,
-        directionThreshold: 12
+        directionThreshold: 12,
       },
       activeTrades,
       tradingHistory,
@@ -99,7 +99,7 @@ describe('API contracts (integration)', () => {
         riskManagement: {},
         isValid: { isValid: true, checks: { ok: true }, reason: 'ok' },
         explainability: null,
-        reasoning: ['test-signal']
+        reasoning: ['test-signal'],
       }),
       executeTrade: async (signal) => {
         const tradeId = randomUUID();
@@ -117,7 +117,7 @@ describe('API contracts (integration)', () => {
           closeReason: null,
           broker: null,
           currentPnL: null,
-          finalPnL: null
+          finalPnL: null,
         };
         activeTrades.set(tradeId, trade);
         tradingHistory.push(trade);
@@ -133,19 +133,19 @@ describe('API contracts (integration)', () => {
           ...trade,
           closeTime: new Date(),
           status: 'CLOSED',
-          closeReason: 'manual_close'
+          closeReason: 'manual_close',
         };
         activeTrades.delete(tradeId);
         tradingHistory.push(closed);
         return closed;
-      }
+      },
     };
 
     const app = createHttpApp({
       tradingEngine,
       tradeManager,
       heartbeatMonitor: {
-        getHeartbeat: () => ({ status: 'ok', timestamp: Date.now(), summary: { ok: true } })
+        getHeartbeat: () => ({ status: 'ok', timestamp: Date.now(), summary: { ok: true } }),
       },
       brokerRouter: null,
       eaBridgeService: null,
@@ -156,8 +156,8 @@ describe('API contracts (integration)', () => {
       metricsRegistry: {
         register: {
           contentType: 'text/plain; version=0.0.4',
-          metrics: async () => 'metric 1\n'
-        }
+          metrics: async () => 'metric 1\n',
+        },
       },
       providerAvailabilityState: {
         buildSnapshot: () => ({
@@ -169,13 +169,13 @@ describe('API contracts (integration)', () => {
           dataConfidence: null,
           providerOrder: [],
           rateLimits: {},
-          defaultAvailability: null
+          defaultAvailability: null,
         }),
         providerAvailabilityAlertConfig: {},
         history: [],
         historyLimit: 10,
-        loadProviderAvailabilityHistory: null
-      }
+        loadProviderAvailabilityHistory: null,
+      },
     });
 
     const started = await startEphemeralServer(app);
@@ -209,7 +209,7 @@ describe('API contracts (integration)', () => {
     const invalid = await fetch(`${baseUrl}/api/config/update`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ riskPerTrade: 10 })
+      body: JSON.stringify({ riskPerTrade: 10 }),
     });
     assert.equal(invalid.status, 400);
     const invalidBody = await invalid.json();
@@ -218,7 +218,7 @@ describe('API contracts (integration)', () => {
     const valid = await fetch(`${baseUrl}/api/config/update`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ riskPerTrade: 0.01, maxConcurrentTrades: 3 })
+      body: JSON.stringify({ riskPerTrade: 0.01, maxConcurrentTrades: 3 }),
     });
     assert.equal(valid.status, 200);
 
@@ -238,7 +238,7 @@ describe('API contracts (integration)', () => {
     const add = await fetch(`${baseUrl}/api/pairs/add`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ pair: 'GBPUSD' })
+      body: JSON.stringify({ pair: 'GBPUSD' }),
     });
     assert.equal(add.status, 200);
     const addBody = await add.json();
@@ -248,7 +248,7 @@ describe('API contracts (integration)', () => {
     const remove = await fetch(`${baseUrl}/api/pairs/remove`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ pair: 'GBPUSD' })
+      body: JSON.stringify({ pair: 'GBPUSD' }),
     });
     assert.equal(remove.status, 200);
     const removeBody = await remove.json();
@@ -260,7 +260,7 @@ describe('API contracts (integration)', () => {
     const bad = await fetch(`${baseUrl}/api/signal/generate`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({})
+      body: JSON.stringify({}),
     });
     assert.equal(bad.status, 400);
     const badBody = await bad.json();
@@ -269,7 +269,7 @@ describe('API contracts (integration)', () => {
     const good = await fetch(`${baseUrl}/api/signal/generate`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ pair: 'EURUSD' })
+      body: JSON.stringify({ pair: 'EURUSD' }),
     });
     assert.equal(good.status, 200);
 
@@ -284,7 +284,7 @@ describe('API contracts (integration)', () => {
     const execute = await fetch(`${baseUrl}/api/trade/execute`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ pair: 'EURUSD' })
+      body: JSON.stringify({ pair: 'EURUSD' }),
     });
     assert.equal(execute.status, 200);
 
@@ -299,7 +299,7 @@ describe('API contracts (integration)', () => {
     assert.ok(closeMissingBody.requestId);
 
     const close = await fetch(`${baseUrl}/api/trade/close/${execBody.trade.id}`, {
-      method: 'POST'
+      method: 'POST',
     });
     assert.equal(close.status, 200);
     const closeBody = await close.json();

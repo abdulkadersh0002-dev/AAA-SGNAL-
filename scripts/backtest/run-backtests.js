@@ -79,7 +79,7 @@ async function loadCsvArray(filePath) {
       parse({
         columns: true,
         skip_empty_lines: true,
-        trim: true
+        trim: true,
       })
     );
 
@@ -110,7 +110,7 @@ async function loadDatasetFile(descriptor) {
     return {
       error: error.message,
       path: fullPath,
-      format
+      format,
     };
   }
 }
@@ -118,13 +118,13 @@ async function loadDatasetFile(descriptor) {
 async function loadDataset(descriptor = {}) {
   if (!descriptor.priceFile && !descriptor.signalFile) {
     return {
-      error: 'Dataset descriptor requires priceFile and signalFile entries.'
+      error: 'Dataset descriptor requires priceFile and signalFile entries.',
     };
   }
 
   const [barsResult, signalsResult] = await Promise.all([
     loadDatasetFile(descriptor.priceFile),
-    loadDatasetFile(descriptor.signalFile)
+    loadDatasetFile(descriptor.signalFile),
   ]);
 
   if (barsResult?.error || signalsResult?.error) {
@@ -132,28 +132,28 @@ async function loadDataset(descriptor = {}) {
       error: 'Failed to load dataset files',
       details: {
         bars: barsResult?.error || null,
-        signals: signalsResult?.error || null
-      }
+        signals: signalsResult?.error || null,
+      },
     };
   }
 
   return {
     bars: barsResult,
-    signals: signalsResult
+    signals: signalsResult,
   };
 }
 
 function instantiateBacktester(datasetConfig = {}, globalConfig = {}) {
   const transactionCostOptions = {
     ...(globalConfig.transactionCosts || {}),
-    ...(datasetConfig.transactionCosts || {})
+    ...(datasetConfig.transactionCosts || {}),
   };
 
   const transactionCostModel = new TransactionCostModel(transactionCostOptions);
   return new VectorizedBacktester({
     ...globalConfig.backtesterOptions,
     ...datasetConfig.backtesterOptions,
-    transactionCostModel
+    transactionCostModel,
   });
 }
 
@@ -227,7 +227,7 @@ async function main() {
       pair: datasetConfig.pair,
       timeframe: datasetConfig.timeframe,
       bars: loaded.bars,
-      signals: loaded.signals
+      signals: loaded.signals,
     });
 
     let monteCarlo = null;
@@ -243,7 +243,7 @@ async function main() {
         bars: loaded.bars,
         signals: loaded.signals,
         backtester,
-        options: config.walkForward
+        options: config.walkForward,
       });
     }
 
@@ -254,7 +254,7 @@ async function main() {
       run: runResult,
       metrics: runResult.metrics,
       monteCarlo,
-      walkForward
+      walkForward,
     };
 
     summarize(datasetReport, { label });
@@ -265,7 +265,7 @@ async function main() {
       reportPath,
       metrics: datasetReport.metrics,
       monteCarlo,
-      walkForward: walkForward ? { windowCount: walkForward.results.length } : null
+      walkForward: walkForward ? { windowCount: walkForward.results.length } : null,
     });
   }
 

@@ -10,14 +10,14 @@ const rootDir = path.resolve(__dirname, '..', '..');
 const ajv = new Ajv({
   allErrors: true,
   strict: false,
-  allowUnionTypes: true
+  allowUnionTypes: true,
 });
 
 const schemaPaths = {
   priceBar: 'config/data-contracts/price-bar.schema.json',
   economicIndicator: 'config/data-contracts/economic-indicator.schema.json',
   newsAnalysis: 'config/data-contracts/news-analysis.schema.json',
-  upcomingEvent: 'config/data-contracts/upcoming-event.schema.json'
+  upcomingEvent: 'config/data-contracts/upcoming-event.schema.json',
 };
 
 const cachedSchemas = new Map();
@@ -74,7 +74,7 @@ export function validateSchema(name, data) {
 
   return {
     valid,
-    errors: valid ? null : validator.errors
+    errors: valid ? null : validator.errors,
   };
 }
 

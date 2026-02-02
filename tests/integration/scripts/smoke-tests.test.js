@@ -18,9 +18,9 @@ async function runNodeScript(scriptPath, args = []) {
         DB_HOST: '',
         DB_NAME: '',
         DB_USER: '',
-        DB_PASSWORD: ''
+        DB_PASSWORD: '',
       },
-      stdio: ['ignore', 'pipe', 'pipe']
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
 
     let stdout = '';
@@ -49,7 +49,7 @@ test('Historical warehouse ETL smoke run', async () => {
   const result = await runNodeScript('scripts/etl/run-historical-warehouse.js', [
     '--config',
     configPath,
-    '--dry-run'
+    '--dry-run',
   ]);
   assert.equal(result.code, 0, result.stderr);
   assert.match(result.stdout, /Historical Warehouse ETL Summary/);

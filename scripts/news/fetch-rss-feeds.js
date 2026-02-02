@@ -11,7 +11,7 @@ async function main() {
     .filter(Boolean);
   const results = await aggregator.fetchAll({
     maxItems: 15,
-    keywords
+    keywords,
   });
 
   console.log(

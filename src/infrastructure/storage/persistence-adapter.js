@@ -87,7 +87,7 @@ export function createPersistenceAdapter(options = {}) {
       strength,
       confidence,
       direction,
-      metadata
+      metadata,
     } = snapshot;
 
     const queryText = `
@@ -105,7 +105,7 @@ export function createPersistenceAdapter(options = {}) {
       strength != null ? Number(strength) : null,
       confidence != null ? Number(confidence) : null,
       direction || null,
-      safeJSON(metadata) || '{}'
+      safeJSON(metadata) || '{}',
     ];
 
     try {
@@ -134,7 +134,7 @@ export function createPersistenceAdapter(options = {}) {
       normalizedQuality,
       confidencePct,
       remainingQuota,
-      metadata
+      metadata,
     } = entry;
 
     const queryText = `
@@ -154,7 +154,7 @@ export function createPersistenceAdapter(options = {}) {
       normalizedQuality != null ? Number(normalizedQuality) : null,
       confidencePct != null ? Number(confidencePct) : null,
       Number.isInteger(remainingQuota) ? remainingQuota : null,
-      safeJSON(metadata) || '{}'
+      safeJSON(metadata) || '{}',
     ];
 
     try {
@@ -189,7 +189,7 @@ export function createPersistenceAdapter(options = {}) {
       blockedProviderRatio,
       blockedTimeframeRatio,
       detail,
-      metadata
+      metadata,
     } = entry;
 
     const queryText = `
@@ -225,7 +225,7 @@ export function createPersistenceAdapter(options = {}) {
       blockedProviderRatio != null ? Number(blockedProviderRatio) : null,
       blockedTimeframeRatio != null ? Number(blockedTimeframeRatio) : null,
       detail || null,
-      safeJSON(metadata) || '{}'
+      safeJSON(metadata) || '{}',
     ];
 
     try {
@@ -305,7 +305,7 @@ export function createPersistenceAdapter(options = {}) {
       status || null,
       recommendation || null,
       Array.isArray(issues) && issues.length > 0 ? issues.map((value) => String(value)) : null,
-      safeJSON(timeframeReports) || '{}'
+      safeJSON(timeframeReports) || '{}',
     ];
 
     try {
@@ -356,7 +356,7 @@ export function createPersistenceAdapter(options = {}) {
           : null,
         item.sentiment != null ? Number(item.sentiment) : null,
         item.impact != null ? Number(item.impact) : null,
-        safeJSON(item.metadata) || '{}'
+        safeJSON(item.metadata) || '{}',
       ];
 
       try {
@@ -440,6 +440,6 @@ export function createPersistenceAdapter(options = {}) {
     recordDataQualityMetric,
     recordNewsItems,
     getRecentNews,
-    getLatestProviderMetrics
+    getLatestProviderMetrics,
   };
 }

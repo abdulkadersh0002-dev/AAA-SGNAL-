@@ -23,13 +23,13 @@ export default class SecretManager {
       token: options.vaultToken || this.env.VAULT_TOKEN,
       namespace: options.vaultNamespace || this.env.VAULT_NAMESPACE,
       mount: options.vaultMount || this.env.VAULT_MOUNT || 'secret',
-      kvVersion: options.vaultKvVersion || this.env.VAULT_KV_VERSION || 'v2'
+      kvVersion: options.vaultKvVersion || this.env.VAULT_KV_VERSION || 'v2',
     };
 
     this.azureConfig = {
       vaultUrl: options.azureVaultUrl || this.env.AZURE_KEY_VAULT_URL,
       bearerToken: options.azureBearerToken || this.env.AZURE_KEY_VAULT_TOKEN,
-      apiVersion: options.azureApiVersion || this.env.AZURE_KEY_VAULT_API_VERSION || '7.4'
+      apiVersion: options.azureApiVersion || this.env.AZURE_KEY_VAULT_API_VERSION || '7.4',
     };
 
     this.cache = new Map();
@@ -97,7 +97,7 @@ export default class SecretManager {
     }
     this.cache.set(name, {
       value,
-      expiresAt: Date.now() + this.cacheTtlMs
+      expiresAt: Date.now() + this.cacheTtlMs,
     });
   }
 
@@ -141,7 +141,7 @@ export default class SecretManager {
 
     const url = `${baseUrl}/v1/${path}`;
     const headers = {
-      'X-Vault-Token': token
+      'X-Vault-Token': token,
     };
     if (namespace) {
       headers['X-Vault-Namespace'] = namespace;
@@ -149,7 +149,7 @@ export default class SecretManager {
 
     const response = await fetch(url, {
       method: 'GET',
-      headers
+      headers,
     });
 
     if (!response.ok) {
@@ -189,8 +189,8 @@ export default class SecretManager {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${bearerToken}`,
-        Accept: 'application/json'
-      }
+        Accept: 'application/json',
+      },
     });
 
     if (!response.ok) {

@@ -10,7 +10,7 @@ test('calculateEconomicScore applies weights and clamps output', () => {
     interestRate: { impact: 15 },
     unemployment: { impact: -20 },
     retailSales: { impact: 12 },
-    manufacturing: { impact: 6 }
+    manufacturing: { impact: 6 },
   };
 
   const score = analyzer.calculateEconomicScore(indicators);
@@ -23,7 +23,7 @@ test('calculateEconomicScore applies weights and clamps output', () => {
     interestRate: { impact: 400 },
     unemployment: { impact: 400 },
     retailSales: { impact: 400 },
-    manufacturing: { impact: 400 }
+    manufacturing: { impact: 400 },
   });
   assert.equal(capped, 100);
 });

@@ -11,11 +11,11 @@ export default defineConfig({
     proxy: {
       '/api': {
         target: proxyTarget,
-        changeOrigin: true
+        changeOrigin: true,
       },
       '/metrics': {
         target: proxyTarget,
-        changeOrigin: true
+        changeOrigin: true,
       },
       '/ws': {
         target: proxyTarget,
@@ -50,11 +50,11 @@ export default defineConfig({
               }
             }
           });
-        }
-      }
-    }
+        },
+      },
+    },
   },
   preview: {
-    port: 4173
-  }
+    port: 4173,
+  },
 });

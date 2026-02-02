@@ -23,7 +23,7 @@ export const persistenceHub = {
           source: event.source || 'Unknown',
           actual: event.actual ?? null,
           forecast: event.forecast ?? null,
-          previous: event.previous ?? null
+          previous: event.previous ?? null,
         }))
       : [];
 
@@ -34,7 +34,7 @@ export const persistenceHub = {
           social: analysis.sentimentFeeds.social || null,
           commitmentOfTraders: analysis.sentimentFeeds.commitmentOfTraders || null,
           optionsFlow: analysis.sentimentFeeds.optionsFlow || null,
-          sources: analysis.sentimentFeeds.sources || analysis.sources || {}
+          sources: analysis.sentimentFeeds.sources || analysis.sources || {},
         }
       : null;
 
@@ -51,7 +51,7 @@ export const persistenceHub = {
       baseCurrency,
       quoteCurrency,
       calendar,
-      sentimentFeeds
+      sentimentFeeds,
     };
 
     this.newsInsights.set(pair, entry);
@@ -76,7 +76,7 @@ export const persistenceHub = {
         updatedAt: now,
         pairs: [],
         upcomingEvents: [],
-        sentiment: []
+        sentiment: [],
       };
     }
 
@@ -91,7 +91,7 @@ export const persistenceHub = {
       confidence: Number(entry.confidence || 0),
       newsCount: entry.newsCount || 0,
       calendarEvents: entry.calendar.length,
-      sources: entry.sources || {}
+      sources: entry.sources || {},
     }));
 
     const upcomingEvents = [];
@@ -115,7 +115,7 @@ export const persistenceHub = {
             forecast: event.forecast,
             previous: event.previous,
             actual: event.actual,
-            storedAt: entry.storedAt
+            storedAt: entry.storedAt,
           });
         }
       });
@@ -138,14 +138,14 @@ export const persistenceHub = {
         social: entry.sentimentFeeds.social || null,
         commitmentOfTraders: entry.sentimentFeeds.commitmentOfTraders || null,
         optionsFlow: entry.sentimentFeeds.optionsFlow || null,
-        sources: entry.sentimentFeeds.sources || {}
+        sources: entry.sentimentFeeds.sources || {},
       }));
 
     return {
       updatedAt: now,
       pairs,
       upcomingEvents: upcomingEvents.slice(0, limitEvents),
-      sentiment
+      sentiment,
     };
   },
 
@@ -219,7 +219,7 @@ export const persistenceHub = {
       avgWin: avgWin.toFixed(2),
       avgLoss: avgLoss.toFixed(2),
       profitFactor: avgLoss !== 0 ? Math.abs(avgWin / avgLoss).toFixed(2) : 0,
-      dailyRiskUsed: (this.dailyRisk * 100).toFixed(2)
+      dailyRiskUsed: (this.dailyRisk * 100).toFixed(2),
     };
-  }
+  },
 };

@@ -17,7 +17,7 @@ async function startEphemeralServer(app) {
   }
   return {
     server,
-    baseUrl: `http://127.0.0.1:${port}`
+    baseUrl: `http://127.0.0.1:${port}`,
   };
 }
 
@@ -25,7 +25,7 @@ function createLogger() {
   return {
     info() {},
     warn() {},
-    error() {}
+    error() {},
   };
 }
 
@@ -51,13 +51,13 @@ describe('Broker routes (integration)', () => {
       tradingEngine: { activeTrades: new Map() },
       brokerRouter: {
         getStatus: () => ({ ok: true }),
-        getHealthSnapshots: async () => []
+        getHealthSnapshots: async () => [],
       },
       auditLogger: { record: async () => {} },
       logger: createLogger(),
       config: { brokerRouting: { enabled: false } },
       requireBrokerRead: (req, res, next) => next(),
-      requireBrokerWrite: (req, res, next) => next()
+      requireBrokerWrite: (req, res, next) => next(),
     });
 
     app.use('/api', router);
@@ -90,7 +90,7 @@ describe('Broker routes (integration)', () => {
           throw err;
         }
         return { id, ok: true };
-      }
+      },
     };
 
     const router = brokerRoutes({
@@ -100,7 +100,7 @@ describe('Broker routes (integration)', () => {
       logger: createLogger(),
       config: { brokerRouting: { enabled: true } },
       requireBrokerRead: (req, res, next) => next(),
-      requireBrokerWrite: (req, res, next) => next()
+      requireBrokerWrite: (req, res, next) => next(),
     });
 
     app.use('/api', router);
@@ -121,7 +121,7 @@ describe('Broker routes (integration)', () => {
     const missing = await fetch(`${baseUrl}/api/broker/connectors/unknown/probe`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ action: 'connect' })
+      body: JSON.stringify({ action: 'connect' }),
     });
     assert.equal(missing.status, 404);
     const missingBody = await missing.json();

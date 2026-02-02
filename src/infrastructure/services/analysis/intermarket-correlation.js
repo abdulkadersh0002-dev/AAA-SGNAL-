@@ -8,7 +8,7 @@ const TF_TO_MS = {
   M15: 15 * 60 * 1000,
   H1: 60 * 60 * 1000,
   H4: 4 * 60 * 60 * 1000,
-  D1: 24 * 60 * 60 * 1000
+  D1: 24 * 60 * 60 * 1000,
 };
 
 const normalizeSymbol = (value) =>
@@ -75,7 +75,7 @@ const resolveBestSymbolMatch = ({ eaBridgeService, broker, requestedSymbol, avai
   try {
     if (eaBridgeService && typeof eaBridgeService.resolveSymbolFromQuotes === 'function') {
       const resolved = eaBridgeService.resolveSymbolFromQuotes(broker, requested, {
-        maxAgeMs: 5 * 60 * 1000
+        maxAgeMs: 5 * 60 * 1000,
       });
       const normalizedResolved = normalizeSymbol(resolved);
       if (normalizedResolved) {
@@ -280,7 +280,7 @@ const computeWindowStability = ({ nowA, nowB, segments = 4 }) => {
 
   return {
     segments: corrs.length,
-    corrStd: corrs.length >= 2 ? Number(stddev(corrs).toFixed(3)) : null
+    corrStd: corrs.length >= 2 ? Number(stddev(corrs).toFixed(3)) : null,
   };
 };
 
@@ -481,7 +481,7 @@ export function computeIntermarketCorrelation({
   assetClass,
   timeframe = 'M15',
   window = 96,
-  maxAgeMs = 0
+  maxAgeMs = 0,
 } = {}) {
   const brokerId = String(broker || '')
     .trim()
@@ -499,7 +499,7 @@ export function computeIntermarketCorrelation({
       source: 'ea-bars',
       peers: [],
       warnings: ['EA bars API is not available in this runtime.'],
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
     };
   }
 
@@ -512,7 +512,7 @@ export function computeIntermarketCorrelation({
       source: 'ea-bars',
       peers: [],
       warnings: ['broker and pair are required for intermarket correlation.'],
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
     };
   }
 
@@ -537,7 +537,7 @@ export function computeIntermarketCorrelation({
     eaBridgeService,
     broker: brokerId,
     requestedSymbol: requestedTarget,
-    availableSymbols
+    availableSymbols,
   });
 
   const peersRequested = buildPeerList({ pair: target, assetClass, availableSymbols });
@@ -549,7 +549,7 @@ export function computeIntermarketCorrelation({
         eaBridgeService,
         broker: brokerId,
         requestedSymbol: peer?.symbol,
-        availableSymbols
+        availableSymbols,
       });
       const sym = normalizeSymbol(resolved);
       if (!sym || sym === target || seen.has(sym)) {
@@ -567,13 +567,13 @@ export function computeIntermarketCorrelation({
       eaBridgeService.touchActiveSymbol({
         broker: brokerId,
         symbol: target,
-        ttlMs: 15 * 60 * 1000
+        ttlMs: 15 * 60 * 1000,
       });
       for (const peer of peers.slice(0, 10)) {
         eaBridgeService.touchActiveSymbol({
           broker: brokerId,
           symbol: peer.symbol,
-          ttlMs: 10 * 60 * 1000
+          ttlMs: 10 * 60 * 1000,
         });
       }
     }
@@ -588,7 +588,7 @@ export function computeIntermarketCorrelation({
     symbol: target,
     timeframe: tf,
     limit,
-    maxAgeMs
+    maxAgeMs,
   });
 
   const targetSeries = buildCloseSeries(targetBars);
@@ -602,7 +602,7 @@ export function computeIntermarketCorrelation({
       peers: [],
       warnings: [`Not enough EA bars for ${target} (${targetSeries.length} < ${windowN + 3}).`],
       requestedTarget,
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
     };
   }
 
@@ -626,7 +626,7 @@ export function computeIntermarketCorrelation({
         symbol: peer,
         timeframe: tf,
         limit,
-        maxAgeMs
+        maxAgeMs,
       });
       peerSeries = buildCloseSeries(bars);
     } catch (_error) {
@@ -646,7 +646,7 @@ export function computeIntermarketCorrelation({
         break: null,
         expectedSign: expectedCorrelationSign({ pair: target, peer }),
         stability: { corrStd: null, segments: 0 },
-        note: `Not enough bars (${peerSeries.length}).`
+        note: `Not enough bars (${peerSeries.length}).`,
       });
       continue;
     }
@@ -665,7 +665,7 @@ export function computeIntermarketCorrelation({
         break: null,
         expectedSign: expectedCorrelationSign({ pair: target, peer }),
         stability: { corrStd: null, segments: 0 },
-        note: 'Insufficient aligned bars between symbols.'
+        note: 'Insufficient aligned bars between symbols.',
       });
       continue;
     }
@@ -724,7 +724,7 @@ export function computeIntermarketCorrelation({
       expectedSign: expected,
       alignedWithExpectation: alignment,
       stability,
-      note: null
+      note: null,
     });
   }
 
@@ -783,10 +783,10 @@ export function computeIntermarketCorrelation({
       breaksCore: breaksCore.length,
       conflictsCore: conflictsCore.length,
       avgCorrStd: avgStd,
-      stabilityScore
+      stabilityScore,
     },
     warnings,
     requestedTarget,
-    updatedAt: Date.now()
+    updatedAt: Date.now(),
   };
 }

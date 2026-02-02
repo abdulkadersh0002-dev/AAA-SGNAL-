@@ -46,6 +46,7 @@ Feeds high-impact news events to the Intelligent Trade Manager for real-time mar
 When a signal is ready for execution, it goes through the following evaluation:
 
 ### Step 1: News Impact Check
+
 ```javascript
 // Blocks trades if high-impact news is imminent or ongoing
 // Time window: 15 minutes before/after news
@@ -56,56 +57,66 @@ if (!newsCheck.safe) {
 ```
 
 **Impact Levels:**
+
 - High Impact (>= 70): Central bank decisions, CPI, NFP, GDP, Interest rates
 - Medium Impact (40-69): Trade balance, Manufacturing PMI
 - Low Impact (< 40): Minor economic indicators
 
 ### Step 2: Market Phase Evaluation
+
 ```javascript
 // Evaluates if current market phase suits the signal direction
 const phaseCheck = this.evaluateMarketPhase(signal, symbol, marketData);
 ```
 
 **Market Phases:**
+
 - **Accumulation**: Good for BUY entries (1.1x confidence multiplier)
 - **Expansion**: Excellent for BUY entries (1.2x confidence multiplier)
 - **Distribution**: Good for SELL entries (1.1x confidence multiplier)
 - **Retracement**: Excellent for SELL entries (1.2x confidence multiplier)
 
 **Unsuitable Phases:**
+
 - BUY during Distribution: 0.7x confidence multiplier
 - SELL during Accumulation: 0.7x confidence multiplier
 
 ### Step 3: Symbol Performance Analysis
+
 ```javascript
 // Uses historical performance to adjust confidence
 const symbolCheck = this.evaluateSymbolPerformance(symbol);
 ```
 
 **Performance Adjustments:**
+
 - Win rate > 65%: 1.1x confidence multiplier + "Strong performance" insight
 - Win rate < 35%: 0.7x confidence multiplier + "Weak performance" insight
 - Profit factor > 2.0: 1.05x additional multiplier
 - Profit factor < 1.0: 0.85x additional multiplier
 
 ### Step 4: Volatility Appropriateness
+
 ```javascript
 // Ensures volatility matches signal strength requirements
 const volCheck = this.evaluateVolatility(symbol, signal, marketData);
 ```
 
 **Volatility States:**
+
 - **Extreme**: Only signals with strength >= 70 allowed (0.9x multiplier)
 - **Low/Calm**: Only signals with strength >= 40 allowed
 - **Normal/High**: Ideal conditions (1.05x multiplier)
 
 ### Step 5: Multi-Timeframe Confirmation
+
 ```javascript
 // Validates signal direction across M15, H1, H4 timeframes
 const mtfCheck = this.checkMultiTimeframeAlignment(broker, symbol, signal);
 ```
 
 **Alignment Factors:**
+
 - 80%+ alignment: 1.15x confidence multiplier
 - 60-79% alignment: 1.05x confidence multiplier
 - < 60% alignment: 0.8x confidence multiplier
@@ -113,6 +124,7 @@ const mtfCheck = this.checkMultiTimeframeAlignment(broker, symbol, signal);
 ### Final Decision
 
 The trade is only executed if:
+
 1. All checks pass
 2. Final confidence >= 80% (configurable)
 3. Quality score is acceptable
@@ -156,7 +168,7 @@ The Intelligent Trade Manager also provides intelligent trade monitoring:
 const monitoring = intelligentTradeManager.monitorTrade({
   trade: openTrade,
   currentPrice: latestQuote.bid,
-  marketData: { quote, snapshot }
+  marketData: { quote, snapshot },
 });
 
 // Actions: 'CLOSE_NOW', 'MODIFY_SL', 'HOLD'
@@ -230,20 +242,19 @@ if (passesStrengthFloor && isEnter && tradingEnabled) {
   // Update market context
   updateMarketPhaseFromLayers(signal);
   updateVolatilityFromLayers(signal);
-  
+
   // Perform intelligent evaluation
   const intelligentEvaluation = intelligentTradeManager.evaluateTradeEntry({
     signal: adjustedSignal,
     broker,
     symbol: pair,
-    marketData: { quote, snapshot }
+    marketData: { quote, snapshot },
   });
-  
+
   intelligentApproved = intelligentEvaluation.shouldOpen;
 }
 
-const shouldExecuteNow = tradingEnabled && passesStrengthFloor && 
-                         isEnter && intelligentApproved;
+const shouldExecuteNow = tradingEnabled && passesStrengthFloor && isEnter && intelligentApproved;
 ```
 
 ### News Integration
@@ -258,7 +269,7 @@ if (this.intelligentTradeManager && item.currency && item.impact >= 70) {
     title: item.title,
     timestamp: item.time,
     impact: item.impact,
-    kind: item.kind
+    kind: item.kind,
   });
 }
 ```
@@ -285,10 +296,10 @@ const recommendations = intelligentTradeManager.getRecommendations();
 
 // Example output:
 [
-  "Market favors trending strategies - increase trend-following signals",
-  "Avoid EURUSD - poor recent performance (28% win rate)",
-  "Favor GBPUSD - excellent recent performance (74% win rate)"
-]
+  'Market favors trending strategies - increase trend-following signals',
+  'Avoid EURUSD - poor recent performance (28% win rate)',
+  'Favor GBPUSD - excellent recent performance (74% win rate)',
+];
 ```
 
 ### Signal Quality Monitoring
@@ -334,8 +345,8 @@ Analyze why trades are being blocked to fine-tune settings:
 
 ```javascript
 // Check execution response for:
-intelligentEvaluation.blocked  // 'NEWS_RISK', 'MARKET_PHASE', 'VOLATILITY'
-intelligentEvaluation.reasons  // Array of detailed reasons
+intelligentEvaluation.blocked; // 'NEWS_RISK', 'MARKET_PHASE', 'VOLATILITY'
+intelligentEvaluation.reasons; // Array of detailed reasons
 ```
 
 ### 4. Symbol-Specific Adjustments
@@ -345,6 +356,7 @@ If certain symbols consistently underperform, the system will automatically redu
 ### 5. Market Regime Awareness
 
 The system adapts to market conditions:
+
 - Trending markets: Prefers trend-following signals
 - Ranging markets: Prefers mean-reversion signals
 - Volatile markets: Requires stronger confirmation
@@ -353,12 +365,12 @@ The system adapts to market conditions:
 
 ### Expected Results with Default Settings:
 
-| Configuration | Expected Win Rate | Signal Frequency | Risk Level |
-|--------------|------------------|------------------|------------|
-| Conservative (65/55) | 85-90% | Low | Very Low |
-| Smart-Strong (55/45) | 75-85% | Medium | Low |
-| Balanced (50/40) | 70-80% | High | Medium |
-| Aggressive (45/35) | 65-75% | Very High | High |
+| Configuration        | Expected Win Rate | Signal Frequency | Risk Level |
+| -------------------- | ----------------- | ---------------- | ---------- |
+| Conservative (65/55) | 85-90%            | Low              | Very Low   |
+| Smart-Strong (55/45) | 75-85%            | Medium           | Low        |
+| Balanced (50/40)     | 70-80%            | High             | Medium     |
+| Aggressive (45/35)   | 65-75%            | Very High        | High       |
 
 ### Factors Affecting Performance:
 
@@ -375,6 +387,7 @@ The system adapts to market conditions:
 **Cause**: Thresholds too high or too many blocking factors
 
 **Solution**:
+
 1. Lower `AUTO_TRADING_SMART_MIN_CONFIDENCE` by 5 points
 2. Check news blackout settings
 3. Verify multi-timeframe data availability
@@ -385,6 +398,7 @@ The system adapts to market conditions:
 **Cause**: Thresholds too low or poor market conditions
 
 **Solution**:
+
 1. Increase `AUTO_TRADING_SMART_MIN_CONFIDENCE` by 10 points
 2. Increase `EA_SIGNAL_LAYERS18_MIN_CONFLUENCE` to 35-40
 3. Enable all available guards
@@ -395,6 +409,7 @@ The system adapts to market conditions:
 **Cause**: News blackout window too wide
 
 **Solution**:
+
 ```bash
 AUTO_TRADING_NEWS_BLACKOUT_MINUTES=30  # Reduce from 45
 AUTO_TRADING_NEWS_BLACKOUT_IMPACT=75   # Increase from 60
@@ -405,6 +420,7 @@ AUTO_TRADING_NEWS_BLACKOUT_IMPACT=75   # Increase from 60
 **Cause**: Missing market phase data in signals
 
 **Solution**:
+
 1. Verify Layer 12 (market phase) is present in layered analysis
 2. Check EA snapshot includes technical indicators
 3. Review signal components for phase information
@@ -412,6 +428,7 @@ AUTO_TRADING_NEWS_BLACKOUT_IMPACT=75   # Increase from 60
 ## Future Enhancements
 
 Planned improvements:
+
 1. Machine learning integration for adaptive thresholds
 2. Correlation-based portfolio optimization
 3. Sentiment analysis from news headlines
@@ -422,6 +439,7 @@ Planned improvements:
 ## Support
 
 For issues or questions:
+
 1. Check logs for `intelligentEvaluation` objects
 2. Review trade blocking reasons in execution response
 3. Monitor symbol performance metrics

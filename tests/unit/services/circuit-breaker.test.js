@@ -3,7 +3,7 @@ import assert from 'node:assert';
 import CircuitBreaker, {
   CircuitBreakerError,
   CircuitBreakerRegistry,
-  circuitBreakerRegistry
+  circuitBreakerRegistry,
 } from '../../../src/infrastructure/services/circuit-breaker.js';
 
 describe('Circuit Breaker', () => {
@@ -14,7 +14,7 @@ describe('Circuit Breaker', () => {
       name: 'test',
       failureThreshold: 3,
       successThreshold: 2,
-      timeout: 100 // Short timeout for testing
+      timeout: 100, // Short timeout for testing
     });
   });
 
@@ -268,7 +268,7 @@ describe('Circuit Breaker', () => {
         failureThreshold: 2,
         onStateChange: (from, to) => {
           stateChanges.push({ from, to });
-        }
+        },
       });
 
       // Trigger state change to OPEN
@@ -294,7 +294,7 @@ describe('Circuit Breaker', () => {
         name: 'failure-test',
         onFailure: (err) => {
           failures.push(err.message);
-        }
+        },
       });
 
       try {

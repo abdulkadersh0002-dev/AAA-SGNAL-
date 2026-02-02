@@ -96,7 +96,7 @@ class FeatureStore {
     const summary = {
       pair,
       timeframes: {},
-      updatedAt: Date.now()
+      updatedAt: Date.now(),
     };
 
     for (const key of this.store.keys()) {
@@ -111,7 +111,7 @@ class FeatureStore {
       const filtered = sinceTs ? arr.filter((entry) => entry.ts >= sinceTs) : arr.slice();
       summary.timeframes[timeframe] = {
         latest: filtered.length ? filtered[filtered.length - 1] : null,
-        history: filtered.slice(-limitPerTimeframe)
+        history: filtered.slice(-limitPerTimeframe),
       };
     }
 
@@ -132,7 +132,7 @@ class FeatureStore {
         pair,
         timeframe,
         ts: latest.ts,
-        features: latest.features
+        features: latest.features,
       });
     }
 
@@ -150,7 +150,7 @@ class FeatureStore {
       summary[key] = {
         count: arr.length,
         first: arr[0]?.ts || null,
-        last: arr[arr.length - 1]?.ts || null
+        last: arr[arr.length - 1]?.ts || null,
       };
     }
     return summary;
@@ -175,7 +175,7 @@ class FeatureStore {
         count: arr.length,
         lastTs: last?.ts || null,
         price: last?.features?.price ?? null,
-        score: last?.features?.score ?? null
+        score: last?.features?.score ?? null,
       });
     }
 
@@ -184,7 +184,7 @@ class FeatureStore {
     return {
       totalKeys: entries.length,
       totalEntries,
-      recent: entries.slice(0, limit)
+      recent: entries.slice(0, limit),
     };
   }
 
@@ -192,7 +192,7 @@ class FeatureStore {
     return {
       enabled: Boolean(this.persistence),
       lastPersistedAt: this.lastPersistedAt ? new Date(this.lastPersistedAt).toISOString() : null,
-      totalPersisted: this.totalPersisted
+      totalPersisted: this.totalPersisted,
     };
   }
 
@@ -244,8 +244,8 @@ class FeatureStore {
         divergenceCount: Number.isFinite(features.divergenceCount)
           ? Number(features.divergenceCount)
           : null,
-        patternCount: Number.isFinite(features.patternCount) ? Number(features.patternCount) : null
-      }
+        patternCount: Number.isFinite(features.patternCount) ? Number(features.patternCount) : null,
+      },
     };
 
     this.persistence

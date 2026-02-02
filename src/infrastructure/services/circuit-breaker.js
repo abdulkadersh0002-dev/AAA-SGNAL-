@@ -8,7 +8,7 @@
 const STATES = {
   CLOSED: 'CLOSED',
   OPEN: 'OPEN',
-  HALF_OPEN: 'HALF_OPEN'
+  HALF_OPEN: 'HALF_OPEN',
 };
 
 /**
@@ -45,7 +45,7 @@ export class CircuitBreaker {
       successfulCalls: 0,
       failedCalls: 0,
       rejectedCalls: 0,
-      stateChanges: []
+      stateChanges: [],
     };
   }
 
@@ -126,7 +126,7 @@ export class CircuitBreaker {
     this.stats.stateChanges.push({
       from: oldState,
       to: newState,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
 
     if (newState === STATES.OPEN) {
@@ -193,7 +193,7 @@ export class CircuitBreaker {
       successRate:
         this.stats.totalCalls > 0
           ? `${((this.stats.successfulCalls / this.stats.totalCalls) * 100).toFixed(2)}%`
-          : 'N/A'
+          : 'N/A',
     };
   }
 
@@ -271,7 +271,7 @@ export class CircuitBreakerRegistry {
       healthy: openCircuits.length === 0,
       totalCircuits: this.breakers.size,
       openCircuits: openCircuits.length,
-      circuits: breakers
+      circuits: breakers,
     };
   }
 }

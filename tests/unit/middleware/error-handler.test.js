@@ -16,7 +16,7 @@ function createRes({ requestId = 'rid' } = {}) {
     json(payload) {
       this.body = payload;
       return this;
-    }
+    },
   };
   return res;
 }
@@ -34,7 +34,7 @@ describe('error handler', () => {
       },
       error() {
         calls.error += 1;
-      }
+      },
     };
     const handler = createErrorHandler({ logger, nodeEnv: 'test' });
 

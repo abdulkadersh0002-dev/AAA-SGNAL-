@@ -53,7 +53,7 @@ export default class FinnhubProvider extends BasePriceProvider {
       resolution,
       from,
       to: nowSeconds,
-      token: this.apiKey
+      token: this.apiKey,
     };
 
     const started = Date.now();
@@ -61,7 +61,7 @@ export default class FinnhubProvider extends BasePriceProvider {
     try {
       const { data, status } = await axios.get('https://finnhub.io/api/v1/forex/candle', {
         params,
-        timeout: options.timeoutMs || 10000
+        timeout: options.timeoutMs || 10000,
       });
 
       if (status === 429) {
@@ -84,7 +84,7 @@ export default class FinnhubProvider extends BasePriceProvider {
         this.validatePriceBars?.(normalized, { pair, timeframe, provider: 'finnhub' }) || [];
       this.recordRequest?.('finnhub', {
         success: validated.length > 0,
-        latencyMs: Date.now() - started
+        latencyMs: Date.now() - started,
       });
       return validated;
     } catch (error) {
@@ -121,7 +121,7 @@ export default class FinnhubProvider extends BasePriceProvider {
 
     const params = {
       symbol,
-      token: this.apiKey
+      token: this.apiKey,
     };
 
     const started = Date.now();
@@ -129,7 +129,7 @@ export default class FinnhubProvider extends BasePriceProvider {
     try {
       const { data, status } = await axios.get('https://finnhub.io/api/v1/forex/quote', {
         params,
-        timeout: options.timeoutMs || 4000
+        timeout: options.timeoutMs || 4000,
       });
 
       if (status === 429) {

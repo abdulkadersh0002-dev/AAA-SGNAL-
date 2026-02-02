@@ -21,7 +21,7 @@ class SentimentFeedsService {
         'improve',
         'optimistic',
         'beat expectations',
-        'accumulate'
+        'accumulate',
       ],
       negative: [
         'drop',
@@ -31,8 +31,8 @@ class SentimentFeedsService {
         'decline',
         'pessimistic',
         'miss expectations',
-        'distribution'
-      ]
+        'distribution',
+      ],
     };
   }
 
@@ -49,7 +49,7 @@ class SentimentFeedsService {
     const [social, cot, optionsFlow] = await Promise.all([
       this.fetchSocialSentiment(pair, metadata, options),
       this.fetchCOTSentiment(pair, metadata, options),
-      this.fetchOptionsFlow(pair, metadata, options)
+      this.fetchOptionsFlow(pair, metadata, options),
     ]);
 
     const composite = this.calculateCompositeScore({ social, cot, optionsFlow });
@@ -66,8 +66,8 @@ class SentimentFeedsService {
       sources: {
         social: !this.isSyntheticSource(social.source),
         cot: !this.isSyntheticSource(cot.source),
-        options: !this.isSyntheticSource(optionsFlow.source)
-      }
+        options: !this.isSyntheticSource(optionsFlow.source),
+      },
     };
 
     this.setCached(cacheKey, payload);
@@ -106,7 +106,7 @@ class SentimentFeedsService {
         mentions: relevant.length,
         sampleSize: data?.length || 0,
         source: 'Finnhub',
-        windowHours: 24
+        windowHours: 24,
       };
     } catch (error) {
       this.handleFinnhubError(error, `Social sentiment fetch failed for ${pair}`);
@@ -169,7 +169,7 @@ class SentimentFeedsService {
         netShort,
         openInterest,
         reportDate: latest.date || latest.report_date || null,
-        source: 'Finnhub'
+        source: 'Finnhub',
       };
     } catch (error) {
       this.handleFinnhubError(error, `COT sentiment fetch failed for ${pair}`);
@@ -234,7 +234,7 @@ class SentimentFeedsService {
         totalVolume: volume,
         priceChange,
         source: 'Polygon',
-        windowHours: 24
+        windowHours: 24,
       };
     } catch (error) {
       this.handlePolygonError(error, `Options flow fetch failed for ${pair}`);
@@ -258,7 +258,7 @@ class SentimentFeedsService {
     const weights = {
       social: 0.3,
       cot: 0.4,
-      optionsFlow: 0.3
+      optionsFlow: 0.3,
     };
 
     let score = 0;
@@ -273,7 +273,7 @@ class SentimentFeedsService {
 
     return {
       score: Number(score.toFixed(2)),
-      confidence: Math.min(100, Number(confidence.toFixed(1)))
+      confidence: Math.min(100, Number(confidence.toFixed(1))),
     };
   }
 
@@ -353,7 +353,7 @@ class SentimentFeedsService {
       [
         base?.toLowerCase?.(),
         quote?.toLowerCase?.(),
-        ...(metadata?.aliases || []).map((alias) => alias.toLowerCase())
+        ...(metadata?.aliases || []).map((alias) => alias.toLowerCase()),
       ].filter(Boolean)
     );
 
@@ -378,7 +378,7 @@ class SentimentFeedsService {
       NZD: 'CHRIS/CME_NE1',
       CAD: 'CHRIS/CME_CD1',
       JPY: 'CHRIS/CME_JY1',
-      CHF: 'CHRIS/CME_SF1'
+      CHF: 'CHRIS/CME_SF1',
     };
     return map[currency] || null;
   }
@@ -397,7 +397,7 @@ class SentimentFeedsService {
       GER40EUR: 'CHRIS/EUREX_FDAX1',
       XAUUSD: 'CHRIS/CME_GC1',
       XAGUSD: 'CHRIS/CME_SI1',
-      USOILUSD: 'CHRIS/CME_CL1'
+      USOILUSD: 'CHRIS/CME_CL1',
     };
     return map[pair] || null;
   }
@@ -410,7 +410,7 @@ class SentimentFeedsService {
       mentions: 0,
       sampleSize: 0,
       source: 'synthetic',
-      windowHours: 24
+      windowHours: 24,
     };
   }
 
@@ -423,7 +423,7 @@ class SentimentFeedsService {
       netShort: 0,
       openInterest: 0,
       reportDate: null,
-      source: 'synthetic'
+      source: 'synthetic',
     };
   }
 
@@ -435,7 +435,7 @@ class SentimentFeedsService {
       totalVolume: 0,
       priceChange: 0,
       source,
-      windowHours: 24
+      windowHours: 24,
     };
   }
 

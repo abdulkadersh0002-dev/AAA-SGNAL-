@@ -42,7 +42,7 @@ export default class TwelveDataProvider extends BasePriceProvider {
       interval,
       outputsize: bars,
       apikey: this.apiKey,
-      order: 'desc'
+      order: 'desc',
     };
 
     const started = Date.now();
@@ -50,7 +50,7 @@ export default class TwelveDataProvider extends BasePriceProvider {
     try {
       const { data, status } = await axios.get('https://api.twelvedata.com/time_series', {
         params,
-        timeout: timeoutMs || 7000
+        timeout: timeoutMs || 7000,
       });
 
       if (status === 429 || data?.code === 429) {
@@ -64,7 +64,7 @@ export default class TwelveDataProvider extends BasePriceProvider {
         this.validatePriceBars?.(normalized, { pair, timeframe, provider: 'twelveData' }) || [];
       this.recordRequest?.('twelveData', {
         success: validated.length > 0,
-        latencyMs: Date.now() - started
+        latencyMs: Date.now() - started,
       });
       return validated;
     } catch (error) {
@@ -104,7 +104,7 @@ export default class TwelveDataProvider extends BasePriceProvider {
 
     const params = {
       symbol,
-      apikey: this.apiKey
+      apikey: this.apiKey,
     };
 
     const started = Date.now();
@@ -112,7 +112,7 @@ export default class TwelveDataProvider extends BasePriceProvider {
     try {
       const { data, status } = await axios.get('https://api.twelvedata.com/quote', {
         params,
-        timeout: timeoutMs || 5000
+        timeout: timeoutMs || 5000,
       });
 
       if (status === 429 || data?.code === 429) {

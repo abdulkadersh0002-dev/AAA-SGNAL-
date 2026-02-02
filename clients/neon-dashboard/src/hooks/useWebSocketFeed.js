@@ -16,7 +16,7 @@ const toEventPayload = (raw) => {
       id: `event-${Date.now()}-${Math.random().toString(16).slice(2)}`,
       type: 'unknown',
       payload: raw,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     };
   }
   const timestamp = raw.timestamp || Date.now();
@@ -25,7 +25,7 @@ const toEventPayload = (raw) => {
     id: raw.id || `${type}-${timestamp}-${Math.random().toString(16).slice(2)}`,
     type,
     payload: raw.payload ?? raw.data ?? null,
-    timestamp
+    timestamp,
   };
 };
 

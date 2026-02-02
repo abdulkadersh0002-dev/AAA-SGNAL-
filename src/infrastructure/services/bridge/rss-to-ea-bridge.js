@@ -82,7 +82,7 @@ export function startRssToEaBridgeIngestor({
   eaBridgeService,
   brokers,
   logger,
-  calendarService
+  calendarService,
 } = {}) {
   const log = logger && typeof logger === 'object' ? logger : console;
 
@@ -124,7 +124,7 @@ export function startRssToEaBridgeIngestor({
     : 3;
 
   const aggregator = new RssFeedAggregator({
-    logger: log
+    logger: log,
   });
 
   let timer = null;
@@ -177,7 +177,7 @@ export function startRssToEaBridgeIngestor({
           category,
           summary: it?.summary || null,
           originalTimestamp: originalTimestamp,
-          topic: isCalendarCategory ? 'economic_calendar' : null
+          topic: isCalendarCategory ? 'economic_calendar' : null,
         };
       });
 
@@ -191,7 +191,7 @@ export function startRssToEaBridgeIngestor({
           try {
             const events = await calendarService.getEventsForCurrency(currency, {
               daysAhead: calendarDaysAhead,
-              includeHistorical: false
+              includeHistorical: false,
             });
             if (!Array.isArray(events)) {
               continue;
@@ -217,7 +217,7 @@ export function startRssToEaBridgeIngestor({
                 source: evt?.source || 'calendar',
                 kind: 'calendar',
                 topic: 'economic_calendar',
-                raw: evt
+                raw: evt,
               });
             });
           } catch (_error) {
@@ -264,6 +264,6 @@ export function startRssToEaBridgeIngestor({
     started: true,
     intervalMs,
     maxItems,
-    brokers: brokerList
+    brokers: brokerList,
   };
 }

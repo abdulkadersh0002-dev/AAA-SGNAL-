@@ -12,13 +12,15 @@ const DEFAULTS = {
   holdBars: 12,
   signalStride: 4,
   defaultTakeProfitPips: 40,
-  defaultStopLossPips: 22
+  defaultStopLossPips: 22,
 };
 
 const resolveNumber = (value) => (Number.isFinite(Number(value)) ? Number(value) : null);
 
 const resolveTimeframeMinutes = (tf) => {
-  const normalized = String(tf || '').trim().toUpperCase();
+  const normalized = String(tf || '')
+    .trim()
+    .toUpperCase();
   const map = {
     M1: 1,
     M2: 2,
@@ -34,7 +36,7 @@ const resolveTimeframeMinutes = (tf) => {
     H6: 360,
     H8: 480,
     H12: 720,
-    D1: 1440
+    D1: 1440,
   };
   return map[normalized] || 15;
 };
@@ -46,7 +48,7 @@ export class LiveBacktestValidator {
     this.logger = logger || null;
     this.options = {
       ...DEFAULTS,
-      ...(options || {})
+      ...(options || {}),
     };
   }
 
@@ -62,13 +64,14 @@ export class LiveBacktestValidator {
       minWinRate: numberEnv('LIVE_BACKTEST_MIN_WIN_RATE') ?? this.options.minWinRate,
       minProfitFactor: numberEnv('LIVE_BACKTEST_MIN_PROFIT_FACTOR') ?? this.options.minProfitFactor,
       maxDrawdownPct: numberEnv('LIVE_BACKTEST_MAX_DRAWDOWN_PCT') ?? this.options.maxDrawdownPct,
-      minExpectancyPct: numberEnv('LIVE_BACKTEST_MIN_EXPECTANCY_PCT') ?? this.options.minExpectancyPct,
+      minExpectancyPct:
+        numberEnv('LIVE_BACKTEST_MIN_EXPECTANCY_PCT') ?? this.options.minExpectancyPct,
       holdBars: numberEnv('LIVE_BACKTEST_HOLD_BARS') ?? this.options.holdBars,
       signalStride: numberEnv('LIVE_BACKTEST_SIGNAL_STRIDE') ?? this.options.signalStride,
       defaultTakeProfitPips:
         numberEnv('LIVE_BACKTEST_TAKE_PROFIT_PIPS') ?? this.options.defaultTakeProfitPips,
       defaultStopLossPips:
-        numberEnv('LIVE_BACKTEST_STOP_LOSS_PIPS') ?? this.options.defaultStopLossPips
+        numberEnv('LIVE_BACKTEST_STOP_LOSS_PIPS') ?? this.options.defaultStopLossPips,
     };
   }
 
@@ -77,8 +80,7 @@ export class LiveBacktestValidator {
       return [];
     }
 
-    const takeProfitPips =
-      resolveNumber(entry?.takeProfitPips) ?? options.defaultTakeProfitPips;
+    const takeProfitPips = resolveNumber(entry?.takeProfitPips) ?? options.defaultTakeProfitPips;
     const stopLossPips = resolveNumber(entry?.stopLossPips) ?? options.defaultStopLossPips;
 
     const stride = Math.max(1, Math.floor(options.signalStride));
@@ -94,7 +96,7 @@ export class LiveBacktestValidator {
         timestamp,
         takeProfitPips,
         stopLossPips,
-        holdBars: options.holdBars
+        holdBars: options.holdBars,
       });
     }
 
@@ -122,7 +124,7 @@ export class LiveBacktestValidator {
     let bars = [];
     try {
       bars = await this.priceDataFetcher.fetchPriceData(pair, options.timeframe, targetBars, {
-        purpose: 'live-backtest'
+        purpose: 'live-backtest',
       });
     } catch (error) {
       this.logger?.warn?.(
@@ -145,7 +147,7 @@ export class LiveBacktestValidator {
       pair,
       timeframe: options.timeframe,
       bars,
-      signals
+      signals,
     });
 
     const metrics = runResult.metrics || {};
@@ -175,7 +177,10 @@ export class LiveBacktestValidator {
 
     const windowStart = bars[0]?.timestamp ?? bars[0]?.time ?? bars[0]?.datetime ?? null;
     const windowEnd =
-      bars[bars.length - 1]?.timestamp ?? bars[bars.length - 1]?.time ?? bars[bars.length - 1]?.datetime ?? null;
+      bars[bars.length - 1]?.timestamp ??
+      bars[bars.length - 1]?.time ??
+      bars[bars.length - 1]?.datetime ??
+      null;
 
     return {
       passed,
@@ -186,15 +191,15 @@ export class LiveBacktestValidator {
         lookbackDays: options.lookbackDays,
         bars: bars.length,
         start: windowStart,
-        end: windowEnd
+        end: windowEnd,
       },
       thresholds: {
         minTrades: options.minTrades,
         minWinRate: options.minWinRate,
         minProfitFactor: options.minProfitFactor,
         maxDrawdownPct: options.maxDrawdownPct,
-        minExpectancyPct: options.minExpectancyPct
-      }
+        minExpectancyPct: options.minExpectancyPct,
+      },
     };
   }
 }

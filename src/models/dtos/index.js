@@ -5,7 +5,7 @@
 export {
   TradingSignalSchema,
   createTradingSignalDTO,
-  validateTradingSignalDTO
+  validateTradingSignalDTO,
 } from '../trading-signal/index.js';
 
 export { TradeSchema, createTradeDTO, validateTradeDTO } from '../trade/index.js';
@@ -19,7 +19,7 @@ export {
   normalizeTechnicalAnalysis,
   validateEconomicAnalysisDTO,
   validateNewsAnalysisDTO,
-  validateTechnicalAnalysisDTO
+  validateTechnicalAnalysisDTO,
 } from '../analysis/index.js';
 
 export {
@@ -35,5 +35,5 @@ export {
   validateMarketQuotesIngestDTO,
   validateMarketSnapshotIngestDTO,
   validateMarketNewsIngestDTO,
-  validateModifyPositionDTO
+  validateModifyPositionDTO,
 } from '../market-ingest/index.js';

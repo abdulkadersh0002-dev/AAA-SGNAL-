@@ -5,7 +5,7 @@ function withRequestId(res, payload) {
   }
   return {
     ...payload,
-    requestId
+    requestId,
   };
 }
 
@@ -13,7 +13,7 @@ export function ok(res, data = {}, extra = {}) {
   const payload = withRequestId(res, {
     success: true,
     ...data,
-    timestamp: extra.timestamp ?? Date.now()
+    timestamp: extra.timestamp ?? Date.now(),
   });
   return res.status(extra.statusCode ?? 200).json(payload);
 }
@@ -22,7 +22,7 @@ export function badRequest(res, error, extra = {}) {
   const payload = withRequestId(res, {
     success: false,
     error: typeof error === 'string' ? error : error?.message || 'Bad request',
-    timestamp: extra.timestamp ?? Date.now()
+    timestamp: extra.timestamp ?? Date.now(),
   });
   if (extra.details) {
     payload.details = extra.details;
@@ -34,7 +34,7 @@ export function notFound(res, error = 'Not found', extra = {}) {
   const payload = withRequestId(res, {
     success: false,
     error,
-    timestamp: extra.timestamp ?? Date.now()
+    timestamp: extra.timestamp ?? Date.now(),
   });
   return res.status(extra.statusCode ?? 404).json(payload);
 }
@@ -43,7 +43,7 @@ export function serviceUnavailable(res, error = 'Service unavailable', extra = {
   const payload = withRequestId(res, {
     success: false,
     error: typeof error === 'string' ? error : error?.message || 'Service unavailable',
-    timestamp: extra.timestamp ?? Date.now()
+    timestamp: extra.timestamp ?? Date.now(),
   });
   return res.status(extra.statusCode ?? 503).json(payload);
 }
@@ -57,7 +57,7 @@ export function serverError(res, error, extra = {}) {
   const payload = withRequestId(res, {
     success: false,
     error: 'Internal server error',
-    timestamp: extra.timestamp ?? Date.now()
+    timestamp: extra.timestamp ?? Date.now(),
   });
 
   if (includeMessage) {

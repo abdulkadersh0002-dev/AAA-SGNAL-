@@ -13,9 +13,9 @@ class Mt4Connector extends BaseBrokerConnector {
         baseURL,
         timeout: options.timeout || 5000,
         headers: {
-          'Content-Type': 'application/json'
-        }
-      }
+          'Content-Type': 'application/json',
+        },
+      },
     });
     this.apiKey = options.apiKey || brokerConfig.apiKey || null;
     this.expectedAccount = options.accountNumber || brokerConfig.accountNumber || null;
@@ -24,13 +24,13 @@ class Mt4Connector extends BaseBrokerConnector {
   async healthCheck() {
     try {
       const response = await this.http.get('/status', {
-        headers: this.authHeaders()
+        headers: this.authHeaders(),
       });
       return {
         broker: this.name,
         mode: this.accountMode,
         connected: Boolean(response.data?.connected),
-        details: response.data
+        details: response.data,
       };
     } catch (error) {
       this.logger?.warn?.({ err: error, broker: this.name }, 'MT4 health check failed');
@@ -38,7 +38,7 @@ class Mt4Connector extends BaseBrokerConnector {
         broker: this.name,
         mode: this.accountMode,
         connected: false,
-        error: error.message
+        error: error.message,
       };
     }
   }
@@ -51,11 +51,11 @@ class Mt4Connector extends BaseBrokerConnector {
     const payload = {
       accountMode: options.accountMode || this.accountMode,
       accountNumber: options.accountNumber || this.expectedAccount,
-      forceReconnect: Boolean(options.forceReconnect)
+      forceReconnect: Boolean(options.forceReconnect),
     };
 
     const response = await this.http.post('/session/connect', payload, {
-      headers: this.authHeaders()
+      headers: this.authHeaders(),
     });
 
     return response.data;
@@ -66,10 +66,10 @@ class Mt4Connector extends BaseBrokerConnector {
       '/session/disconnect',
       {
         accountMode: options.accountMode || this.accountMode,
-        accountNumber: options.accountNumber || this.expectedAccount
+        accountNumber: options.accountNumber || this.expectedAccount,
       },
       {
-        headers: this.authHeaders()
+        headers: this.authHeaders(),
       }
     );
 

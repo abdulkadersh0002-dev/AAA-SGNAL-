@@ -15,7 +15,7 @@ const createRouterWithConnector = (connector) => {
     mt5: false,
     oanda: false,
     ibkr: false,
-    defaultBroker: connector.id
+    defaultBroker: connector.id,
   });
 
   router.registerConnector(connector);
@@ -30,7 +30,7 @@ describe('BrokerRouter.modifyPosition', () => {
       async modifyPosition(payload) {
         calls.push(payload);
         return { success: true, result: { ok: true } };
-      }
+      },
     };
 
     const router = createRouterWithConnector(connector);
@@ -43,7 +43,7 @@ describe('BrokerRouter.modifyPosition', () => {
       tp: 1.3456,
       source: 'execution-engine',
       tradeId: 'T-1',
-      reason: 'trailing_stop'
+      reason: 'trailing_stop',
     });
 
     assert.equal(result.success, true);
@@ -61,8 +61,8 @@ describe('BrokerRouter.modifyPosition', () => {
       routerMeta: {
         source: 'execution-engine',
         tradeId: 'T-1',
-        reason: 'trailing_stop'
-      }
+        reason: 'trailing_stop',
+      },
     });
   });
 
@@ -71,7 +71,7 @@ describe('BrokerRouter.modifyPosition', () => {
       id: 'mt5',
       async modifyPosition() {
         throw new Error('should not be called');
-      }
+      },
     };
 
     const router = createRouterWithConnector(connector);
@@ -81,7 +81,7 @@ describe('BrokerRouter.modifyPosition', () => {
       broker: 'mt5',
       ticket: '999',
       symbol: 'EURUSD',
-      stopLoss: 1.2
+      stopLoss: 1.2,
     });
 
     assert.equal(result.success, false);

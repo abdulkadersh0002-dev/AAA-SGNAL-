@@ -92,9 +92,9 @@ test('REST API health endpoints', async (t) => {
     const response = await fetch(server.url('/api/signal/generate'), {
       method: 'POST',
       headers: {
-        'content-type': 'application/json'
+        'content-type': 'application/json',
       },
-      body: JSON.stringify({ pair: 'EURUSD' })
+      body: JSON.stringify({ pair: 'EURUSD' }),
     });
 
     assert.equal(response.status, 200);

@@ -4,7 +4,9 @@
 
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert';
-import CacheService, { createCacheFactory } from '../../../src/infrastructure/services/cache-service.js';
+import CacheService, {
+  createCacheFactory,
+} from '../../../src/infrastructure/services/cache-service.js';
 
 describe('Cache Service', () => {
   let cache;
@@ -96,7 +98,7 @@ describe('Cache Service', () => {
     it('should cache complex nested structures', () => {
       const complex = {
         array: [1, 2, { nested: true }],
-        object: { deep: { value: 'test' } }
+        object: { deep: { value: 'test' } },
       };
       cache.set('complex', complex);
       const result = cache.get('complex');
@@ -220,7 +222,7 @@ describe('Cache Service', () => {
     it('should evict least recently used when max size reached', async () => {
       const smallCache = new CacheService({
         namespace: 'small',
-        maxSize: 3
+        maxSize: 3,
       });
 
       smallCache.set('first', 1);

@@ -14,7 +14,7 @@ function formatZodIssues(issues = []) {
   return issues.map((issue) => ({
     path: Array.isArray(issue.path) ? issue.path.join('.') : '',
     message: issue.message,
-    code: issue.code
+    code: issue.code,
   }));
 }
 
@@ -35,7 +35,7 @@ export function createErrorHandler({ logger, nodeEnv } = {}) {
         success: false,
         error: 'Validation error',
         requestId,
-        details: formatZodIssues(err.issues)
+        details: formatZodIssues(err.issues),
       });
     }
 
@@ -47,7 +47,7 @@ export function createErrorHandler({ logger, nodeEnv } = {}) {
     const payload = {
       success: false,
       error: status >= 500 ? 'Internal server error' : 'Request failed',
-      requestId
+      requestId,
     };
     if (includeMessage && err?.message) {
       payload.message = err.message;

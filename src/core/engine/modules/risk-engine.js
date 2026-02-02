@@ -158,21 +158,21 @@ export const riskEngine = {
           id: trade.id,
           pair: trade.pair,
           direction: trade.direction,
-          positionSize: trade.positionSize
-        }))
+          positionSize: trade.positionSize,
+        })),
       },
       portfolioExposure: {
         current: exposures,
         preview: exposurePreview.current,
         limit: this.config.maxExposurePerCurrency,
         breaches: exposurePreview.breaches,
-        currencyLimitBreaches: currencyLimitResult.breaches || []
+        currencyLimitBreaches: currencyLimitResult.breaches || [],
       },
       stressTests,
       riskCommand: {
         currencyLimitResult,
         correlationGuard,
-        valueAtRiskGuard
+        valueAtRiskGuard,
       },
       canTrade:
         realizedRiskFraction >= this.config.minKellyFraction &&
@@ -180,7 +180,7 @@ export const riskEngine = {
         !exposureBreached &&
         !currencyLimitBreached &&
         !correlationBlocked &&
-        !varBlocked
+        !varBlocked,
     };
   },
 
@@ -249,7 +249,7 @@ export const riskEngine = {
     return Object.fromEntries(
       Object.entries(exposures).map(([currency, exposure]) => [
         currency,
-        Number(exposure.toFixed(2))
+        Number(exposure.toFixed(2)),
       ])
     );
   },
@@ -264,7 +264,7 @@ export const riskEngine = {
     const roundedSnapshot = Object.fromEntries(
       Object.entries(snapshot).map(([currency, exposure]) => [
         currency,
-        Number(exposure.toFixed(2))
+        Number(exposure.toFixed(2)),
       ])
     );
 
@@ -283,18 +283,18 @@ export const riskEngine = {
       {
         scenario: 'atr_retrace',
         description: 'Price retraces by 1 ATR against the position',
-        move: atr
+        move: atr,
       },
       {
         scenario: 'stop_gap_150',
         description: 'Gap against position equals 150% of stop distance',
-        move: riskDistance * 1.5
+        move: riskDistance * 1.5,
       },
       {
         scenario: 'volatility_spike',
         description: 'Volatility spike pushes price 1.8 ATR beyond entry',
-        move: atr * 1.8
-      }
+        move: atr * 1.8,
+      },
     ];
 
     return scenarios.map(({ scenario, description, move }) => {
@@ -304,7 +304,7 @@ export const riskEngine = {
         description,
         adverseMove: Number(move.toFixed(5)),
         equityImpact: Number((-loss).toFixed(2)),
-        equityImpactPct: Number(((-loss / accountBalance) * 100).toFixed(2))
+        equityImpactPct: Number(((-loss / accountBalance) * 100).toFixed(2)),
       };
     });
   },
@@ -340,14 +340,14 @@ export const riskEngine = {
         breaches.push({
           currency,
           exposure: Number(numericExposure.toFixed(2)),
-          limit: configuredLimit
+          limit: configuredLimit,
         });
       }
     });
 
     return {
       allowed,
-      breaches
+      breaches,
     };
   },
 
@@ -356,7 +356,7 @@ export const riskEngine = {
     if (!correlationConfig || correlationConfig.enabled === false) {
       return {
         allowed: true,
-        correlated: []
+        correlated: [],
       };
     }
 
@@ -379,7 +379,7 @@ export const riskEngine = {
         tradeId: trade.id,
         pair: trade.pair,
         correlation: Number(score.toFixed(3)),
-        direction: trade.direction
+        direction: trade.direction,
       });
     }
 
@@ -389,7 +389,7 @@ export const riskEngine = {
       clusterSize: correlated.length,
       threshold,
       maxCluster,
-      direction
+      direction,
     };
   },
 
@@ -409,7 +409,7 @@ export const riskEngine = {
         allowed: true,
         ready: snapshot.ready,
         valuePct,
-        limitPct
+        limitPct,
       };
     }
     const breach = valuePct > limitPct;
@@ -419,7 +419,7 @@ export const riskEngine = {
       breach,
       valuePct,
       limitPct,
-      confidence: snapshot.confidence ?? varConfig.confidence
+      confidence: snapshot.confidence ?? varConfig.confidence,
     };
-  }
+  },
 };

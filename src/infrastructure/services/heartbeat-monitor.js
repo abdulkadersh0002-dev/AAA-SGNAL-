@@ -24,7 +24,7 @@ class HeartbeatMonitor {
       cache,
       priceHealth,
       marketInsights,
-      storage
+      storage,
     });
 
     return {
@@ -44,8 +44,8 @@ class HeartbeatMonitor {
         lastError: priceHealth.lastError || null,
         metrics: priceHealth.metrics || {},
         providerOrderPreview: priceHealth.providerOrderPreview || [],
-        dataConfidence: priceHealth.dataConfidence || null
-      }
+        dataConfidence: priceHealth.dataConfidence || null,
+      },
     };
   }
 
@@ -58,7 +58,7 @@ class HeartbeatMonitor {
       newsApi: this.apiKeyConfig.newsApi,
       fred: this.apiKeyConfig.fred,
       exchangeRate: this.apiKeyConfig.exchangeRate,
-      fixer: this.apiKeyConfig.fixer
+      fixer: this.apiKeyConfig.fixer,
     };
 
     const result = {};
@@ -67,7 +67,7 @@ class HeartbeatMonitor {
       const configured = Boolean(value && value !== 'demo' && value !== 'free');
       result[name] = {
         configured,
-        masked: configured ? this.maskKey(value) : null
+        masked: configured ? this.maskKey(value) : null,
       };
     });
 
@@ -151,7 +151,7 @@ class HeartbeatMonitor {
         healthStatus: providerMetrics.healthStatus || providerStatus,
         circuitBreaker: providerMetrics.circuitBreaker || null,
         health: healthSnapshot[provider] || null,
-        persisted: persistedMetrics[provider] || null
+        persisted: persistedMetrics[provider] || null,
       };
     });
 
@@ -168,7 +168,7 @@ class HeartbeatMonitor {
       size: cache.size || 0,
       hitRate: cache.hitRate || 'N/A',
       segments: cache.segments || {},
-      scheduledRefreshes: cache.scheduledRefreshes || 0
+      scheduledRefreshes: cache.scheduledRefreshes || 0,
     };
   }
 
@@ -196,7 +196,7 @@ class HeartbeatMonitor {
         pair,
         status,
         lastSignalAt: last ? new Date(last).toISOString() : null,
-        ageMs
+        ageMs,
       };
     });
 
@@ -205,7 +205,7 @@ class HeartbeatMonitor {
       freshCount: details.filter((d) => d.status === 'fresh').length,
       warningCount: details.filter((d) => d.status === 'warning').length,
       staleCount: details.filter((d) => d.status === 'stale').length,
-      missingCount: details.filter((d) => d.status === 'missing').length
+      missingCount: details.filter((d) => d.status === 'missing').length,
     };
 
     return { summary, pairs: details, expectedIntervalMs: interval };
@@ -217,21 +217,21 @@ class HeartbeatMonitor {
     const featureStorePersistence = this.tradingEngine?.featureStore?.getPersistenceStatus?.() || {
       enabled: false,
       lastPersistedAt: null,
-      totalPersisted: 0
+      totalPersisted: 0,
     };
 
     return {
       economic: {
-        cacheSize: this.tradingEngine?.economicAnalyzer?.cache?.size || 0
+        cacheSize: this.tradingEngine?.economicAnalyzer?.cache?.size || 0,
       },
       news: {
-        cacheSize: this.tradingEngine?.newsAnalyzer?.cache?.size || 0
+        cacheSize: this.tradingEngine?.newsAnalyzer?.cache?.size || 0,
       },
       technical: {
         cacheSize: technicalCache,
         featureStore: featureStoreStats,
-        featureStorePersistence
-      }
+        featureStorePersistence,
+      },
     };
   }
 
@@ -249,7 +249,7 @@ class HeartbeatMonitor {
     cache,
     priceHealth,
     marketInsights,
-    storage
+    storage,
   }) {
     const missingKeys = Object.values(apiKeys).filter((info) => !info.configured).length;
 
@@ -289,7 +289,7 @@ class HeartbeatMonitor {
       upcomingEvents: marketInsights?.upcomingEvents?.length || 0,
       dataConfidence: priceHealth?.dataConfidence?.aggregate ?? null,
       storageEnabled: Boolean(storage?.enabled),
-      persistedSnapshots: storage?.featureStore?.totalPersisted || 0
+      persistedSnapshots: storage?.featureStore?.totalPersisted || 0,
     };
   }
 
@@ -298,7 +298,7 @@ class HeartbeatMonitor {
     const featureStoreStatus = this.tradingEngine?.featureStore?.getPersistenceStatus?.() || {
       enabled: persistenceEnabled,
       lastPersistedAt: null,
-      totalPersisted: 0
+      totalPersisted: 0,
     };
 
     const providerSnapshots =
@@ -323,8 +323,8 @@ class HeartbeatMonitor {
         providersTracked: providerEntries.length,
         lastPersistedAt:
           lastProviderPersist > 0 ? new Date(lastProviderPersist).toISOString() : null,
-        entries: providerSnapshots
-      }
+        entries: providerSnapshots,
+      },
     };
   }
 

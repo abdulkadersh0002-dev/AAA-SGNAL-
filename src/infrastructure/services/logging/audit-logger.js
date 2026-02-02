@@ -48,7 +48,7 @@ export default class AuditLogger {
         timestamp: new Date().toISOString(),
         event,
         details,
-        metadata
+        metadata,
       };
       const line = `${JSON.stringify(entry)}\n`;
       this.stream.write(line);

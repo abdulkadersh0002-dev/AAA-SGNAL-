@@ -96,7 +96,7 @@ class BrokerRouter {
     }
     return {
       enabled: this.killSwitchEnabled,
-      reason: this.killSwitchReason
+      reason: this.killSwitchReason,
     };
   }
 
@@ -107,7 +107,7 @@ class BrokerRouter {
       connectors: this.listConnectorIds(),
       defaultBroker: this.defaultBroker,
       lastSyncAt: this.lastSyncAt,
-      recentOrders: this.orderLog.slice(-10)
+      recentOrders: this.orderLog.slice(-10),
     };
   }
 
@@ -165,7 +165,7 @@ class BrokerRouter {
     return {
       broker: connector.id,
       action,
-      health
+      health,
     };
   }
 
@@ -180,7 +180,7 @@ class BrokerRouter {
           return {
             broker: connector.id,
             connected: false,
-            error: error.message
+            error: error.message,
           };
         }
       })
@@ -192,7 +192,7 @@ class BrokerRouter {
     if (this.killSwitchEnabled) {
       return {
         success: false,
-        error: `Kill switch engaged${this.killSwitchReason ? `: ${this.killSwitchReason}` : ''}`
+        error: `Kill switch engaged${this.killSwitchReason ? `: ${this.killSwitchReason}` : ''}`,
       };
     }
 
@@ -230,7 +230,7 @@ class BrokerRouter {
       broker: connector.id,
       request: normalized,
       result,
-      timestamp: new Date().toISOString()
+      timestamp: new Date().toISOString(),
     });
 
     if (idempotencyKey) {
@@ -239,7 +239,7 @@ class BrokerRouter {
 
     return {
       ...result,
-      broker: connector.id
+      broker: connector.id,
     };
   }
 
@@ -254,11 +254,11 @@ class BrokerRouter {
       request,
       result,
       timestamp: new Date().toISOString(),
-      type: 'close'
+      type: 'close',
     });
     return {
       ...result,
-      broker: connector.id
+      broker: connector.id,
     };
   }
 
@@ -266,7 +266,7 @@ class BrokerRouter {
     if (this.killSwitchEnabled) {
       return {
         success: false,
-        error: `Kill switch engaged${this.killSwitchReason ? `: ${this.killSwitchReason}` : ''}`
+        error: `Kill switch engaged${this.killSwitchReason ? `: ${this.killSwitchReason}` : ''}`,
       };
     }
 
@@ -280,7 +280,7 @@ class BrokerRouter {
     if (typeof connector.modifyPosition !== 'function') {
       return {
         success: false,
-        error: `Broker ${connector.id} does not support position modification`
+        error: `Broker ${connector.id} does not support position modification`,
       };
     }
 
@@ -291,12 +291,12 @@ class BrokerRouter {
       request: normalized,
       result,
       timestamp: new Date().toISOString(),
-      type: 'modify'
+      type: 'modify',
     });
 
     return {
       ...result,
-      broker: connector.id
+      broker: connector.id,
     };
   }
 
@@ -318,8 +318,8 @@ class BrokerRouter {
       routerMeta: {
         source: request.source || 'trading-engine',
         tradeId: request.tradeId || null,
-        idempotencyKey: request.idempotencyKey || request.idempotency || null
-      }
+        idempotencyKey: request.idempotencyKey || request.idempotency || null,
+      },
     };
   }
 
@@ -338,8 +338,8 @@ class BrokerRouter {
       routerMeta: {
         source: request.source || 'trading-engine',
         tradeId: request.tradeId || null,
-        reason: request.reason || null
-      }
+        reason: request.reason || null,
+      },
     };
   }
 
@@ -353,7 +353,7 @@ class BrokerRouter {
         tradeId: entry?.request?.routerMeta?.tradeId || null,
         idempotencyKey: entry?.request?.routerMeta?.idempotencyKey || null,
         symbol: entry?.request?.symbol || entry?.request?.pair || null,
-        source: entry?.request?.routerMeta?.source || null
+        source: entry?.request?.routerMeta?.source || null,
       });
     } catch (_error) {
       // best-effort
@@ -391,7 +391,7 @@ class BrokerRouter {
     const entry = this.brokerBreakers.get(brokerId) || {
       failures: 0,
       active: false,
-      expiresAt: 0
+      expiresAt: 0,
     };
     entry.failures += 1;
     if (entry.failures >= this.brokerBreakerThreshold) {
@@ -462,13 +462,13 @@ class BrokerRouter {
         const [positions, fills, account] = await Promise.all([
           connector.fetchOpenPositions(),
           connector.fetchRecentFills(),
-          connector.fetchAccountSummary()
+          connector.fetchAccountSummary(),
         ]);
         snapshots.push({
           broker: connector.id,
           positions,
           fills,
-          account
+          account,
         });
       } catch (error) {
         this.logger?.warn?.(
@@ -480,7 +480,7 @@ class BrokerRouter {
           positions: [],
           fills: [],
           account: null,
-          error: error.message
+          error: error.message,
         });
       }
     }
@@ -494,7 +494,7 @@ class BrokerRouter {
     if (this.killSwitchEnabled && !bypassKillSwitch) {
       return {
         success: false,
-        error: `Kill switch engaged${this.killSwitchReason ? `: ${this.killSwitchReason}` : ''}`
+        error: `Kill switch engaged${this.killSwitchReason ? `: ${this.killSwitchReason}` : ''}`,
       };
     }
     const connector = this.getConnector(request.broker || this.defaultBroker);
@@ -530,14 +530,14 @@ class BrokerRouter {
       request: normalized,
       result,
       timestamp: new Date().toISOString(),
-      type: 'manual'
+      type: 'manual',
     });
     if (idempotencyKey) {
       this.storeIdempotentResult(idempotencyKey, { ...result, broker: connector.id });
     }
     return {
       ...result,
-      broker: connector.id
+      broker: connector.id,
     };
   }
 }

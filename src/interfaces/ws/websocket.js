@@ -60,7 +60,7 @@ export function createWebSocketLayer({ server, config, logger }) {
     const message = JSON.stringify({
       type,
       payload,
-      timestamp: Date.now()
+      timestamp: Date.now(),
     });
 
     for (const client of websocketClients) {
@@ -128,7 +128,7 @@ export function createWebSocketLayer({ server, config, logger }) {
         socket.send(
           JSON.stringify({
             type: 'connected',
-            timestamp: Date.now()
+            timestamp: Date.now(),
           })
         );
       } catch (error) {
@@ -142,7 +142,7 @@ export function createWebSocketLayer({ server, config, logger }) {
             JSON.stringify({
               type: 'signals',
               payload: { items: recentSignals.slice(0, maxRecentSignals) },
-              timestamp: Date.now()
+              timestamp: Date.now(),
             })
           );
         } catch (error) {
@@ -157,7 +157,7 @@ export function createWebSocketLayer({ server, config, logger }) {
             JSON.stringify({
               type: 'signal_candidates',
               payload: { items: recentCandidateSignals.slice(0, maxRecentCandidateSignals) },
-              timestamp: Date.now()
+              timestamp: Date.now(),
             })
           );
         } catch (error) {
@@ -225,6 +225,6 @@ export function createWebSocketLayer({ server, config, logger }) {
     websocketClients,
     attach(serverInstance) {
       initializeServer(serverInstance);
-    }
+    },
   };
 }

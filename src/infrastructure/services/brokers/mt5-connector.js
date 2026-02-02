@@ -13,9 +13,9 @@ class Mt5Connector extends BaseBrokerConnector {
         baseURL,
         timeout: options.timeout || 5000,
         headers: {
-          'Content-Type': 'application/json'
-        }
-      }
+          'Content-Type': 'application/json',
+        },
+      },
     });
     this.apiKey = options.apiKey || brokerConfig.apiKey || null;
     this.expectedAccount = options.accountNumber || brokerConfig.accountNumber || null;
@@ -24,13 +24,13 @@ class Mt5Connector extends BaseBrokerConnector {
   async healthCheck() {
     try {
       const response = await this.http.get('/status', {
-        headers: this.authHeaders()
+        headers: this.authHeaders(),
       });
       return {
         broker: this.name,
         mode: this.accountMode,
         connected: Boolean(response.data?.connected),
-        details: response.data
+        details: response.data,
       };
     } catch (error) {
       this.logger?.warn?.({ err: error, broker: this.name }, 'MT5 health check failed');
@@ -38,7 +38,7 @@ class Mt5Connector extends BaseBrokerConnector {
         broker: this.name,
         mode: this.accountMode,
         connected: false,
-        error: error.message
+        error: error.message,
       };
     }
   }
@@ -51,11 +51,11 @@ class Mt5Connector extends BaseBrokerConnector {
     const payload = {
       accountMode: options.accountMode || this.accountMode,
       accountNumber: options.accountNumber || this.expectedAccount,
-      forceReconnect: Boolean(options.forceReconnect)
+      forceReconnect: Boolean(options.forceReconnect),
     };
 
     const response = await this.http.post('/session/connect', payload, {
-      headers: this.authHeaders()
+      headers: this.authHeaders(),
     });
 
     return response.data;
@@ -66,10 +66,10 @@ class Mt5Connector extends BaseBrokerConnector {
       '/session/disconnect',
       {
         accountMode: options.accountMode || this.accountMode,
-        accountNumber: options.accountNumber || this.expectedAccount
+        accountNumber: options.accountNumber || this.expectedAccount,
       },
       {
-        headers: this.authHeaders()
+        headers: this.authHeaders(),
       }
     );
 
@@ -101,16 +101,16 @@ class Mt5Connector extends BaseBrokerConnector {
         magicNumber: order.magicNumber || 87001,
         accountMode: this.accountMode,
         accountNumber: order.accountNumber || this.expectedAccount,
-        timeInForce: order.timeInForce || 'GTC'
+        timeInForce: order.timeInForce || 'GTC',
       };
 
       const response = await this.http.post('/orders', payload, {
-        headers: this.authHeaders()
+        headers: this.authHeaders(),
       });
       return {
         success: Boolean(response.data?.success),
         order: response.data?.order || null,
-        error: response.data?.error || null
+        error: response.data?.error || null,
       };
     } catch (error) {
       this.logger?.error?.({ err: error, broker: this.name }, 'MT5 placeOrder failed');
@@ -124,15 +124,15 @@ class Mt5Connector extends BaseBrokerConnector {
         ticket: position.ticket || position.id,
         symbol: position.symbol,
         volume: Number(position.volume || position.units || 0),
-        comment: position.comment || 'auto-close'
+        comment: position.comment || 'auto-close',
       };
       const response = await this.http.post('/positions/close', payload, {
-        headers: this.authHeaders()
+        headers: this.authHeaders(),
       });
       return {
         success: Boolean(response.data?.success),
         result: response.data || null,
-        error: response.data?.error || null
+        error: response.data?.error || null,
       };
     } catch (error) {
       this.logger?.error?.({ err: error, broker: this.name }, 'MT5 closePosition failed');
@@ -154,17 +154,17 @@ class Mt5Connector extends BaseBrokerConnector {
         takeProfit: position.takeProfit ?? null,
         comment: position.comment || 'auto-modify',
         accountMode: this.accountMode,
-        accountNumber: position.accountNumber || this.expectedAccount
+        accountNumber: position.accountNumber || this.expectedAccount,
       };
 
       const response = await this.http.post('/positions/modify', payload, {
-        headers: this.authHeaders()
+        headers: this.authHeaders(),
       });
 
       return {
         success: Boolean(response.data?.success),
         result: response.data || null,
-        error: response.data?.error || null
+        error: response.data?.error || null,
       };
     } catch (error) {
       this.logger?.error?.({ err: error, broker: this.name }, 'MT5 modifyPosition failed');
@@ -178,8 +178,8 @@ class Mt5Connector extends BaseBrokerConnector {
         headers: this.authHeaders(),
         params: {
           accountNumber: this.expectedAccount,
-          accountMode: this.accountMode
-        }
+          accountMode: this.accountMode,
+        },
       });
       return response.data?.positions || [];
     } catch (error) {
@@ -195,8 +195,8 @@ class Mt5Connector extends BaseBrokerConnector {
         params: {
           accountNumber: this.expectedAccount,
           accountMode: this.accountMode,
-          limit: 50
-        }
+          limit: 50,
+        },
       });
       return response.data?.deals || [];
     } catch (error) {
@@ -211,8 +211,8 @@ class Mt5Connector extends BaseBrokerConnector {
         headers: this.authHeaders(),
         params: {
           accountNumber: this.expectedAccount,
-          accountMode: this.accountMode
-        }
+          accountMode: this.accountMode,
+        },
       });
       return response.data || null;
     } catch (error) {
