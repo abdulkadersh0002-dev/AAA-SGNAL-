@@ -69,6 +69,20 @@
       "isBackground": true
     },
     {
+      "label": "🚀 Start Server + Dashboard (REALTIME + DB required)",
+      "type": "process",
+      "command": "npm.cmd",
+      "args": ["run", "start:all", "--", "--preset", "realtime_db"],
+      "dependsOn": ["🧰 Check Node.js + npm"],
+      "dependsOrder": "sequence",
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "isBackground": true
+    },
+    {
       "label": "🚀 Start Server + Dashboard (ALL symbols)",
       "type": "process",
       "command": "npm.cmd",

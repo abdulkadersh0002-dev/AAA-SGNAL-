@@ -24,6 +24,7 @@ import SmartSettingsPanel from './components/SmartSettingsPanel.jsx';
 import { formatDateTime, formatNumber, formatRelativeTime } from './utils/format.js';
 import {
   ACTIVE_SYMBOLS_SYNC_MAX,
+  ACTIVE_SYMBOLS_SYNC_INTERVAL_MS,
   EA_ONLY_UI_MODE,
   MAX_ACTIVE_TRADES,
   MAX_CANDIDATE_ITEMS,
@@ -163,6 +164,7 @@ const normalizeSignal = (payload = {}, fallbackTimestamp) => {
     strategy: payload.strategy || payload.source || payload.meta?.strategy || null,
     // Preserve decision metadata so the Signal Dashboard can distinguish ENTER vs WAIT_MONITOR.
     isValid: payload.isValid || null,
+    layeredAnalysis: payload?.components?.layeredAnalysis || payload?.layeredAnalysis || null,
     timestamp,
     expiresAt,
     signalStatus: payload.signalStatus || payload.validity?.state || null,
@@ -257,6 +259,13 @@ function App() {
     error: null,
     updatedAt: null
   });
+  const [marketSymbolCatalog, setMarketSymbolCatalog] = useState({
+    symbols: [],
+    loading: false,
+    error: null,
+    updatedAt: null
+  });
+  const marketSymbolsRef = useRef({ lastFetchedAt: 0 });
   const quotesBySymbolRef = useRef(new Map());
   const quoteSymbolsRef = useRef([]);
   const quoteIndexBySymbolRef = useRef(new Map());
@@ -291,6 +300,7 @@ function App() {
   const tickerViewportRef = useRef(null);
   const tickerTrackRef = useRef(null);
   const [eaBridgeSessions, setEaBridgeSessions] = useState([]);
+  const [eaBridgeStatus, setEaBridgeStatus] = useState(null);
   const [eaBridgeStatsError, setEaBridgeStatsError] = useState(null);
   const [autoTradingAction, setAutoTradingAction] = useState({ loading: false, error: null });
   const [autoTradingPanelOpen, setAutoTradingPanelOpen] = useState(false);
@@ -301,6 +311,7 @@ function App() {
   const [candidateSignals, setCandidateSignals] = useState([]);
   const [entryReadySelectedId, setEntryReadySelectedId] = useState(null);
   const [candidateSelectedId, setCandidateSelectedId] = useState(null);
+  const [strongOverrideSelectedId, setStrongOverrideSelectedId] = useState(null);
   const [eventFeed, setEventFeed] = useState([]);
   const [activeTrades, setActiveTrades] = useState([]);
   const [tradeHistory, setTradeHistory] = useState([]);
@@ -415,10 +426,30 @@ function App() {
 
     const relaxedMinConfidence = Number.isFinite(RELAXED_MIN_CONFIDENCE)
       ? Math.max(0, Math.min(100, RELAXED_MIN_CONFIDENCE))
-      : 45;
+      : 60;
     const relaxedMinStrength = Number.isFinite(RELAXED_MIN_STRENGTH)
       ? Math.max(0, Math.min(100, RELAXED_MIN_STRENGTH))
-      : 55;
+      : 70;
+
+    const ENTRY_MIN_WIN_RATE = Number(import.meta.env.VITE_ENTRY_READY_MIN_WIN_RATE);
+    const ENTRY_MIN_SCORE = Number(import.meta.env.VITE_ENTRY_READY_MIN_SCORE);
+    const entryMinWinRate = Number.isFinite(ENTRY_MIN_WIN_RATE)
+      ? Math.max(0, Math.min(100, ENTRY_MIN_WIN_RATE))
+      : 75;
+    const entryMinScore = Number.isFinite(ENTRY_MIN_SCORE)
+      ? Math.max(0, Math.min(100, ENTRY_MIN_SCORE))
+      : 30;
+
+    // WATCH mode should stay high-signal: hide weak/noisy WAIT_MONITOR items.
+    // Can be tuned at build time via VITE_WATCHLIST_MIN_CONFIDENCE / VITE_WATCHLIST_MIN_STRENGTH.
+    const WATCH_MIN_CONFIDENCE = Number(import.meta.env.VITE_WATCHLIST_MIN_CONFIDENCE);
+    const WATCH_MIN_STRENGTH = Number(import.meta.env.VITE_WATCHLIST_MIN_STRENGTH);
+    const watchMinConfidence = Number.isFinite(WATCH_MIN_CONFIDENCE)
+      ? Math.max(0, Math.min(100, WATCH_MIN_CONFIDENCE))
+      : 70;
+    const watchMinStrength = Number.isFinite(WATCH_MIN_STRENGTH)
+      ? Math.max(0, Math.min(100, WATCH_MIN_STRENGTH))
+      : 70;
 
     const isEnterDecision = (signal) => {
       const state = String(signal?.isValid?.decision?.state || '').toUpperCase();
@@ -471,11 +502,56 @@ function App() {
 
           const confidence = Number(signal?.confidence) || 0;
           const strength = Number(signal?.strength) || 0;
+          const winRate = Number(signal?.winRate) || 0;
+          const decisionScore = Number(signal?.isValid?.decision?.score);
+          const score = Number.isFinite(decisionScore)
+            ? decisionScore
+            : Number(signal?.score) || 0;
+          const missing = Array.isArray(signal?.isValid?.decision?.missing)
+            ? signal.isValid.decision.missing
+            : [];
           if (confidence < minConfidence || strength < minStrength) {
             return false;
           }
 
+          if (winRate < entryMinWinRate) {
+            return false;
+          }
+
+          if (score < entryMinScore) {
+            return false;
+          }
+
+          if (
+            missing.includes('direction_confirmation') ||
+            missing.includes('probability') ||
+            missing.includes('strength')
+          ) {
+            return false;
+          }
+
           return true;
+        })
+        .slice()
+        .sort((a, b) => {
+          const aWin = Number(a?.winRate) || 0;
+          const bWin = Number(b?.winRate) || 0;
+          if (bWin !== aWin) {
+            return bWin - aWin;
+          }
+          const aScore = Number(a?.isValid?.decision?.score ?? a?.score) || 0;
+          const bScore = Number(b?.isValid?.decision?.score ?? b?.score) || 0;
+          if (bScore !== aScore) {
+            return bScore - aScore;
+          }
+          const aStrength = Number(a?.strength) || 0;
+          const bStrength = Number(b?.strength) || 0;
+          if (bStrength !== aStrength) {
+            return bStrength - aStrength;
+          }
+          const aTs = toTimestamp(a?.openedAt || a?.timestamp) || 0;
+          const bTs = toTimestamp(b?.openedAt || b?.timestamp) || 0;
+          return bTs - aTs;
         })
         .slice(0, 50);
 
@@ -503,10 +579,34 @@ function App() {
             return false;
           }
 
-          // Filter out extremely weak/noisy candidates.
+          // Filter out weak/noisy candidates.
           const confidence = Number(signal?.confidence) || 0;
           const strength = Number(signal?.strength) || 0;
-          if (confidence < 20 || strength < 10) {
+          const winRate = Number(signal?.winRate) || 0;
+          const decisionScore = Number(signal?.isValid?.decision?.score);
+          const score = Number.isFinite(decisionScore)
+            ? decisionScore
+            : Number(signal?.score) || 0;
+          const missing = Array.isArray(signal?.isValid?.decision?.missing)
+            ? signal.isValid.decision.missing
+            : [];
+          if (confidence < watchMinConfidence || strength < watchMinStrength) {
+            return false;
+          }
+
+          if (winRate < entryMinWinRate) {
+            return false;
+          }
+
+          if (score < entryMinScore) {
+            return false;
+          }
+
+          if (
+            missing.includes('direction_confirmation') ||
+            missing.includes('probability') ||
+            missing.includes('strength')
+          ) {
             return false;
           }
 
@@ -539,8 +639,8 @@ function App() {
       return {
         signals: strict,
         modeLabel: usingCandidatesFallback
-          ? 'ENTER only (strict · candidates)'
-          : 'ENTER only (strict)'
+          ? `ENTER only (strict · candidates · win≥${entryMinWinRate} score≥${entryMinScore})`
+          : `ENTER only (strict · win≥${entryMinWinRate} score≥${entryMinScore})`
       };
     }
 
@@ -553,21 +653,138 @@ function App() {
       return {
         signals: relaxed,
         modeLabel: usingCandidatesFallback
-          ? `ENTER only (relaxed · candidates ${relaxedMinConfidence}/${relaxedMinStrength})`
-          : `ENTER only (relaxed ${relaxedMinConfidence}/${relaxedMinStrength})`
+          ? `ENTER only (relaxed · candidates ${relaxedMinConfidence}/${relaxedMinStrength} · win≥${entryMinWinRate} score≥${entryMinScore})`
+          : `ENTER only (relaxed ${relaxedMinConfidence}/${relaxedMinStrength} · win≥${entryMinWinRate} score≥${entryMinScore})`
       };
     }
 
     const watch = buildWatchList();
-    return {
+      return {
       signals: watch,
       modeLabel: usingCandidatesFallback
-        ? 'WATCH (WAIT_MONITOR · candidates)'
-        : 'WATCH (WAIT_MONITOR)'
+          ? `WATCH (WAIT_MONITOR ≥${watchMinConfidence}/${watchMinStrength} · win≥${entryMinWinRate} score≥${entryMinScore} · candidates)`
+          : `WATCH (WAIT_MONITOR ≥${watchMinConfidence}/${watchMinStrength} · win≥${entryMinWinRate} score≥${entryMinScore})`
     };
   }, [signals, candidateSignals]);
 
   const entryReadySignals = entryReadySignalsMeta.signals;
+
+  const strongOverrideSignals = useMemo(() => {
+    const primary = Array.isArray(signals) ? signals : [];
+    const fallback = Array.isArray(candidateSignals) ? candidateSignals : [];
+    const merged = [...primary.filter(Boolean), ...fallback.filter(Boolean)];
+    if (merged.length === 0) {
+      return [];
+    }
+
+    const byKey = new Map();
+    for (const item of merged) {
+      const key = item?.mergeKey || item?.id;
+      if (!key) {
+        continue;
+      }
+      const existing = byKey.get(key);
+      if (!existing) {
+        byKey.set(key, item);
+        continue;
+      }
+      const existingTs = toTimestamp(existing?.openedAt || existing?.timestamp) || 0;
+      const itemTs = toTimestamp(item?.openedAt || item?.timestamp) || 0;
+      if (itemTs >= existingTs) {
+        byKey.set(key, item);
+      }
+    }
+
+    const STRONG_MIN_CONFIDENCE = Number(import.meta.env.VITE_STRONG_OVERRIDE_MIN_CONFIDENCE);
+    const STRONG_MIN_STRENGTH = Number(import.meta.env.VITE_STRONG_OVERRIDE_MIN_STRENGTH);
+    const strongConf = Number.isFinite(STRONG_MIN_CONFIDENCE)
+      ? Math.max(0, Math.min(100, STRONG_MIN_CONFIDENCE))
+      : 85;
+    const strongStrength = Number.isFinite(STRONG_MIN_STRENGTH)
+      ? Math.max(0, Math.min(100, STRONG_MIN_STRENGTH))
+      : 70;
+
+    const isTradeable = (signal) => {
+      const entryPrice = signal?.entryPrice;
+      const stopLoss = signal?.stopLoss;
+      const takeProfit = signal?.takeProfit;
+      if (!Number.isFinite(Number(entryPrice))) {
+        return false;
+      }
+      if (!Number.isFinite(Number(stopLoss))) {
+        return false;
+      }
+      if (!Number.isFinite(Number(takeProfit))) {
+        return false;
+      }
+      return true;
+    };
+
+    const resolveLayer18State = (signal) => {
+      const layered = signal?.layeredAnalysis || null;
+      const layers = Array.isArray(layered?.layers) ? layered.layers : null;
+      if (!layers || layers.length < 18) {
+        return null;
+      }
+      const layer18 =
+        layers.find((layer) => String(layer?.key || '') === 'L18') ||
+        layers.find((layer) => Number(layer?.layer) === 18) ||
+        null;
+      const layerState = String(layer18?.metrics?.decision?.state || '').trim();
+      return layerState ? layerState.toUpperCase() : null;
+    };
+
+    return Array.from(byKey.values())
+      .filter((signal) => {
+        const direction = String(signal?.direction || '').toUpperCase();
+        if (direction !== 'BUY' && direction !== 'SELL') {
+          return false;
+        }
+
+        const decisionState = String(signal?.isValid?.decision?.state || '').toUpperCase();
+        if (decisionState === 'ENTER') {
+          return false;
+        }
+
+        if (signal?.isValid?.isValid !== true) {
+          return false;
+        }
+
+        if (!isTradeable(signal)) {
+          return false;
+        }
+
+        const layer18State = resolveLayer18State(signal);
+        if (!layer18State || layer18State === 'ENTER') {
+          return false;
+        }
+
+        const confidence = Number(signal?.confidence) || 0;
+        const strength = Number(signal?.strength) || 0;
+        if (confidence < strongConf || strength < strongStrength) {
+          return false;
+        }
+
+        return true;
+      })
+      .slice()
+      .sort((a, b) => {
+        const aStrength = Number(a?.strength) || 0;
+        const bStrength = Number(b?.strength) || 0;
+        if (bStrength !== aStrength) {
+          return bStrength - aStrength;
+        }
+        const aConf = Number(a?.confidence) || 0;
+        const bConf = Number(b?.confidence) || 0;
+        if (bConf !== aConf) {
+          return bConf - aConf;
+        }
+        const aTs = toTimestamp(a?.openedAt || a?.timestamp) || 0;
+        const bTs = toTimestamp(b?.openedAt || b?.timestamp) || 0;
+        return bTs - aTs;
+      })
+      .slice(0, 50);
+  }, [signals, candidateSignals]);
 
   const refreshTradingData = useCallback(async () => {
     try {
@@ -698,9 +915,21 @@ function App() {
     setEaBridgeStatsError(null);
     try {
       // Sessions endpoint is the source of truth for EA heartbeats.
-      const response = await fetchJson('/api/broker/bridge/sessions');
-      const sessions = Array.isArray(response?.sessions) ? response.sessions : [];
-      setEaBridgeSessions(sessions);
+      const [sessionsRes, statusRes] = await Promise.allSettled([
+        fetchJson('/api/broker/bridge/sessions'),
+        fetchJson('/api/broker/bridge/status')
+      ]);
+
+      if (sessionsRes.status === 'fulfilled') {
+        const sessions = Array.isArray(sessionsRes.value?.sessions)
+          ? sessionsRes.value.sessions
+          : [];
+        setEaBridgeSessions(sessions);
+      }
+
+      if (statusRes.status === 'fulfilled') {
+        setEaBridgeStatus(statusRes.value || null);
+      }
     } catch (error) {
       // Best-effort: don't wipe previously-known sessions on transient API issues.
       setEaBridgeStatsError(error?.message || 'Failed to load MetaTrader Bridge status');
@@ -731,10 +960,19 @@ function App() {
       const includeNews = options.includeNews !== false;
       setMarketFeed((prev) => ({ ...prev, loading: prev.updatedAt == null, error: null }));
       try {
+        const now = Date.now();
+        const symbolsCacheMs = 5 * 60 * 1000;
+        const shouldFetchSymbols =
+          !marketSymbolsRef.current.lastFetchedAt ||
+          now - marketSymbolsRef.current.lastFetchedAt > symbolsCacheMs;
+
         const requests = [
           fetchJson(
             `/api/broker/bridge/${effectivePlatformId}/market/quotes?maxAgeMs=900000&orderBy=symbol`
-          )
+          ),
+          shouldFetchSymbols
+            ? fetchJson(`/api/broker/bridge/${effectivePlatformId}/market/symbols?max=3000`)
+            : Promise.resolve(null)
         ];
         if (includeNews) {
           requests.push(
@@ -744,11 +982,41 @@ function App() {
 
         const results = await Promise.allSettled(requests);
         const quotesRes = results[0];
-        const newsRes = includeNews ? results[1] : null;
+        const symbolsRes = results[1];
+        const newsRes = includeNews ? results[2] : null;
 
         const quotesSucceeded = quotesRes?.status === 'fulfilled';
         const quotes =
           quotesSucceeded && Array.isArray(quotesRes.value?.quotes) ? quotesRes.value.quotes : [];
+
+        // Update symbol catalog (best-effort).
+        if (shouldFetchSymbols) {
+          if (symbolsRes?.status === 'fulfilled') {
+            const symbols = Array.isArray(symbolsRes.value?.symbols) ? symbolsRes.value.symbols : [];
+            const normalized = symbols
+              .map((s) =>
+                String(s || '')
+                  .trim()
+                  .toUpperCase()
+              )
+              .filter(Boolean);
+            setMarketSymbolCatalog({
+              symbols: normalized,
+              loading: false,
+              error: null,
+              updatedAt: Date.now()
+            });
+            marketSymbolsRef.current.lastFetchedAt = Date.now();
+          } else if (symbolsRes?.status === 'rejected') {
+            setMarketSymbolCatalog((prev) => ({
+              ...prev,
+              loading: false,
+              error: symbolsRes.reason?.message || 'Failed to load market symbols',
+              updatedAt: prev.updatedAt || null
+            }));
+            marketSymbolsRef.current.lastFetchedAt = Date.now();
+          }
+        }
 
         const news =
           includeNews && newsRes?.status === 'fulfilled' && Array.isArray(newsRes.value?.news)
@@ -788,7 +1056,10 @@ function App() {
                     if (!symbol) {
                       return null;
                     }
-                    return { ...q, symbol };
+                    const receivedAt = Number.isFinite(Number(q?.receivedAt))
+                      ? Number(q.receivedAt)
+                      : Date.now();
+                    return { ...q, symbol, receivedAt };
                   })
                   .filter(Boolean)
               : [];
@@ -924,6 +1195,15 @@ function App() {
 
     const retained = Array.isArray(entryReadySignals) ? entryReadySignals.length : 0;
     const candidateCount = Array.isArray(candidateSignals) ? candidateSignals.length : 0;
+    const strongOverrideCount = Array.isArray(strongOverrideSignals)
+      ? strongOverrideSignals.length
+      : 0;
+    const realtimeSignals = eaBridgeStatus?.realtimeSignals || null;
+    const lastScanAt = Number(realtimeSignals?.lastScanAt) || null;
+    const lastSignalAt = Number(realtimeSignals?.lastSignalAt) || null;
+    const lastCandidateAt = Number(realtimeSignals?.lastCandidateAt) || null;
+    const scanBatch = Number(realtimeSignals?.lastScanSymbols) || 0;
+    const scanTotal = Number(realtimeSignals?.lastScanTotal) || 0;
     const eaStatus = bridgeIsConnected ? 'Connected' : 'Disconnected';
     const modeLabel = entryReadySignalsMeta?.modeLabel || 'ENTER only';
 
@@ -969,14 +1249,22 @@ function App() {
       latestTs,
       modeLabel,
       emptyDetails,
-      candidateCount
+      candidateCount,
+      strongOverrideCount,
+      lastScanAt,
+      lastSignalAt,
+      lastCandidateAt,
+      scanBatch,
+      scanTotal
     };
   }, [
     bridgeIsConnected,
     entryReadySignals,
     entryReadySignalsMeta,
     candidateSignals,
-    marketFeed?.quotes
+    strongOverrideSignals,
+    marketFeed?.quotes,
+    eaBridgeStatus
   ]);
 
   const [wsMarketConnected, setWsMarketConnected] = useState(false);
@@ -987,8 +1275,13 @@ function App() {
   // Throttled + best-effort to avoid overwhelming the bridge.
   const activeSymbolsSyncRef = useRef({
     lastSentAt: 0,
-    pending: new Set(),
-    timer: null
+    lastSentKey: null,
+    desiredSymbols: [],
+    desiredKey: null,
+    inFlight: false,
+    timer: null,
+    backoffUntil: 0,
+    backoffMs: 30_000
   });
 
   const scheduleActiveSymbolsSync = useCallback(
@@ -999,46 +1292,84 @@ function App() {
 
       const ref = activeSymbolsSyncRef.current;
       const list = Array.isArray(symbols) ? symbols : [];
+      const nextSet = new Set();
       for (const raw of list) {
         const normalized = normalizeTickerSymbol(raw);
         if (normalized) {
-          ref.pending.add(normalized);
+          nextSet.add(normalized);
         }
       }
+      const nextSymbols = Array.from(nextSet).slice(0, ACTIVE_SYMBOLS_SYNC_MAX).sort();
+      const nextKey = nextSymbols.join('|');
+      ref.desiredSymbols = nextSymbols;
+      ref.desiredKey = nextKey;
 
-      if (ref.timer) {
+      if (ref.timer || ref.inFlight) {
         return;
       }
 
       const now = Date.now();
-      const ttlMs = 3 * 60 * 1000;
-      const minIntervalMs = 60 * 1000;
-      const delayMs = Math.max(0, minIntervalMs - (now - (ref.lastSentAt || 0)));
+      const ttlMs = 10 * 60 * 1000;
+      const minIntervalMs = ACTIVE_SYMBOLS_SYNC_INTERVAL_MS;
+      const earliestAt = Math.max(
+        (ref.lastSentAt || 0) + minIntervalMs,
+        Number(ref.backoffUntil || 0)
+      );
+      const delayMs = Math.max(0, earliestAt - now);
+
+      const refreshIntervalMs = Math.max(30_000, Math.trunc(ttlMs * 0.65));
 
       ref.timer = setTimeout(async () => {
         ref.timer = null;
         if (!bridgeIsConnected) {
-          ref.pending.clear();
           return;
         }
 
-        const toSend = Array.from(ref.pending).slice(0, ACTIVE_SYMBOLS_SYNC_MAX);
-        if (toSend.length === 0) {
+        const desiredSymbols = Array.isArray(ref.desiredSymbols) ? ref.desiredSymbols : [];
+        const desiredKey = ref.desiredKey || '';
+        if (desiredSymbols.length === 0) {
           return;
         }
+
+        const timeSinceLast = Date.now() - (ref.lastSentAt || 0);
+        const unchanged = ref.lastSentKey && desiredKey && ref.lastSentKey === desiredKey;
+        if (unchanged && timeSinceLast < refreshIntervalMs) {
+          return;
+        }
+
+        // Respect backoff window (e.g., after 429).
+        if (ref.backoffUntil && Date.now() < ref.backoffUntil) {
+          scheduleActiveSymbolsSync(desiredSymbols);
+          return;
+        }
+
+        ref.inFlight = true;
 
         try {
           await postJson(`/api/broker/bridge/${effectivePlatformId}/market/active-symbols`, {
-            symbols: toSend,
+            symbols: desiredSymbols,
             ttlMs
           });
-          for (const s of toSend) {
-            ref.pending.delete(s);
+          ref.lastSentAt = Date.now();
+          ref.lastSentKey = desiredKey;
+          ref.backoffUntil = 0;
+          ref.backoffMs = 30_000;
+        } catch (error) {
+          // best-effort: avoid tight retry loops; on 429, exponentially back off.
+          ref.lastSentAt = Date.now();
+          const status = Number(error?.status);
+          if (status === 429) {
+            const nextBackoff = Math.min(10 * 60 * 1000, Math.max(30_000, ref.backoffMs || 0) * 2);
+            ref.backoffMs = nextBackoff;
+            ref.backoffUntil = Date.now() + nextBackoff;
           }
-          ref.lastSentAt = Date.now();
-        } catch (_error) {
-          // best-effort: keep pending symbols, but avoid tight retry loops
-          ref.lastSentAt = Date.now();
+        } finally {
+          ref.inFlight = false;
+
+          // If desired symbols changed while we were sending, schedule another flush.
+          if (bridgeIsConnected && ref.desiredKey && ref.desiredKey !== ref.lastSentKey) {
+            scheduleActiveSymbolsSync(ref.desiredSymbols);
+          }
         }
       }, delayMs);
     },
@@ -1068,9 +1399,6 @@ function App() {
           return;
         }
         wsQuoteBufferRef.current = new Map();
-
-        // Keep EA snapshot/bars streaming for the symbols moving on the tape.
-        scheduleActiveSymbolsSync(Array.from(updates.keys()));
 
         lastQuoteUpdateSymbolsRef.current = Array.from(updates.keys());
 
@@ -1116,7 +1444,12 @@ function App() {
                 continue;
               }
 
-              const merged = { ...(bySymbol.get(symbol) || {}), ...(quote || {}), symbol };
+              const merged = {
+                ...(bySymbol.get(symbol) || {}),
+                ...(quote || {}),
+                symbol,
+                receivedAt: Date.now()
+              };
               bySymbol.set(symbol, merged);
 
               const idx = indexBySymbol?.get?.(symbol);
@@ -1348,28 +1681,111 @@ function App() {
     }
   }, [bridgeIsConnected]);
 
+  const snapshotRequestRef = useRef({
+    timer: null,
+    inFlight: false,
+    lastSentAt: 0,
+    backoffUntil: 0,
+    backoffMs: 30_000,
+    queue: [],
+    queuedSet: new Set(),
+    lastRequestedAtBySymbol: new Map()
+  });
+
+  const scheduleSnapshotFlush = useCallback(() => {
+    const ref = snapshotRequestRef.current;
+    if (!bridgeIsConnected || ref.inFlight || ref.timer) {
+      return;
+    }
+
+    const now = Date.now();
+    const minIntervalMs = 10_000; // stay well under sensitive rate limit (20/min)
+    const nextAllowedAt = Math.max((ref.lastSentAt || 0) + minIntervalMs, ref.backoffUntil || 0);
+    const delayMs = Math.max(0, nextAllowedAt - now);
+
+    ref.timer = setTimeout(async () => {
+      ref.timer = null;
+      if (!bridgeIsConnected) {
+        ref.queue = [];
+        ref.queuedSet.clear();
+        return;
+      }
+
+      const symbol = ref.queue.shift();
+      if (symbol) {
+        ref.queuedSet.delete(symbol);
+      }
+      if (!symbol) {
+        return;
+      }
+
+      ref.inFlight = true;
+      try {
+        await postJson(`/api/broker/bridge/${effectivePlatformId}/market/snapshot/request`, {
+          symbol,
+          ttlMs: 2 * 60 * 1000
+        });
+        ref.lastSentAt = Date.now();
+        ref.backoffUntil = 0;
+        ref.backoffMs = 30_000;
+      } catch (error) {
+        ref.lastSentAt = Date.now();
+        const status = Number(error?.status);
+        if (status === 429) {
+          const nextBackoff = Math.min(5 * 60 * 1000, Math.max(30_000, ref.backoffMs || 0) * 2);
+          ref.backoffMs = nextBackoff;
+          ref.backoffUntil = Date.now() + nextBackoff;
+        }
+
+        // Re-queue the symbol at the end (best-effort).
+        if (!ref.queuedSet.has(symbol)) {
+          ref.queuedSet.add(symbol);
+          ref.queue.push(symbol);
+        }
+      } finally {
+        ref.inFlight = false;
+        if (bridgeIsConnected && ref.queue.length > 0) {
+          scheduleSnapshotFlush();
+        }
+      }
+    }, delayMs);
+  }, [bridgeIsConnected, effectivePlatformId]);
+
   const requestSnapshotForSymbol = useCallback(
     async (symbolValue) => {
       const normalized = normalizeTickerSymbol(symbolValue);
       if (!normalized || !bridgeIsConnected) {
         return;
       }
-      try {
-        // Hint the server/EA to focus on this symbol only (lazy loading).
-        await postJson(`/api/broker/bridge/${effectivePlatformId}/market/active-symbols`, {
-          symbols: [normalized],
-          ttlMs: 15 * 60 * 1000
-        });
 
-        await postJson(`/api/broker/bridge/${effectivePlatformId}/market/snapshot/request`, {
-          symbol: normalized,
-          ttlMs: 2 * 60 * 1000
-        });
-      } catch (_error) {
-        // Best-effort: EA may be offline or auth may block.
+      // Hint the server/EA to focus on this symbol (throttled, best-effort).
+      scheduleActiveSymbolsSync([normalized]);
+
+      const ref = snapshotRequestRef.current;
+      const now = Date.now();
+      const minSymbolGapMs = 60 * 1000;
+      const last = ref.lastRequestedAtBySymbol.get(normalized) || 0;
+      if (now - last < minSymbolGapMs) {
+        return;
+      }
+      ref.lastRequestedAtBySymbol.set(normalized, now);
+
+      if (!ref.queuedSet.has(normalized)) {
+        ref.queuedSet.add(normalized);
+        ref.queue.push(normalized);
+        if (ref.queue.length > 200) {
+          const dropped = ref.queue.shift();
+          if (dropped) {
+            ref.queuedSet.delete(dropped);
+          }
+        }
+      }
+
+      if (!ref.timer && !ref.inFlight) {
+        scheduleSnapshotFlush();
       }
     },
-    [bridgeIsConnected, effectivePlatformId]
+    [bridgeIsConnected, scheduleActiveSymbolsSync, scheduleSnapshotFlush]
   );
 
   const WARMUP_TICK_INTERVAL_MS = 15 * 1000;
@@ -1378,11 +1794,61 @@ function App() {
   const WARMUP_REQUEST_GAP_MS = 5 * 60 * 1000;
   const WARMUP_LAST_REQUESTED_TTL_MS = 30 * 60 * 1000;
 
+  const TICKER_QUOTE_STALE_MS = (() => {
+    const raw = Number(import.meta?.env?.VITE_TICKER_QUOTE_STALE_MS);
+    if (!Number.isFinite(raw)) {
+      return 2 * 60 * 1000;
+    }
+    return Math.max(30_000, Math.trunc(raw));
+  })();
+
+  const TICKER_CATALOG_SYNC_INTERVAL_MS = (() => {
+    const raw = Number(import.meta?.env?.VITE_TICKER_CATALOG_SYNC_INTERVAL_MS);
+    if (!Number.isFinite(raw)) {
+      return 60 * 1000;
+    }
+    return Math.max(20_000, Math.trunc(raw));
+  })();
+
+  const ENABLE_TICKER_FULL_CATALOG_SYNC = (() => {
+    const raw = String(import.meta?.env?.VITE_TICKER_FULL_CATALOG_SYNC || '')
+      .trim()
+      .toLowerCase();
+    if (!raw) {
+      return EA_ONLY_UI_MODE === true;
+    }
+    return raw === 'true' || raw === '1' || raw === 'yes' || raw === 'on';
+  })();
+
+  const ENABLE_TICKER_SNAPSHOT_WARMUP =
+    String(import.meta?.env?.VITE_TICKER_SNAPSHOT_WARMUP || '')
+      .trim()
+      .toLowerCase() === 'true';
+
   const tickerWarmupRef = useRef({
     index: 0,
     timer: null,
     lastRequested: new Map()
   });
+
+  const tickerSymbolCatalog = useMemo(() => {
+    const registered = Array.isArray(marketSymbolCatalog?.symbols)
+      ? marketSymbolCatalog.symbols
+      : [];
+    const fallback = Array.isArray(TICKER_CATALOG_SYMBOLS) ? TICKER_CATALOG_SYMBOLS : [];
+    const list = registered.length > 0 ? registered : fallback;
+    if (list.length === 0) {
+      return [];
+    }
+    const normalized = list
+      .map((s) =>
+        String(s || '')
+          .trim()
+          .toUpperCase()
+      )
+      .filter(Boolean);
+    return Array.from(new Set(normalized)).sort((a, b) => String(a).localeCompare(String(b)));
+  }, [marketSymbolCatalog.updatedAt]);
 
   useEffect(() => {
     if (!bridgeIsConnected || tickerSearchNormalized) {
@@ -1394,7 +1860,7 @@ function App() {
       return;
     }
 
-    const list = Array.isArray(TICKER_CATALOG_SYMBOLS) ? TICKER_CATALOG_SYMBOLS : [];
+    const list = Array.isArray(tickerSymbolCatalog) ? tickerSymbolCatalog : [];
     if (list.length === 0) {
       return;
     }
@@ -1413,7 +1879,20 @@ function App() {
       const bySymbol = quotesBySymbolRef.current || new Map();
       const missing = list.filter((symbol) => {
         const normalized = normalizeTickerSymbol(symbol);
-        return normalized && !bySymbol.get(normalized);
+        if (!normalized) {
+          return false;
+        }
+        const quote = bySymbol.get(normalized);
+        if (!quote) {
+          return true;
+        }
+        const receivedAt = Number.isFinite(Number(quote?.receivedAt))
+          ? Number(quote.receivedAt)
+          : toTimestamp(quote?.timestamp) || 0;
+        if (!receivedAt) {
+          return true;
+        }
+        return Date.now() - receivedAt > TICKER_QUOTE_STALE_MS;
       });
 
       if (missing.length === 0) {
@@ -1435,17 +1914,19 @@ function App() {
           ref.lastRequested.delete(symbol);
         }
       }
-      for (const symbol of batch.slice(0, snapshotBatch)) {
-        const normalized = normalizeTickerSymbol(symbol);
-        if (!normalized) {
-          continue;
+      if (ENABLE_TICKER_SNAPSHOT_WARMUP) {
+        for (const symbol of batch.slice(0, snapshotBatch)) {
+          const normalized = normalizeTickerSymbol(symbol);
+          if (!normalized) {
+            continue;
+          }
+          const lastReq = ref.lastRequested.get(normalized) || 0;
+          if (now - lastReq < requestGapMs) {
+            continue;
+          }
+          ref.lastRequested.set(normalized, now);
+          void requestSnapshotForSymbol(normalized);
         }
-        const lastReq = ref.lastRequested.get(normalized) || 0;
-        if (now - lastReq < requestGapMs) {
-          continue;
-        }
-        ref.lastRequested.set(normalized, now);
-        void requestSnapshotForSymbol(normalized);
       }
 
       ref.index = start + batchSize;
@@ -1466,7 +1947,61 @@ function App() {
     tickerSearchNormalized,
     requestSnapshotForSymbol,
     scheduleActiveSymbolsSync,
-    normalizeTickerSymbol
+    normalizeTickerSymbol,
+    tickerSymbolCatalog
+  ]);
+
+  const catalogSyncRef = useRef({ index: 0, timer: null });
+
+  useEffect(() => {
+    if (!bridgeIsConnected || !ENABLE_TICKER_FULL_CATALOG_SYNC) {
+      const ref = catalogSyncRef.current;
+      if (ref.timer) {
+        clearInterval(ref.timer);
+        ref.timer = null;
+      }
+      return;
+    }
+
+    const list = Array.isArray(tickerSymbolCatalog) ? tickerSymbolCatalog : [];
+    if (list.length === 0) {
+      return;
+    }
+
+    const ref = catalogSyncRef.current;
+    const batchSize = Math.max(1, ACTIVE_SYMBOLS_SYNC_MAX);
+
+    const tick = () => {
+      if (!bridgeIsConnected) {
+        return;
+      }
+      const start = ref.index % list.length;
+      const wrapCount = Math.max(0, start + batchSize - list.length);
+      const batch = [...list.slice(start, start + batchSize), ...list.slice(0, wrapCount)].slice(
+        0,
+        batchSize
+      );
+      if (batch.length > 0) {
+        scheduleActiveSymbolsSync(batch);
+      }
+      ref.index = start + batchSize;
+    };
+
+    tick();
+    ref.timer = setInterval(tick, TICKER_CATALOG_SYNC_INTERVAL_MS);
+    return () => {
+      if (ref.timer) {
+        clearInterval(ref.timer);
+        ref.timer = null;
+      }
+      ref.index = 0;
+    };
+  }, [
+    bridgeIsConnected,
+    tickerSymbolCatalog,
+    scheduleActiveSymbolsSync,
+    ENABLE_TICKER_FULL_CATALOG_SYNC,
+    TICKER_CATALOG_SYNC_INTERVAL_MS
   ]);
 
   const openAnalyzerForSymbolAndRequestSnapshot = useCallback(
@@ -2198,7 +2733,7 @@ function App() {
 
   const tickerCatalogQuotes = useMemo(() => {
     const bySymbol = quotesBySymbolRef.current || new Map();
-    const list = Array.isArray(TICKER_CATALOG_SYMBOLS) ? TICKER_CATALOG_SYMBOLS : [];
+    const list = Array.isArray(tickerSymbolCatalog) ? tickerSymbolCatalog : [];
     if (list.length === 0) {
       return [];
     }
@@ -2212,7 +2747,7 @@ function App() {
         return bySymbol.get(normalized) || { symbol: normalized, placeholder: true };
       })
       .filter(Boolean);
-  }, [marketFeed.updatedAt]);
+  }, [marketFeed.updatedAt, marketSymbolCatalog.updatedAt, tickerSymbolCatalog]);
 
   const tickerFilteredQuotes = useMemo(() => {
     const list = tickerCatalogQuotes;
@@ -2332,6 +2867,22 @@ function App() {
     tickerSearchMatches,
     tickerSearchNormalized
   ]);
+
+  useEffect(() => {
+    if (!bridgeIsConnected) {
+      return;
+    }
+
+    // Always keep the EA focused on the currently visible ticker window.
+    // This is what turns placeholders into real quotes.
+    try {
+      if (Array.isArray(tickerQuotes) && tickerQuotes.length > 0) {
+        scheduleActiveSymbolsSync(tickerQuotes.map((q) => q?.symbol || q?.pair));
+      }
+    } catch (_error) {
+      // best-effort
+    }
+  }, [bridgeIsConnected, scheduleActiveSymbolsSync, tickerQuotes]);
 
   const tickerLoopQuotes = useMemo(() => {
     if (!Array.isArray(tickerQuotes) || tickerQuotes.length === 0) {
@@ -5866,6 +6417,33 @@ function App() {
                       <span className="dashboard__tag">
                         Candidates · {entryReadyPanelMeta.candidateCount}
                       </span>
+                      <span className="dashboard__tag">
+                        Strong overrides · {entryReadyPanelMeta.strongOverrideCount}
+                      </span>
+                      <span className="dashboard__tag">
+                        Scan ·
+                        {entryReadyPanelMeta.lastScanAt
+                          ? ` ${formatRelativeTime(entryReadyPanelMeta.lastScanAt)}`
+                          : ' —'}
+                      </span>
+                      <span className="dashboard__tag">
+                        Scan batch · {entryReadyPanelMeta.scanBatch || 0}
+                        {entryReadyPanelMeta.scanTotal
+                          ? ` / ${entryReadyPanelMeta.scanTotal}`
+                          : ''}
+                      </span>
+                      <span className="dashboard__tag">
+                        Last signal ·
+                        {entryReadyPanelMeta.lastSignalAt
+                          ? ` ${formatRelativeTime(entryReadyPanelMeta.lastSignalAt)}`
+                          : ' —'}
+                      </span>
+                      <span className="dashboard__tag">
+                        Last candidate ·
+                        {entryReadyPanelMeta.lastCandidateAt
+                          ? ` ${formatRelativeTime(entryReadyPanelMeta.lastCandidateAt)}`
+                          : ' —'}
+                      </span>
                       {entryReadyPanelMeta.latestTs ? (
                         <span className="dashboard__tag">
                           Updated · {formatRelativeTime(entryReadyPanelMeta.latestTs)}
@@ -5900,6 +6478,28 @@ function App() {
                       }}
                     />
                   </div>
+
+                  {strongOverrideSignals.length > 0 && (
+                    <div className="signal-dashboard-panel__candidates">
+                      <CandidateSignalTable
+                        signals={strongOverrideSignals}
+                        selectedId={strongOverrideSelectedId}
+                        title="Strong (L18 not passed)"
+                        hint="Signals that are strong + trade-valid but did not pass Layer 18 readiness. Review before manual action."
+                        emptyText="No strong Layer 18 overrides right now."
+                        onSelect={(signal, id) => {
+                          setStrongOverrideSelectedId(id || null);
+                          if (signal?.pair) {
+                            if (EA_ONLY_UI_MODE) {
+                              openPairAnalysisForSymbolAndRequestSnapshot(signal.pair);
+                            } else {
+                              openAnalyzerForSymbolAndRequestSnapshot(signal.pair);
+                            }
+                          }
+                        }}
+                      />
+                    </div>
+                  )}
 
                   {entryReadySignals.length === 0 && (
                     <div className="signal-dashboard-panel__candidates">

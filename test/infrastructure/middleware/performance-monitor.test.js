@@ -7,7 +7,6 @@ import assert from 'node:assert';
 import performanceMonitor, {
   getPerformanceStats,
   resetPerformanceStats,
-  THRESHOLDS,
 } from '../../../src/infrastructure/middleware/performance-monitor.js';
 
 describe('Performance Monitor Middleware', () => {

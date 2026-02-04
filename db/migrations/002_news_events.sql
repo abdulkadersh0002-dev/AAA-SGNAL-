@@ -17,7 +17,13 @@ CREATE TABLE IF NOT EXISTS news_events (
 );
 
 -- Promote efficient time-series queries
-SELECT create_hypertable('news_events', 'published_at', if_not_exists => TRUE, migrate_data => TRUE);
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'create_hypertable') THEN
+        EXECUTE $ts$SELECT create_hypertable('news_events', 'published_at', if_not_exists => TRUE, migrate_data => TRUE);$ts$;
+    END IF;
+END
+$$;
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_news_events_unique ON news_events(feed_id, headline, published_at);
 CREATE INDEX IF NOT EXISTS idx_news_events_source ON news_events(source, published_at DESC);

@@ -56,6 +56,23 @@ export class RealtimeEaSignalRunner {
     this.onSignal = typeof options.onSignal === 'function' ? options.onSignal : null;
     this.logger = options.logger;
 
+    this.dashboardStats = {
+      lastScanAt: null,
+      lastScanBroker: null,
+      lastScanTotal: 0,
+      lastScanBatch: 0,
+      lastScanSymbols: 0,
+      lastSignalAt: null,
+      lastCandidateAt: null,
+      publishCounts: {
+        signal: 0,
+        candidate: 0,
+      },
+      rejectCounts: {},
+      lastRejects: [],
+      debugTop: [],
+    };
+
     // Throttling / batching
     this.debounceMs = Number.isFinite(Number(options.debounceMs))
       ? Number(options.debounceMs)
@@ -280,7 +297,7 @@ export class RealtimeEaSignalRunner {
               envRequireSnapshot === 'no'
             )
           : this.smartStrong
-            ? true
+            ? !allowCandidatesByDefault
             : allowCandidatesByDefault
               ? false
               : true;
@@ -291,7 +308,7 @@ export class RealtimeEaSignalRunner {
         : envBarsSpecified
           ? envRequireBars === '1' || envRequireBars === 'true' || envRequireBars === 'yes'
           : this.smartStrong
-            ? true
+            ? !allowCandidatesByDefault
             : allowCandidatesByDefault
               ? false
               : false;
@@ -425,12 +442,16 @@ export class RealtimeEaSignalRunner {
     this.allowWaitMonitor =
       typeof options.allowWaitMonitor === 'boolean'
         ? options.allowWaitMonitor
-        : envAllowWait === '1' || envAllowWait === 'true' || envAllowWait === 'yes';
+        : envAllowWait === '1' || envAllowWait === 'true' || envAllowWait === 'yes'
+          ? true
+          : allowCandidatesByDefault;
 
     this.allowNearStrong =
       typeof options.allowNearStrong === 'boolean'
         ? options.allowNearStrong
-        : envAllowNear === '1' || envAllowNear === 'true' || envAllowNear === 'yes';
+        : envAllowNear === '1' || envAllowNear === 'true' || envAllowNear === 'yes'
+          ? true
+          : allowCandidatesByDefault;
 
     // State
     this.pendingByBroker = new Map(); // broker -> Set(symbol)
@@ -440,6 +461,88 @@ export class RealtimeEaSignalRunner {
     this.cursorByBroker = new Map(); // broker -> round-robin cursor
     this.lastPublishedBarTime = new Map(); // key -> epoch ms
     this.lastPublishedMeta = new Map(); // key -> { decisionState, tradeValid, status, confluenceScore, expiresAt }
+  }
+
+  recordScan({ broker, total, batchSize, symbols } = {}) {
+    const count = Array.isArray(symbols) ? symbols.length : Number(batchSize) || 0;
+    this.dashboardStats.lastScanAt = Date.now();
+    this.dashboardStats.lastScanBroker = broker || null;
+    this.dashboardStats.lastScanTotal = Number.isFinite(Number(total)) ? Number(total) : 0;
+    this.dashboardStats.lastScanBatch = Number.isFinite(Number(batchSize))
+      ? Number(batchSize)
+      : count;
+    this.dashboardStats.lastScanSymbols = count;
+  }
+
+  recordPublish(type) {
+    if (type === 'signal') {
+      this.dashboardStats.lastSignalAt = Date.now();
+      this.dashboardStats.publishCounts.signal += 1;
+      return;
+    }
+    if (type === 'signal_candidate') {
+      this.dashboardStats.lastCandidateAt = Date.now();
+      this.dashboardStats.publishCounts.candidate += 1;
+    }
+  }
+
+  recordReject(reason, context) {
+    const key = String(reason || 'unknown');
+    const bucket = this.dashboardStats.rejectCounts || {};
+    bucket[key] = Number(bucket[key] || 0) + 1;
+    this.dashboardStats.rejectCounts = bucket;
+
+    const list = Array.isArray(this.dashboardStats.lastRejects)
+      ? this.dashboardStats.lastRejects
+      : [];
+    const entry = {
+      ts: Date.now(),
+      reason: key,
+      context: context && typeof context === 'object' ? context : null,
+    };
+    list.push(entry);
+    while (list.length > 25) {
+      list.shift();
+    }
+    this.dashboardStats.lastRejects = list;
+  }
+
+  recordDebugCandidate(candidate) {
+    if (!candidate || typeof candidate !== 'object') {
+      return;
+    }
+
+    const next = Array.isArray(this.dashboardStats.debugTop)
+      ? [...this.dashboardStats.debugTop]
+      : [];
+    const score = Number(candidate.score);
+    const normalized = {
+      ...candidate,
+      score: Number.isFinite(score) ? score : null,
+      ts: Date.now(),
+    };
+
+    next.push(normalized);
+    next.sort((a, b) => {
+      const sa = Number.isFinite(Number(a?.score)) ? Number(a.score) : -Infinity;
+      const sb = Number.isFinite(Number(b?.score)) ? Number(b.score) : -Infinity;
+      return sb - sa;
+    });
+    this.dashboardStats.debugTop = next.slice(0, 15);
+  }
+
+  getDashboardStats() {
+    return {
+      ...this.dashboardStats,
+      publishCounts: { ...this.dashboardStats.publishCounts },
+      rejectCounts: { ...(this.dashboardStats.rejectCounts || {}) },
+      lastRejects: Array.isArray(this.dashboardStats.lastRejects)
+        ? [...this.dashboardStats.lastRejects]
+        : [],
+      debugTop: Array.isArray(this.dashboardStats.debugTop)
+        ? [...this.dashboardStats.debugTop]
+        : [],
+    };
   }
 
   startRevalidationLoop() {
@@ -838,7 +941,11 @@ export class RealtimeEaSignalRunner {
     const latestBarTime = this.getLatestBarTime({ broker, symbol });
     const barAgeMs = latestBarTime != null ? Math.max(0, now - latestBarTime) : null;
     if (this.smartStrong && this.smartMaxBarAgeMs != null) {
-      if (barAgeMs == null || barAgeMs > this.smartMaxBarAgeMs) {
+      if (barAgeMs == null) {
+        if (this.dashboardRequireBars) {
+          return;
+        }
+      } else if (barAgeMs > this.smartMaxBarAgeMs) {
         return;
       }
     }
@@ -897,11 +1004,13 @@ export class RealtimeEaSignalRunner {
 
       if (this.dashboardRequireSnapshot) {
         // No decision should be published before the full analysis snapshot is ready.
+        this.recordReject('missing_snapshot', { broker, symbol });
         this.lastGeneratedAt.set(key, now);
         return;
       }
 
       if (this.dashboardRequireBars && !barsReady) {
+        this.recordReject('missing_bars', { broker, symbol, timeframe: 'M15' });
         this.lastGeneratedAt.set(key, now);
         return;
       }
@@ -909,12 +1018,20 @@ export class RealtimeEaSignalRunner {
 
     if (this.dashboardRequireBars && !barsReady) {
       // Even with snapshot, require enough bars for stable candle-based analysis.
+      this.recordReject('missing_bars', { broker, symbol, timeframe: 'M15' });
       this.lastGeneratedAt.set(key, now);
       return;
     }
 
     if (this.smartStrong) {
-      if (!snapshot || !barsReady) {
+      const strictDataRequired = this.dashboardRequireSnapshot || this.dashboardRequireBars;
+      if (strictDataRequired && (!snapshot || !barsReady)) {
+        this.recordReject('smart_strict_missing_data', {
+          broker,
+          symbol,
+          snapshot: Boolean(snapshot),
+          barsReady: Boolean(barsReady),
+        });
         this.lastGeneratedAt.set(key, now);
         return;
       }
@@ -928,6 +1045,11 @@ export class RealtimeEaSignalRunner {
         eaOnly: true,
       });
     } catch (error) {
+      this.recordReject('generate_signal_error', {
+        broker,
+        symbol,
+        message: error?.message || null,
+      });
       this.logger?.warn?.(
         { module: 'RealtimeEaSignalRunner', broker, symbol, err: error },
         'EA realtime signal generation failed'
@@ -936,6 +1058,7 @@ export class RealtimeEaSignalRunner {
     }
 
     if (!rawSignal || typeof rawSignal !== 'object') {
+      this.recordReject('generate_signal_empty', { broker, symbol });
       this.lastGeneratedAt.set(key, now);
       return;
     }
@@ -955,7 +1078,7 @@ export class RealtimeEaSignalRunner {
       now,
     });
 
-    if (this.smartStrong && this.smartRequireBarsCoverage) {
+    if (this.smartStrong && this.smartRequireBarsCoverage && this.dashboardRequireBars) {
       const layers = rawSignal?.components?.layeredAnalysis?.layers;
       const layer1 = Array.isArray(layers)
         ? layers.find((layer) => String(layer?.key || '') === 'L1' || Number(layer?.layer) === 1)
@@ -982,6 +1105,12 @@ export class RealtimeEaSignalRunner {
         h1Age <= this.smartBarsMaxAgeH1Ms;
 
       if (!(m15CountOk && h1CountOk && m15AgeOk && h1AgeOk)) {
+        this.recordReject('bars_coverage_guard', {
+          broker,
+          symbol,
+          m15: m15 || null,
+          h1: h1 || null,
+        });
         this.lastGeneratedAt.set(key, now);
         return;
       }
@@ -1070,17 +1199,17 @@ export class RealtimeEaSignalRunner {
     const layers18 = Array.isArray(layered?.layers) ? layered.layers : [];
     const layers18Ready = layersStatus.ok === true;
     const layers18Override = layersStatus?.strongOverride?.ok === true;
+    const layers18State = String(layersStatus?.layer18State || '').toUpperCase();
 
     const meetsLayers18 = !this.dashboardRequireLayers18 || layers18Ready || layers18Override;
     const meetsTradeValidity = tradeValid === true;
 
     // "Analyzed" candidates: any signal that includes the canonical 18-layer payload.
     // These are NOT necessarily trade-valid yet; they exist to explain why ENTER=0.
-    // Keep it strict on payload shape (18 layers) so the UI has consistent diagnostics.
-    const analyzedReady =
-      layers18.length === 18 &&
-      // Ensure we truly have the analysis payload available for UI.
-      Boolean(rawSignal?.components?.layeredAnalysis);
+    // Keep it best-effort: allow partial layer sets so the UI can still show diagnostics
+    // while bars/snapshots catch up.
+    const analyzedReady = Boolean(rawSignal?.components?.layeredAnalysis) && layers18.length > 0;
+    const analyzedComplete = layers18.length === 18;
 
     const publish = (() => {
       const strongOverrideWaitReady =
@@ -1094,6 +1223,16 @@ export class RealtimeEaSignalRunner {
         meetsTradeValidity;
 
       const canPublishCandidate = this.dashboardAllowCandidates && analyzedReady;
+      const canPublishFallbackCandidate =
+        this.dashboardAllowCandidates && directional && actionableState && tier === 'strong';
+      const canPublishStrongOverrideCandidate =
+        analyzedReady &&
+        directional &&
+        tradeValid === true &&
+        tier === 'strong' &&
+        decisionState === 'WAIT_MONITOR' &&
+        layers18Ready === false &&
+        layers18State !== 'ENTER';
 
       if (this.dashboardEntryOnly) {
         // Strict dashboard: keep the primary stream focused on tradeable ENTER.
@@ -1103,7 +1242,11 @@ export class RealtimeEaSignalRunner {
         if (canPublishEntryReady || strongOverrideWaitReady || isLifecycleUpdate) {
           return { event: 'signal', keySuffix: '' };
         }
-        if (canPublishCandidate) {
+        if (
+          canPublishCandidate ||
+          canPublishStrongOverrideCandidate ||
+          canPublishFallbackCandidate
+        ) {
           return { event: 'signal_candidate', keySuffix: ':candidate' };
         }
         return null;
@@ -1127,13 +1270,105 @@ export class RealtimeEaSignalRunner {
       ) {
         return { event: 'signal', keySuffix: '' };
       }
-      if (canPublishCandidate) {
+      if (canPublishCandidate || canPublishStrongOverrideCandidate || canPublishFallbackCandidate) {
         return { event: 'signal_candidate', keySuffix: ':candidate' };
       }
       return null;
     })();
 
     if (!publish) {
+      const rejectReason = (() => {
+        if (!directional) {
+          return 'filtered_non_directional';
+        }
+        if (!actionableState) {
+          return 'filtered_state';
+        }
+        if (tier == null) {
+          return 'filtered_weak';
+        }
+        if (!meetsEnter) {
+          return 'filtered_require_enter';
+        }
+        if (this.dashboardRequireConfluence) {
+          if (!confluenceReady) {
+            return 'filtered_confluence_missing';
+          }
+          if (!confluencePassed) {
+            return 'filtered_confluence_failed';
+          }
+        }
+        if (this.dashboardRequireLayers18 && !(layers18Ready || layers18Override)) {
+          return 'filtered_layers18';
+        }
+        if (!meetsTradeValidity) {
+          return 'filtered_trade_invalid';
+        }
+        if (this.dashboardAllowCandidates && !analyzedReady) {
+          return 'filtered_missing_layered_analysis';
+        }
+        return 'filtered_other';
+      })();
+
+      this.recordReject(rejectReason, {
+        broker,
+        symbol,
+        pair: rawSignal?.pair || symbol,
+        decisionState,
+        tradeValid,
+        confidence,
+        strength,
+        tier,
+        confluencePassed,
+        confluenceReady,
+        confluenceScore: Number.isFinite(Number(confluence?.score))
+          ? Number(confluence.score)
+          : null,
+        layers: {
+          count: layers18.length,
+          complete: analyzedComplete,
+          ready: layers18Ready,
+          override: layers18Override,
+          layer18State: layers18State || null,
+        },
+      });
+
+      if (tier != null || analyzedReady) {
+        const score = Number.isFinite(Number(rawSignal?.finalScore))
+          ? Number(rawSignal.finalScore)
+          : confidence + strength;
+        this.recordDebugCandidate({
+          broker,
+          symbol,
+          pair: rawSignal?.pair || symbol,
+          decisionState,
+          tradeValid,
+          tier,
+          confidence,
+          strength,
+          finalScore: Number.isFinite(Number(rawSignal?.finalScore))
+            ? Number(rawSignal.finalScore)
+            : null,
+          score,
+          analyzed: {
+            available: analyzedReady,
+            layers: layers18.length,
+            complete: analyzedComplete,
+          },
+          confluence: {
+            passed: confluencePassed,
+            ready: confluenceReady,
+            score: Number.isFinite(Number(confluence?.score)) ? Number(confluence.score) : null,
+          },
+          layers18: {
+            ready: layers18Ready,
+            override: layers18Override,
+            layer18State: layers18State || null,
+          },
+          filteredBy: rejectReason,
+        });
+      }
+
       this.lastGeneratedAt.set(key, now);
       return;
     }
@@ -1172,6 +1407,7 @@ export class RealtimeEaSignalRunner {
     this.lastPublishedMeta.set(broadcastKey, metaNow);
 
     this.broadcast(broadcastEvent, dto);
+    this.recordPublish(broadcastEvent);
 
     // Local hook for auto-trading execution (server-side).
     // Never trigger execution on candidate/diagnostic streams.

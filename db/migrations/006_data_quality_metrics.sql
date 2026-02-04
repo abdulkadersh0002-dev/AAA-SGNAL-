@@ -12,5 +12,11 @@ CREATE TABLE IF NOT EXISTS data_quality_metrics (
     PRIMARY KEY (assessed_at, id)
 );
 
-SELECT create_hypertable('data_quality_metrics', 'assessed_at', if_not_exists => TRUE, migrate_data => TRUE);
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'create_hypertable') THEN
+        EXECUTE $ts$SELECT create_hypertable('data_quality_metrics', 'assessed_at', if_not_exists => TRUE, migrate_data => TRUE);$ts$;
+    END IF;
+END
+$$;
 CREATE INDEX IF NOT EXISTS idx_data_quality_pair ON data_quality_metrics(pair, assessed_at DESC);

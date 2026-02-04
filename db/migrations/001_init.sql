@@ -1,5 +1,12 @@
--- Enable TimescaleDB extension if available
-CREATE EXTENSION IF NOT EXISTS timescaledb;
+-- Enable TimescaleDB extension only when it is installed on the server.
+-- (On vanilla Postgres, attempting to CREATE EXTENSION will fail.)
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'timescaledb') THEN
+        EXECUTE 'CREATE EXTENSION IF NOT EXISTS timescaledb';
+    END IF;
+END
+$$;
 
 -- Feature snapshots table
 CREATE TABLE IF NOT EXISTS feature_snapshots (
@@ -16,8 +23,14 @@ CREATE TABLE IF NOT EXISTS feature_snapshots (
     PRIMARY KEY (captured_at, id)
 );
 
--- Create hypertable for time-series efficiency if extension is available
-SELECT create_hypertable('feature_snapshots', 'captured_at', if_not_exists => TRUE, migrate_data => TRUE);
+-- Create hypertable for time-series efficiency if TimescaleDB is available
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'create_hypertable') THEN
+        EXECUTE $ts$SELECT create_hypertable('feature_snapshots', 'captured_at', if_not_exists => TRUE, migrate_data => TRUE);$ts$;
+    END IF;
+END
+$$;
 
 CREATE INDEX IF NOT EXISTS idx_feature_snapshots_pair_timeframe ON feature_snapshots(pair, timeframe, captured_at DESC);
 CREATE INDEX IF NOT EXISTS idx_feature_snapshots_hash ON feature_snapshots(feature_hash);
@@ -61,7 +74,13 @@ CREATE TABLE IF NOT EXISTS provider_metrics (
     PRIMARY KEY (collected_at, id)
 );
 
-SELECT create_hypertable('provider_metrics', 'collected_at', if_not_exists => TRUE, migrate_data => TRUE);
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'create_hypertable') THEN
+        EXECUTE $ts$SELECT create_hypertable('provider_metrics', 'collected_at', if_not_exists => TRUE, migrate_data => TRUE);$ts$;
+    END IF;
+END
+$$;
 CREATE INDEX IF NOT EXISTS idx_provider_metrics_provider ON provider_metrics(provider, collected_at DESC);
 
 -- Helper view for latest provider metrics

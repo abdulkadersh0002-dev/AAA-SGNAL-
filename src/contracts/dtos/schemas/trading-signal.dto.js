@@ -67,6 +67,17 @@ export const TradingSignalSchema = z
           score: z.number().optional(),
           assetClass: z.string().optional(),
           category: z.string().optional(),
+          blockedReason: z.string().nullable().optional(),
+          blockedReasons: z
+            .array(
+              z.object({
+                code: z.string(),
+                key: z.string().optional(),
+                message: z.string().optional(),
+                meta: z.record(z.unknown()).optional(),
+              })
+            )
+            .optional(),
           killSwitch: z
             .object({
               enabled: z.boolean().optional(),
@@ -222,6 +233,29 @@ export function createTradingSignalDTO(raw) {
                 : undefined,
               assetClass: raw.isValid.decision.assetClass || undefined,
               category: raw.isValid.decision.category || undefined,
+              blockedReason:
+                raw.isValid.decision.blockedReason === null ||
+                raw.isValid.decision.blockedReason === undefined
+                  ? undefined
+                  : String(raw.isValid.decision.blockedReason),
+              blockedReasons: Array.isArray(raw.isValid.decision.blockedReasons)
+                ? raw.isValid.decision.blockedReasons
+                    .map((r) =>
+                      r && typeof r === 'object'
+                        ? {
+                            code: String(r.code || ''),
+                            key: r.key == null ? undefined : String(r.key),
+                            message: r.message == null ? undefined : String(r.message),
+                            meta:
+                              r.meta && typeof r.meta === 'object' && !Array.isArray(r.meta)
+                                ? r.meta
+                                : undefined,
+                          }
+                        : null
+                    )
+                    .filter((r) => r && r.code)
+                    .slice(0, 10)
+                : undefined,
               blockers: Array.isArray(raw.isValid.decision.blockers)
                 ? raw.isValid.decision.blockers.map((v) => String(v)).slice(0, 10)
                 : undefined,

@@ -59,7 +59,7 @@ test('calculateEntryParameters builds coherent trade plan inputs', () => {
   assert.equal(entry.direction, 'BUY');
   assert.ok(entry.stopLoss < entry.price);
   assert.ok(entry.takeProfit > entry.price);
-  assert.ok(entry.riskReward >= 1.6);
+  assert.ok(entry.riskReward >= 1.75);
   assert.ok(entry.trailingStop.enabled);
 });
 
@@ -67,6 +67,7 @@ test('validateSignal enforces gating and reports failures', () => {
   const engine = createEngine();
   const goodSignal = {
     pair: 'EURUSD',
+    timeframe: 'M15',
     direction: 'BUY',
     strength: 80,
     confidence: 85,

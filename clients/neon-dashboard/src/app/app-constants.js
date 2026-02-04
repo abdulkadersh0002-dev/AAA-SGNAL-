@@ -188,9 +188,17 @@ export const TICKER_CATALOG_SYMBOLS = (() => {
 export const ACTIVE_SYMBOLS_SYNC_MAX = (() => {
   const raw = Number(import.meta?.env?.VITE_ACTIVE_SYMBOLS_SYNC_MAX);
   if (!Number.isFinite(raw)) {
-    return 80;
+    return 400;
   }
   return Math.max(1, Math.trunc(raw));
+})();
+
+export const ACTIVE_SYMBOLS_SYNC_INTERVAL_MS = (() => {
+  const raw = Number(import.meta?.env?.VITE_ACTIVE_SYMBOLS_SYNC_INTERVAL_MS);
+  if (!Number.isFinite(raw)) {
+    return 15_000;
+  }
+  return Math.max(2_500, Math.trunc(raw));
 })();
 
 // EA-only workspace mode:

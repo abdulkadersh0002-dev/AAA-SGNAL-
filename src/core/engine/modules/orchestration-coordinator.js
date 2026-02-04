@@ -48,6 +48,16 @@ export const orchestrationCoordinator = {
             return Number.isFinite(bid) && Number.isFinite(ask) && bid > 0 && ask > 0 && ask > bid;
           };
 
+          const allowBarQuotes = ['1', 'true', 'yes', 'on'].includes(
+            String(process.env.EA_ALLOW_BAR_QUOTES || '')
+              .trim()
+              .toLowerCase()
+          );
+          const barQuoteSpreadRelative = Number(process.env.EA_SYNTHETIC_SPREAD_RELATIVE);
+          const resolvedSpreadRelative = Number.isFinite(barQuoteSpreadRelative)
+            ? Math.max(0.00001, barQuoteSpreadRelative)
+            : 0.0002;
+
           if (eaBridgeService && (!external || !isRealBidAskQuote(external.quote))) {
             // Prefer snapshot.quote if available (most reliable bid/ask in EA-only).
             let picked = null;
@@ -78,6 +88,33 @@ export const orchestrationCoordinator = {
               const candidate = eaBridgeService.getLatestQuoteForSymbolMatch(brokerId, pair);
               if (isRealBidAskQuote(candidate)) {
                 picked = candidate;
+              }
+            }
+
+            // Optional fallback: synthesize a bid/ask from the latest bar close.
+            if (!picked && allowBarQuotes && typeof eaBridgeService.getMarketBars === 'function') {
+              const bars = eaBridgeService.getMarketBars({
+                broker: brokerId,
+                symbol: pair,
+                timeframe: 'M1',
+                limit: 1,
+                maxAgeMs: 10 * 60 * 1000,
+              });
+              const bar = Array.isArray(bars) && bars.length ? bars[bars.length - 1] : null;
+              const close = Number(bar?.close ?? bar?.last ?? bar?.price);
+              if (Number.isFinite(close) && close > 0) {
+                const half = (close * resolvedSpreadRelative) / 2;
+                picked = {
+                  broker: brokerId,
+                  symbol: pair,
+                  bid: close - half,
+                  ask: close + half,
+                  last: close,
+                  mid: close,
+                  source: 'ea_bars_synthetic',
+                  receivedAt: bar?.receivedAt ?? Date.now(),
+                  timestamp: bar?.time ?? Date.now(),
+                };
               }
             }
 

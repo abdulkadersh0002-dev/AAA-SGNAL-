@@ -189,13 +189,21 @@ export async function fetchJson(path, options = {}) {
     const response = await fetch(url, init);
     if (!response.ok) {
       let detail = response.statusText || 'Request failed';
+      let payload = null;
       try {
-        const payload = await response.json();
-        detail = payload.error || payload.message || detail;
+        payload = await response.json();
+        detail = payload?.error || payload?.message || detail;
       } catch (_error) {
         // Silent fallback to status text
       }
-      throw new Error(`${method} ${path} -> ${detail}`);
+
+      const error = new Error(`${method} ${path} -> ${detail}`);
+      error.status = response.status;
+      error.detail = detail;
+      if (payload && typeof payload === 'object') {
+        error.payload = payload;
+      }
+      throw error;
     }
 
     if (options.expect === 'text') {

@@ -178,8 +178,8 @@ class NewsClassificationService {
   /**
    * Get smart actions based on news classification
    */
-  getSmartActions(newsType, impactLevel, timing, newsItem) {
-    const baseActions = this.newsTypes[newsType]?.actions || ['monitor'];
+  getSmartActions(newsType, impactLevel, timing, _newsItem) {
+    const _baseActions = this.newsTypes[newsType]?.actions || ['monitor'];
     const actions = [];
 
     // Timing-based actions
@@ -319,7 +319,7 @@ class NewsClassificationService {
    */
   evaluateNewsImpact(newsItem, trade) {
     const classification = this.classifyNews(newsItem);
-    const { type, level, timing, actions, volatilityMultiplier } = classification;
+    const { type, level: _level, timing: _timing, actions, volatilityMultiplier } = classification;
 
     // Get historical behavior if available
     const historical = this.getHistoricalBehavior(type);

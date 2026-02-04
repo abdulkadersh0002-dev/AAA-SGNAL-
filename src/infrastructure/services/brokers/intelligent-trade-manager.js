@@ -73,7 +73,13 @@ class IntelligentTradeManager {
    * Evaluate if a trade should be opened using scoring model
    * Returns: { shouldOpen: boolean, score: number, decision: object, reasons: string[] }
    */
-  evaluateTradeEntryWithScoring({ signal, broker, symbol, marketData = {}, newsItems = [] }) {
+  evaluateTradeEntryWithScoring({
+    signal,
+    broker: _broker,
+    symbol,
+    marketData = {},
+    newsItems = [],
+  }) {
     const direction = signal.direction || 'NEUTRAL';
 
     // Validate direction
@@ -325,14 +331,14 @@ class IntelligentTradeManager {
   /**
    * Evaluate if market phase is suitable for the signal direction
    */
-  evaluateMarketPhase(signal, symbol, marketData) {
+  evaluateMarketPhase(signal, symbol, _marketData) {
     const phase = this.marketPhaseCache.get(symbol);
     if (!phase) {
       // No phase data, allow but reduce confidence slightly
       return { suitable: true, adjustmentFactor: 0.95, reasons: ['No phase data'] };
     }
 
-    const { phase: currentPhase, confidence: phaseConfidence } = phase;
+    const { phase: currentPhase, confidence: _phaseConfidence } = phase;
     const direction = signal.direction || 'NEUTRAL';
 
     // Best phases for each direction
@@ -409,7 +415,7 @@ class IntelligentTradeManager {
   /**
    * Check volatility appropriateness for the signal
    */
-  evaluateVolatility(symbol, signal, marketData) {
+  evaluateVolatility(symbol, signal, _marketData) {
     const volData = this.volatilityCache.get(symbol);
     if (!volData) {
       return { appropriate: true, adjustmentFactor: 0.95, reasons: ['No volatility data'] };
@@ -483,7 +489,7 @@ class IntelligentTradeManager {
       let alignedCount = 0;
       let totalCount = 0;
 
-      for (const [tf, analysis] of Object.entries(analyses)) {
+      for (const [_tf, analysis] of Object.entries(analyses)) {
         if (analysis.direction && analysis.direction !== 'NEUTRAL') {
           totalCount++;
           if (analysis.direction === direction) {
@@ -554,7 +560,7 @@ class IntelligentTradeManager {
   /**
    * Monitor open trade and suggest actions (hold, close, trail stop)
    */
-  monitorTrade({ trade, currentPrice, marketData = {} }) {
+  monitorTrade({ trade, currentPrice, marketData: _marketData = {} }) {
     const { openPrice, stopLoss, takeProfit, direction, symbol } = trade;
 
     const priceDelta = direction === 'BUY' ? currentPrice - openPrice : openPrice - currentPrice;
@@ -628,7 +634,13 @@ class IntelligentTradeManager {
   /**
    * Calculate trailing stop loss
    */
-  calculateTrailingStop({ currentPrice, openPrice, direction, profitRatio, tpDistance }) {
+  calculateTrailingStop({
+    currentPrice,
+    openPrice: _openPrice,
+    direction,
+    profitRatio,
+    tpDistance,
+  }) {
     // Move SL to protect 30% of current profit
     const profitProtection = 0.3;
     const currentProfit = profitRatio * tpDistance;
@@ -794,7 +806,7 @@ class IntelligentTradeManager {
     let trendingCount = 0;
     let rangingCount = 0;
 
-    for (const [symbol, regime] of this.currentRegime.entries()) {
+    for (const [_symbol, regime] of this.currentRegime.entries()) {
       if (regime === 'trending') {
         trendingCount++;
       } else if (regime === 'ranging') {

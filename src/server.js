@@ -251,10 +251,22 @@ try {
       'Set ALLOW_SYNTHETIC_DATA=true temporarily if you need to bypass live data checks during development.'
     );
 
-    if (serverConfig.nodeEnv !== 'production' && serverConfig.nodeEnv !== 'test') {
+    const allowSyntheticFallback =
+      String(process.env.DEV_ALLOW_SYNTHETIC_FALLBACK || '')
+        .trim()
+        .toLowerCase() === 'true' ||
+      String(process.env.DEV_ALLOW_SYNTHETIC_FALLBACK || '')
+        .trim()
+        .toLowerCase() === '1';
+
+    if (
+      allowSyntheticFallback &&
+      serverConfig.nodeEnv !== 'production' &&
+      serverConfig.nodeEnv !== 'test'
+    ) {
       process.env.ALLOW_SYNTHETIC_DATA = 'true';
       process.env.REQUIRE_REALTIME_DATA = 'false';
-      logger.warn('Continuing startup with synthetic data enabled (local/dev mode fallback).');
+      logger.warn('Continuing startup with synthetic data enabled (explicit dev fallback).');
     } else {
       process.exit(1);
     }
@@ -302,6 +314,21 @@ if (!databaseConfig.host || !databaseConfig.user || !databaseConfig.password) {
   logger.warn(
     'TimescaleDB connection is not configured. Persistence will run in in-memory mode only.'
   );
+}
+
+const dbRequired =
+  String(process.env.DB_REQUIRED || '')
+    .trim()
+    .toLowerCase() === 'true' ||
+  String(process.env.DB_REQUIRED || '')
+    .trim()
+    .toLowerCase() === '1';
+
+if (dbRequired && !persistenceEnabled) {
+  logger.error(
+    'DB_REQUIRED=true but database is not configured. Set DATABASE_URL or DB_HOST/DB_NAME/DB_USER/DB_PASSWORD to enable persistence.'
+  );
+  process.exit(1);
 }
 
 const resolveBoolean = (value) => {
@@ -442,6 +469,16 @@ tradingEngine.setExternalMarketContextProvider?.(async ({ pair, broker }) => {
   });
   let quote = Array.isArray(quotes) && quotes.length ? quotes[0] : null;
 
+  const allowBarQuotes = ['1', 'true', 'yes', 'on'].includes(
+    String(process.env.EA_ALLOW_BAR_QUOTES || '')
+      .trim()
+      .toLowerCase()
+  );
+  const barQuoteSpreadRelative = Number(process.env.EA_SYNTHETIC_SPREAD_RELATIVE);
+  const resolvedSpreadRelative = Number.isFinite(barQuoteSpreadRelative)
+    ? Math.max(0.00001, barQuoteSpreadRelative)
+    : 0.0002;
+
   // Snapshots are used to hydrate the dashboard analyzer (RSI/MACD/ATR/levels).
   // If we treat snapshots as stale too aggressively, the UI will sit on "Waiting for MT snapshot..."
   // even though the EA did post a snapshot recently.
@@ -495,6 +532,37 @@ tradingEngine.setExternalMarketContextProvider?.(async ({ pair, broker }) => {
 
     if (isRealBidAskQuote(normalized)) {
       quote = normalized;
+    }
+  }
+
+  // Optional fallback: synthesize a bid/ask from the latest bar close when ticks are missing.
+  if (!isRealBidAskQuote(quote) && allowBarQuotes) {
+    try {
+      const bars = eaBridgeService.getMarketBars({
+        broker: brokerId,
+        symbol: pair,
+        timeframe: 'M1',
+        limit: 1,
+        maxAgeMs: 10 * 60 * 1000,
+      });
+      const bar = Array.isArray(bars) && bars.length ? bars[bars.length - 1] : null;
+      const close = Number(bar?.close ?? bar?.last ?? bar?.price);
+      if (Number.isFinite(close) && close > 0) {
+        const half = (close * resolvedSpreadRelative) / 2;
+        quote = {
+          broker: brokerId,
+          symbol: pair,
+          bid: close - half,
+          ask: close + half,
+          last: close,
+          mid: close,
+          source: 'ea_bars_synthetic',
+          receivedAt: bar?.receivedAt ?? Date.now(),
+          timestamp: bar?.time ?? Date.now(),
+        };
+      }
+    } catch (_error) {
+      // best-effort
     }
   }
 

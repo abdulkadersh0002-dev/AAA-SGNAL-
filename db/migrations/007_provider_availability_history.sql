@@ -17,6 +17,12 @@ CREATE TABLE IF NOT EXISTS provider_availability_history (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-SELECT create_hypertable('provider_availability_history', 'captured_at', if_not_exists => TRUE, migrate_data => TRUE);
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'create_hypertable') THEN
+        EXECUTE $ts$SELECT create_hypertable('provider_availability_history', 'captured_at', if_not_exists => TRUE, migrate_data => TRUE);$ts$;
+    END IF;
+END
+$$;
 CREATE INDEX IF NOT EXISTS idx_provider_availability_captured_at ON provider_availability_history (captured_at DESC);
 CREATE INDEX IF NOT EXISTS idx_provider_availability_state ON provider_availability_history (captured_at DESC, state, severity);

@@ -314,7 +314,7 @@ export default function eaBridgeRoutes({
                   maxAgeMs: Number.isFinite(maxAgeMs) ? Math.max(0, maxAgeMs) : 30 * 60 * 1000,
                   max: maxSymbols,
                 });
-                return (Array.isArray(symbols) ? symbols : [])
+                const normalized = (Array.isArray(symbols) ? symbols : [])
                   .map((s) =>
                     String(s || '')
                       .trim()
@@ -322,6 +322,9 @@ export default function eaBridgeRoutes({
                   )
                   .filter(Boolean)
                   .filter((s) => isAllowedScanSymbol(broker, s));
+                if (normalized.length > 0) {
+                  return normalized;
+                }
               }
 
               const quotes = eaBridgeService?.getQuotes
@@ -356,6 +359,12 @@ export default function eaBridgeRoutes({
             scanCursorByBroker.set(broker, (cursor + batchSize) % Math.max(1, total));
 
             if (batch.length > 0) {
+              runner.recordScan({
+                broker,
+                total,
+                batchSize,
+                symbols: batch,
+              });
               runner.ingestSymbols({ broker, symbols: batch });
             }
           }
@@ -1396,7 +1405,12 @@ export default function eaBridgeRoutes({
           maxAgeMs,
           now,
         });
-        return ok(res, { now, maxAgeMs: diagnostics.maxAgeMs, ...diagnostics });
+        return ok(res, {
+          now,
+          maxAgeMs: diagnostics.maxAgeMs,
+          ...diagnostics,
+          realtimeSignals: realtimeSignalRunner?.getDashboardStats?.() || null,
+        });
       }
 
       const brokers = ['mt4', 'mt5'];
@@ -1411,7 +1425,12 @@ export default function eaBridgeRoutes({
         });
       }
 
-      return ok(res, { now, maxAgeMs, brokers: byBroker });
+      return ok(res, {
+        now,
+        maxAgeMs,
+        brokers: byBroker,
+        realtimeSignals: realtimeSignalRunner?.getDashboardStats?.() || null,
+      });
     } catch (error) {
       logger.error({ err: error }, 'EA status retrieval failed');
       return serverError(res, error);

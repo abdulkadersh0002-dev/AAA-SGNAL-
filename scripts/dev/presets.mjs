@@ -11,7 +11,16 @@ const normalizeName = (value) =>
 export const PRESETS = {
   default: {
     label: 'Default (uses env defaults)',
-    env: {}
+    env: {},
+  },
+
+  realtime_db: {
+    label: 'Real-time + DB required (no synthetic)',
+    env: {
+      REQUIRE_REALTIME_DATA: 'true',
+      ALLOW_SYNTHETIC_DATA: 'false',
+      DB_REQUIRED: 'true',
+    },
   },
 
   synthetic: {
@@ -19,15 +28,15 @@ export const PRESETS = {
     env: {
       ALLOW_SYNTHETIC_DATA: 'true',
       REQUIRE_REALTIME_DATA: 'false',
-      NEWS_RSS_ONLY: 'true'
-    }
+      NEWS_RSS_ONLY: 'true',
+    },
   },
 
   all_symbols: {
     label: 'Allow ALL symbols',
     env: {
-      ALLOW_ALL_SYMBOLS: 'true'
-    }
+      ALLOW_ALL_SYMBOLS: 'true',
+    },
   },
 
   all_symbols_full_scan: {
@@ -42,16 +51,16 @@ export const PRESETS = {
       VITE_ACTIVE_SYMBOLS_SYNC_MAX: '2000',
       WS_MAX_RECENT_CANDIDATE_SIGNALS: '500',
       VITE_MAX_CANDIDATE_ITEMS: '500',
-      VITE_CANDIDATE_TABLE_ROWS: '200'
-    }
+      VITE_CANDIDATE_TABLE_ROWS: '200',
+    },
   },
 
   all_symbols_auto_trading: {
     label: 'Allow ALL symbols + Auto-trading autostart',
     env: {
       ALLOW_ALL_SYMBOLS: 'true',
-      AUTO_TRADING_AUTOSTART: 'true'
-    }
+      AUTO_TRADING_AUTOSTART: 'true',
+    },
   },
 
   smart_strong_mt5_auto: {
@@ -61,8 +70,8 @@ export const PRESETS = {
       AUTO_TRADING_ASSET_CLASSES: 'forex,metals',
       AUTO_TRADING_AUTOSTART: 'true',
       AUTO_TRADING_PRESET: 'smart_strong',
-      AUTO_TRADING_FORCE_BROKER: 'mt5'
-    }
+      AUTO_TRADING_FORCE_BROKER: 'mt5',
+    },
   },
 
   smart_strong_mt5_more_entries: {
@@ -83,8 +92,8 @@ export const PRESETS = {
       EA_STRICT_SMART_CHECKLIST: 'false',
       SIGNAL_CONFLUENCE_ADVISORY_SMART_FAILS: 'true',
       SIGNAL_CONFLUENCE_MIN_SCORE: '45',
-      SIGNAL_HARD_MIN_CONFIDENCE: '40'
-    }
+      SIGNAL_HARD_MIN_CONFIDENCE: '40',
+    },
   },
 
   fx_metals_strong_auto_v2: {
@@ -101,8 +110,8 @@ export const PRESETS = {
       EA_SIGNAL_MIN_CONFIDENCE: '70',
       EA_SIGNAL_MIN_STRENGTH: '55',
       AUTO_TRADING_ENFORCE_HTF_ALIGNMENT: 'false',
-      AUTO_TRADING_SMART_STRONG_ENTER_SCORE: '40'
-    }
+      AUTO_TRADING_SMART_STRONG_ENTER_SCORE: '40',
+    },
   },
 
   fx_metals_active_auto_more_trades: {
@@ -123,8 +132,8 @@ export const PRESETS = {
       EA_STRICT_SMART_CHECKLIST: 'false',
       SIGNAL_CONFLUENCE_ADVISORY_SMART_FAILS: 'true',
       SIGNAL_CONFLUENCE_MIN_SCORE: '40',
-      SIGNAL_HARD_MIN_CONFIDENCE: '40'
-    }
+      SIGNAL_HARD_MIN_CONFIDENCE: '40',
+    },
   },
 
   fx_metals_smart_auto_strong_trades: {
@@ -147,18 +156,19 @@ export const PRESETS = {
       EA_STRICT_SMART_CHECKLIST: 'false',
       SIGNAL_CONFLUENCE_ADVISORY_SMART_FAILS: 'true',
       SIGNAL_CONFLUENCE_MIN_SCORE: '42',
-      SIGNAL_HARD_MIN_CONFIDENCE: '40'
-    }
-  }
+      SIGNAL_HARD_MIN_CONFIDENCE: '40',
+    },
+  },
 };
 
 const ALIASES = new Map([
   ['no_db_no_keys', 'synthetic'],
+  ['db', 'realtime_db'],
   ['all', 'all_symbols'],
   ['all_symbols_fullscan', 'all_symbols_full_scan'],
   ['full_scan', 'all_symbols_full_scan'],
   ['smart_strong_mt5', 'smart_strong_mt5_auto'],
-  ['smart_strong', 'smart_strong_mt5_auto']
+  ['smart_strong', 'smart_strong_mt5_auto'],
 ]);
 
 export function resolvePresetKey(input) {

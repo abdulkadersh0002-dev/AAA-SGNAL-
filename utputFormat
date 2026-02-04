@@ -1,0 +1,21 @@
+HTTP/1.1 200 OK
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Resource-Policy: same-origin
+Origin-Agent-Cluster: ?1
+Referrer-Policy: no-referrer
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Content-Type-Options: nosniff
+X-DNS-Prefetch-Control: off
+X-Download-Options: noopen
+X-Frame-Options: SAMEORIGIN
+X-Permitted-Cross-Domain-Policies: none
+Vary: Origin, Accept-Encoding
+x-request-id: 164e963e-befd-46d5-9dfa-5446dd410ae1
+Content-Type: application/json; charset=utf-8
+Content-Length: 710
+ETag: W/"2c6-W3Oq6jwIoKe90pFmPrlzCulYb/M"
+Date: Mon, 02 Feb 2026 14:48:02 GMT
+Connection: keep-alive
+Keep-Alive: timeout=5
+
+{"success":true,"runtime":{"environment":"development","server":{"port":4101,"enableWebSockets":true,"websocketPath":"/ws/trading"},"apiAuthEnabled":false,"tradingScope":{"mode":"execution","allowExecution":true},"eaOnlyMode":true,"autoTrading":{"autostart":false},"brokerRouting":{"enabled":true,"defaultBroker":"mt5"},"brokers":{"oanda":false,"mt4":false,"mt5":true,"ibkr":false},"services":{"riskReports":true,"performanceDigests":true,"brokerReconciliation":true,"pairPrefetch":true,"jobQueue":true},"persistence":{"enabled":true,"ssl":false},"endpoints":{"health":"/api/healthz","metrics":"/metrics","websocket":"/ws/trading"}},"timestamp":1770043682241,"requestId":"164e963e-befd-46d5-9dfa-5446dd410ae1"}

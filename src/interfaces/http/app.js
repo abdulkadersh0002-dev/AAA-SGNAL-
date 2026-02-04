@@ -145,6 +145,12 @@ export function createHttpApp({
     logger,
   });
 
+  const eaBridgeUiRateLimiter = createRateLimiter({
+    windowMs: 60 * 1000,
+    max: 60,
+    logger,
+  });
+
   app.use('/api', apiAuth.authenticate);
 
   app.use(
@@ -250,7 +256,7 @@ export function createHttpApp({
       auditLogger,
       logger,
       broadcast,
-      requireBrokerWrite: allowPublicEaBridge ? null : [sensitiveRateLimiter, requireBrokerWrite],
+      requireBrokerWrite: allowPublicEaBridge ? null : [eaBridgeUiRateLimiter, requireBrokerWrite],
     })
   );
 

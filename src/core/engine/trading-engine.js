@@ -16,6 +16,7 @@ import { executionEngine } from './modules/execution-engine.js';
 import { persistenceHub } from './modules/persistence-hub.js';
 import { orchestrationCoordinator } from './modules/orchestration-coordinator.js';
 import { dataQualityGuard } from './modules/data-quality-guard.js';
+import { evaluateLayeredDecision } from './modules/layered-decision-engine.js';
 import { createMarketRules } from './market-rules.js';
 import {
   getPairMetadata,
@@ -572,6 +573,13 @@ class TradingEngine {
       return null;
     }
 
+    const assetClass =
+      typeof this.classifyAssetClass === 'function' ? this.classifyAssetClass(pair) : 'forex';
+    const defaultMinRiskReward = assetClass === 'crypto' ? 2.0 : 1.75;
+    const minRiskReward = Number.isFinite(Number(this.config.minRiskReward))
+      ? Math.max(0, Number(this.config.minRiskReward))
+      : defaultMinRiskReward;
+
     const volatilitySummary = technical?.volatilitySummary || technical?.volatility || {};
 
     // Build a stable cache key for this pair/direction and current volatility regime
@@ -624,12 +632,12 @@ class TradingEngine {
 
     const rewardBias =
       volatilityState === 'calm' ? 1.55 : volatilityState === 'volatile' ? 1.35 : 1.45;
-    let takeProfitMultiple = Math.max(1.6, Math.min(stopMultiple * rewardBias, 3.6));
+    let takeProfitMultiple = Math.max(minRiskReward, Math.min(stopMultiple * rewardBias, 3.6));
 
     // Enforce minimum risk/reward ratio regardless of volatility adjustments
-    const minRequiredMultiple = stopMultiple * 1.6;
+    const minRequiredMultiple = stopMultiple * minRiskReward;
     if (takeProfitMultiple < minRequiredMultiple) {
-      takeProfitMultiple = Math.min(Math.max(minRequiredMultiple, 1.6), 4.8);
+      takeProfitMultiple = Math.min(Math.max(minRequiredMultiple, minRiskReward), 4.8);
     }
 
     const takeProfitDistance = atr * takeProfitMultiple;
@@ -734,9 +742,7 @@ class TradingEngine {
 
       const { supports, resistances } = pullLevels();
       if (supports.length || resistances.length) {
-        const minRr = Number.isFinite(Number(this.config.minRiskReward))
-          ? Number(this.config.minRiskReward)
-          : 1.6;
+        const minRr = minRiskReward;
 
         const pickNearestBelow = (levels) => {
           const candidates = levels.filter((lvl) => Number.isFinite(lvl) && lvl < current);
@@ -861,6 +867,33 @@ class TradingEngine {
 
     const pair = String(signal?.pair || '').trim() || null;
     const assetClass = this.classifyAssetClass(pair);
+
+    const resolvedTimeframe = (() => {
+      const raw =
+        signal?.timeframe ??
+        signal?.components?.technical?.timeframe ??
+        signal?.components?.technical?.primaryTimeframe ??
+        null;
+      if (typeof raw === 'string' && raw.trim()) {
+        return raw.trim().toUpperCase();
+      }
+      const frames =
+        signal?.components?.technical?.timeframes &&
+        typeof signal.components.technical.timeframes === 'object'
+          ? signal.components.technical.timeframes
+          : null;
+      if (!frames) {
+        return null;
+      }
+      const preferred = ['M15', 'M30', 'H1', 'H4', 'D1', 'W1'];
+      for (const tf of preferred) {
+        if (frames?.[tf] || frames?.[tf.toLowerCase()]) {
+          return tf;
+        }
+      }
+      const firstKey = Object.keys(frames)[0];
+      return firstKey ? String(firstKey).trim().toUpperCase() : null;
+    })();
 
     // Default spread gates tuned by asset class.
     // For FX, align defaults with the data-quality spread thresholds so we don't double-penalize
@@ -1143,6 +1176,10 @@ class TradingEngine {
     })();
 
     const hardChecks = {
+      timeframeOk:
+        signal?.direction === 'BUY' || signal?.direction === 'SELL'
+          ? Boolean(resolvedTimeframe)
+          : true,
       marketDataFresh,
       spreadOk,
       noHighImpactNewsSoon: !hasHighImpactSoon,
@@ -1188,6 +1225,23 @@ class TradingEngine {
       entry && Number.isFinite(Number(entry.takeProfitPips)) ? Number(entry.takeProfitPips) : null;
     const riskReward =
       entry && Number.isFinite(Number(entry.riskReward)) ? Number(entry.riskReward) : null;
+
+    const defaultMinRiskReward = assetClass === 'crypto' ? 2.0 : 1.75;
+    const minRiskReward = Number.isFinite(Number(this.config.minRiskReward))
+      ? Math.max(0, Number(this.config.minRiskReward))
+      : defaultMinRiskReward;
+    const riskRewardOk = (() => {
+      if (signal?.direction !== 'BUY' && signal?.direction !== 'SELL') {
+        return true;
+      }
+      if (riskReward == null || !Number.isFinite(Number(riskReward))) {
+        return false;
+      }
+      return Number(riskReward) >= minRiskReward;
+    })();
+
+    hardChecks.riskRewardOk = riskRewardOk;
+    blocked = Object.values(hardChecks).some((v) => v !== true);
 
     const strength = Number.isFinite(Number(signal?.strength)) ? Number(signal.strength) : 0;
     const confidence = Number.isFinite(Number(signal?.confidence)) ? Number(signal.confidence) : 0;
@@ -1490,6 +1544,59 @@ class TradingEngine {
       weightedScore01 * newsModifier * sessionModifier * dataQualityPenalty * momentumBoost
     );
     const score = Number((score01 * 100).toFixed(1));
+
+    const smartStrongEnabled =
+      String(process.env.AUTO_TRADING_SMART_STRONG || '')
+        .trim()
+        .toLowerCase() === 'true';
+    const scoreSmoothingWindow = (() => {
+      const env = Number(process.env.AUTO_TRADING_SCORE_SMOOTHING_WINDOW);
+      if (Number.isFinite(env)) {
+        return Math.max(0, Math.min(8, Math.floor(env)));
+      }
+      return smartStrongEnabled ? 3 : 0;
+    })();
+    const scoreSmoothingMinScore = Number.isFinite(
+      Number(process.env.AUTO_TRADING_SCORE_SMOOTHING_MIN_SCORE)
+    )
+      ? Number(process.env.AUTO_TRADING_SCORE_SMOOTHING_MIN_SCORE)
+      : profile.enterScore;
+    const smoothedScore =
+      scoreSmoothingWindow >= 2
+        ? this.computeSmoothedScore(pair, score01, scoreSmoothingWindow)
+        : null;
+    const scoreSmoothingOk =
+      smoothedScore == null || !Number.isFinite(smoothedScore)
+        ? true
+        : smoothedScore >= scoreSmoothingMinScore;
+    const spreadAtrSoftenEnabled = (() => {
+      const env = String(process.env.AUTO_TRADING_SPREAD_ATR_SOFTEN || '')
+        .trim()
+        .toLowerCase();
+      if (env) {
+        return env === '1' || env === 'true' || env === 'yes' || env === 'on';
+      }
+      return smartStrongEnabled;
+    })();
+    const spreadAtrOverrideMinScore = Number.isFinite(
+      Number(process.env.AUTO_TRADING_SPREAD_ATR_OVERRIDE_MIN_SCORE)
+    )
+      ? Number(process.env.AUTO_TRADING_SPREAD_ATR_OVERRIDE_MIN_SCORE)
+      : 62;
+    const smartSpreadAtrOverride =
+      spreadAtrSoftenEnabled &&
+      score >= spreadAtrOverrideMinScore &&
+      (spreadOk === false || fxAtrRangeOk === false);
+
+    if (smartSpreadAtrOverride) {
+      if (spreadOk === false) {
+        hardChecks.spreadOk = true;
+      }
+      if (fxAtrRangeOk === false) {
+        hardChecks.fxAtrRangeOk = true;
+      }
+      blocked = Object.values(hardChecks).some((v) => v !== true);
+    }
 
     // 18-layer confluence gate (real checks; SKIP when data isn't available).
     const confluenceEnabled = (() => {
@@ -2580,7 +2687,7 @@ class TradingEngine {
           return { status: 'SKIP', reason: 'Non-directional' };
         }
 
-        const rrFloorByAsset = assetClass === 'crypto' ? 2.0 : 1.6;
+        const rrFloorByAsset = assetClass === 'crypto' ? 2.0 : 1.75;
         const profileMin = Number.isFinite(Number(profile?.minRiskReward))
           ? Number(profile.minRiskReward)
           : null;
@@ -5368,6 +5475,15 @@ class TradingEngine {
 
     const missing = [];
     const whatWouldChange = [];
+    const smoothingGateActive = state === 'ENTER' && !blocked && !scoreSmoothingOk;
+    if (smoothingGateActive) {
+      state = 'WAIT_MONITOR';
+      category = 'score_smoothing';
+      missing.push('score_smoothing');
+      whatWouldChange.push(
+        `Smoothed score ${Number(smoothedScore).toFixed(1)} < ${scoreSmoothingMinScore}`
+      );
+    }
     if (!blocked && state !== 'ENTER') {
       if (signal?.direction === 'NEUTRAL') {
         missing.push('direction_confirmation');
@@ -5457,6 +5573,76 @@ class TradingEngine {
       .filter(([, ok]) => ok !== true)
       .map(([k]) => k);
 
+    const blockedReasons = (() => {
+      const add = (code, key, message, meta) => ({
+        code,
+        key,
+        message,
+        meta: meta && typeof meta === 'object' ? meta : undefined,
+      });
+
+      const mapKey = (key) => {
+        switch (key) {
+          case 'timeframeOk':
+            return add('TIMEFRAME_MISSING', key, 'Signal timeframe is missing', {
+              timeframe: resolvedTimeframe,
+            });
+          case 'marketDataFresh':
+            return add('MARKET_DATA_STALE', key, 'Market data is stale', null);
+          case 'spreadOk':
+            return add('SPREAD_TOO_HIGH', key, 'Spread is above threshold', {
+              spreadPips,
+              maxSpreadPips,
+              spreadToAtr,
+              spreadToTp,
+            });
+          case 'noHighImpactNewsSoon':
+            return add('NEWS_BLOCK', key, 'High impact news event is near now', {
+              blackoutMinutes,
+              blackoutImpact,
+            });
+          case 'withinTradingWindow':
+            return add('SESSION_CLOSED', key, 'Trading session/window is closed', null);
+          case 'withinRiskLimit':
+            return add('RISK_LIMIT', key, 'Risk/capacity constraint', null);
+          case 'dataQualityOk':
+            return add('DATA_QUALITY_BLOCK', key, 'Data quality circuit breaker or block', null);
+          case 'fxAtrRangeOk':
+            return add('ATR_OUT_OF_RANGE', key, 'ATR pips out of allowed FX range', { atrPips });
+          case 'riskRewardOk':
+            return add('RR_TOO_LOW', key, 'Risk/Reward below minimum', {
+              riskReward,
+              minRiskReward,
+            });
+          case 'smartKillSwitchOk':
+            return add('KILL_SWITCH', key, 'Smart kill-switch blocked execution', {
+              ids: Array.isArray(killSwitch?.ids) ? killSwitch.ids.slice(0, 6) : [],
+            });
+          case 'momentumRsiOk':
+            return add('MOMENTUM_RSI_BLOCK', key, 'Momentum RSI guard blocked', null);
+          case 'momentumMacdOk':
+            return add('MOMENTUM_MACD_BLOCK', key, 'Momentum MACD guard blocked', null);
+          case 'htfAlignmentOk':
+            return add('HTF_ALIGNMENT_BLOCK', key, 'Higher timeframe alignment failed', null);
+          case 'cryptoVolSpikeOk':
+            return add('CRYPTO_VOLATILITY_BLOCK', key, 'Crypto volatility spike blocked', null);
+          case 'executionCostOk':
+            return add('EXECUTION_COST_TOO_HIGH', key, 'Execution cost too high', {
+              spreadEfficiencyScore,
+              spreadToTp,
+            });
+          case 'barsCoverageOk':
+            return add('BARS_COVERAGE_LOW', key, 'Insufficient bar coverage', null);
+          default:
+            return add('BLOCKED', key, `Blocked by ${key}`, null);
+        }
+      };
+
+      return blockers.map((k) => mapKey(String(k))).filter(Boolean);
+    })();
+
+    const blockedReason = blockedReasons?.[0]?.code || null;
+
     const reason = (() => {
       if (state === 'ENTER') {
         return `ENTER: score=${score}/100 (${assetClass})`;
@@ -5477,6 +5663,8 @@ class TradingEngine {
       category,
       assetClass,
       score,
+      blockedReason,
+      blockedReasons,
       killSwitch: killSwitch && typeof killSwitch === 'object' ? killSwitch : null,
       confluence: confluenceEnabled
         ? {
@@ -5502,6 +5690,7 @@ class TradingEngine {
         spreadEfficiencyScore: Number(spreadEfficiencyScore.toFixed(3)),
       },
       context: {
+        timeframe: resolvedTimeframe,
         spreadPips,
         atrPips,
         spreadToAtr,
@@ -5509,6 +5698,9 @@ class TradingEngine {
         stopLossPips,
         takeProfitPips,
         riskReward,
+        smoothedScore,
+        scoreSmoothingWindow,
+        scoreSmoothingMinScore,
       },
       modifiers: {
         newsModifier: Number(newsModifier.toFixed(3)),
@@ -5520,6 +5712,21 @@ class TradingEngine {
       missing,
       whatWouldChange,
     };
+
+    if (signal && typeof signal === 'object') {
+      signal.components =
+        signal.components && typeof signal.components === 'object' ? signal.components : {};
+      try {
+        signal.components.layeredDecision = evaluateLayeredDecision({
+          signal,
+          decision,
+          confluence,
+          now,
+        });
+      } catch (_error) {
+        // best-effort: never block signal generation
+      }
+    }
 
     this.recordDecisionMemory(pair, { at: now, score01, state });
 
@@ -5729,7 +5936,7 @@ class TradingEngine {
       minStrength: 55,
       minWinRate: 55,
       minConfidence: 55,
-      minRiskReward: Number.isFinite(this.config.minRiskReward) ? this.config.minRiskReward : 1.6,
+      minRiskReward: Number.isFinite(this.config.minRiskReward) ? this.config.minRiskReward : 1.75,
       targetRiskReward: 2.4,
       maxSpreadToAtrWarn: 0.22,
       maxSpreadToTpWarn: 0.12,
@@ -6033,6 +6240,29 @@ class TradingEngine {
     const dScore = score01 - Number(last?.score01 || 0);
     // Normalize per minute.
     return Number((dScore / (dtMs / 60000)).toFixed(4));
+  }
+
+  computeSmoothedScore(pair, score01, window = 3) {
+    if (!pair) {
+      return null;
+    }
+    const win = Number.isFinite(Number(window)) ? Math.floor(window) : 0;
+    if (win < 2) {
+      return null;
+    }
+    if (!this.decisionMemory) {
+      this.decisionMemory = new Map();
+    }
+    const history = this.decisionMemory.get(pair) || [];
+    const slice = history.slice(-Math.max(0, win - 1));
+    const scores = slice.map((item) => Number(item?.score01)).filter((v) => Number.isFinite(v));
+    scores.push(Number(score01));
+    const valid = scores.filter((v) => Number.isFinite(v));
+    if (valid.length < 2) {
+      return null;
+    }
+    const avg = valid.reduce((acc, v) => acc + v, 0) / valid.length;
+    return Number((avg * 100).toFixed(1));
   }
 
   recordDecisionMemory(pair, item) {

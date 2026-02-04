@@ -3388,6 +3388,16 @@ class EaBridgeService {
         ? this.getQuotes({ broker, symbols: [pair], maxAgeMs: quoteMaxAgeMs })?.[0] || null
         : null;
 
+      const allowBarQuotes = ['1', 'true', 'yes', 'on'].includes(
+        String(process.env.EA_ALLOW_BAR_QUOTES || '')
+          .trim()
+          .toLowerCase()
+      );
+      const barQuoteSpreadRelative = Number(process.env.EA_SYNTHETIC_SPREAD_RELATIVE);
+      const resolvedSpreadRelative = Number.isFinite(barQuoteSpreadRelative)
+        ? Math.max(0.00001, barQuoteSpreadRelative)
+        : 0.0002;
+
       // Fallback: use snapshot.quote if tick quote stream is missing.
       if ((!quote || !isRealBidAskQuote(quote)) && broker) {
         const snapForQuote = this.getMarketSnapshot({
@@ -3408,6 +3418,38 @@ class EaBridgeService {
           };
           if (isRealBidAskQuote(normalized)) {
             quote = normalized;
+          }
+        }
+      }
+
+      if (!quote || !isRealBidAskQuote(quote)) {
+        if (allowBarQuotes && typeof this.getMarketBars === 'function') {
+          try {
+            const bars = this.getMarketBars({
+              broker,
+              symbol: pair,
+              timeframe: 'M1',
+              limit: 1,
+              maxAgeMs: 10 * 60 * 1000,
+            });
+            const bar = Array.isArray(bars) && bars.length ? bars[bars.length - 1] : null;
+            const close = Number(bar?.close ?? bar?.last ?? bar?.price);
+            if (Number.isFinite(close) && close > 0) {
+              const half = (close * resolvedSpreadRelative) / 2;
+              quote = {
+                broker,
+                symbol: pair,
+                bid: close - half,
+                ask: close + half,
+                last: close,
+                mid: close,
+                source: 'ea_bars_synthetic',
+                receivedAt: bar?.receivedAt ?? Date.now(),
+                timestamp: bar?.time ?? Date.now(),
+              };
+            }
+          } catch (_error) {
+            // best-effort
           }
         }
       }
@@ -3550,7 +3592,24 @@ class EaBridgeService {
       const confidence = Number(signal.confidence) || 0;
       const strength = Number(signal.strength) || 0;
       const direction = String(signal.direction || '').toUpperCase();
-      const decisionState = signal?.isValid?.decision?.state || null;
+      const layer18 = Array.isArray(signal?.components?.layeredAnalysis?.layers)
+        ? signal.components.layeredAnalysis.layers.find(
+            (layer) =>
+              String(layer?.key || '').toUpperCase() === 'L18' || Number(layer?.layer) === 18
+          )
+        : null;
+      const decisionState =
+        String(layer18?.metrics?.decision?.state || signal?.isValid?.decision?.state || '')
+          .trim()
+          .toUpperCase() || null;
+
+      const allowStrongOverrideExecution =
+        String(process.env.EA_ALLOW_STRONG_OVERRIDE_EXECUTION || '')
+          .trim()
+          .toLowerCase() === 'true' ||
+        String(process.env.EA_ALLOW_STRONG_OVERRIDE_EXECUTION || '')
+          .trim()
+          .toLowerCase() === '1';
 
       const isEnter = decisionState === 'ENTER' && Boolean(signal?.isValid?.isValid);
 
@@ -3586,7 +3645,13 @@ class EaBridgeService {
         });
         layersStatus = computedLayersStatus;
 
-        if (!computedLayersStatus.ok) {
+        const isStrongOverrideExecution =
+          allowStrongOverrideExecution &&
+          computedLayersStatus?.strongOverride?.ok === true &&
+          decisionState === 'WAIT_MONITOR' &&
+          Boolean(signal?.isValid?.isValid);
+
+        if (!computedLayersStatus.ok && !isStrongOverrideExecution) {
           // Keep WAIT_MONITOR visible (for UI/EA logging) but never executable.
           if (decisionState === 'WAIT_MONITOR') {
             cacheSignalEntryContext();
@@ -3733,8 +3798,30 @@ class EaBridgeService {
         intelligentApproved = false;
       }
 
+      const isEnterOverride =
+        allowStrongOverrideExecution &&
+        layersStatus?.strongOverride?.ok === true &&
+        decisionState === 'WAIT_MONITOR' &&
+        Boolean(signal?.isValid?.isValid);
+
       const shouldExecuteNow =
-        tradingEnabled && passesStrengthFloor && isEnter && intelligentApproved;
+        tradingEnabled &&
+        passesStrengthFloor &&
+        (isEnter || isEnterOverride) &&
+        intelligentApproved;
+
+      const decision =
+        adjustedSignal?.isValid?.decision && typeof adjustedSignal.isValid.decision === 'object'
+          ? adjustedSignal.isValid.decision
+          : null;
+      const executionBlockedReasons = Array.isArray(decision?.blockedReasons)
+        ? decision.blockedReasons
+        : null;
+      const executionBlockedReason =
+        (typeof decision?.blockedReason === 'string' && decision.blockedReason) ||
+        (Array.isArray(executionBlockedReasons) && executionBlockedReasons[0]?.code
+          ? String(executionBlockedReasons[0].code)
+          : null);
 
       const baseExecution = {
         shouldExecute: false,
@@ -3746,11 +3833,14 @@ class EaBridgeService {
         newsGuard,
         dataQualityGuard,
         intelligentEvaluation,
+        blockedReason: executionBlockedReason,
+        blockedReasons: executionBlockedReasons,
         gates: {
           tradingEnabled,
           tradingEnableReason: enablement.reason,
           decisionState,
           isEnter,
+          isEnterOverride,
           minConfidence,
           minStrength,
           confidence,
@@ -3759,14 +3849,17 @@ class EaBridgeService {
           intelligentApproved,
           intelligentReasons,
           layersStatus,
+          blockedReason: executionBlockedReason,
         },
       };
 
-      if (decisionState && !isEnter) {
+      if (decisionState && !isEnter && !isEnterOverride) {
         cacheSignalEntryContext();
         return {
           success: true,
-          message: 'Signal is blocked',
+          message: executionBlockedReason
+            ? `Signal is blocked (${executionBlockedReason})`
+            : 'Signal is blocked',
           signal: adjustedSignal,
           snapshotPending,
           shouldExecute: false,

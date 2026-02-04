@@ -162,7 +162,7 @@ function formatErrorResponse(error, isDevelopment = false) {
 /**
  * Centralized error handler middleware
  */
-export default function errorHandler(error, req, res, next) {
+export default function errorHandler(error, req, res, _next) {
   const statusCode = getStatusCode(error);
   const category = getErrorCategory(error);
   const isDevelopment = process.env.NODE_ENV === 'development';

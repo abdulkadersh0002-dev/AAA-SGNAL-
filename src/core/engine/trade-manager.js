@@ -100,6 +100,64 @@ const getLayers18Status = (signal) =>
     signal,
   });
 
+const resolveDecisionState = (signal) => {
+  const layer18 = signal?.components?.layeredAnalysis?.layers
+    ? signal.components.layeredAnalysis.layers.find(
+        (layer) => String(layer?.key || '').toUpperCase() === 'L18' || Number(layer?.layer) === 18
+      )
+    : null;
+  const fromLayer = layer18?.metrics?.decision?.state || null;
+  const fromSignal = signal?.isValid?.decision?.state || signal?.finalDecision?.state || null;
+  const state = String(fromLayer || fromSignal || '')
+    .trim()
+    .toUpperCase();
+  return state || null;
+};
+
+const resolveDecisionScore = (signal) => {
+  const layer18 = signal?.components?.layeredAnalysis?.layers
+    ? signal.components.layeredAnalysis.layers.find(
+        (layer) => String(layer?.key || '').toUpperCase() === 'L18' || Number(layer?.layer) === 18
+      )
+    : null;
+  const fromLayer = layer18?.metrics?.decision?.score ?? layer18?.metrics?.decisionScore;
+  const fromSignal = signal?.isValid?.decision?.score ?? signal?.finalDecision?.score;
+  const score = Number(fromLayer ?? fromSignal);
+  return Number.isFinite(score) ? score : null;
+};
+
+const resolveLiquidityScore = (signal) => {
+  const fromDecision = Number(signal?.components?.layeredDecision?.liquidity?.score);
+  if (Number.isFinite(fromDecision)) {
+    return fromDecision;
+  }
+  const layers = signal?.components?.layeredAnalysis?.layers;
+  if (!Array.isArray(layers)) {
+    return null;
+  }
+  const layer5 = layers.find(
+    (layer) => String(layer?.key || '').toUpperCase() === 'L5' || Number(layer?.layer) === 5
+  );
+  const score = Number(layer5?.metrics?.liquidityQuality?.score ?? layer5?.score);
+  return Number.isFinite(score) ? score : null;
+};
+
+const resolveConfluenceScore = (signal) => {
+  const fromDecision = Number(signal?.components?.layeredDecision?.layers18?.confluenceScore);
+  if (Number.isFinite(fromDecision)) {
+    return fromDecision;
+  }
+  const layers = signal?.components?.layeredAnalysis?.layers;
+  if (!Array.isArray(layers)) {
+    return null;
+  }
+  const layer17 = layers.find(
+    (layer) => String(layer?.key || '').toUpperCase() === 'L17' || Number(layer?.layer) === 17
+  );
+  const score = Number(layer17?.metrics?.confluenceWeighting?.weightedScore ?? layer17?.confidence);
+  return Number.isFinite(score) ? score : null;
+};
+
 class TradeManager {
   constructor(tradingEngine) {
     this.tradingEngine = tradingEngine;
@@ -141,7 +199,11 @@ class TradeManager {
         : 35;
 
     // Require the canonical 18-layer payload to be present/ready before executing.
-    this.realtimeRequireLayers18 = autoTradingConfig.realtimeRequireLayers18 !== false;
+    const realtimeRequireLayers18Env = readEnvBool('AUTO_TRADING_REALTIME_REQUIRE_LAYERS18', null);
+    this.realtimeRequireLayers18 =
+      realtimeRequireLayers18Env === null
+        ? autoTradingConfig.realtimeRequireLayers18 !== false
+        : realtimeRequireLayers18Env;
 
     // Smart-strong execution mode (stricter, more human-like gating)
     const smartStrongEnv =
@@ -250,8 +312,8 @@ class TradeManager {
   evaluateExecutionGate({ broker, signal, source, shouldExecuteHint } = {}) {
     const brokerId = this.normalizeBrokerId(broker);
     const pair = String(signal?.pair || '').trim();
-    const decisionState = signal?.isValid?.decision?.state || null;
-    const decisionScore = Number(signal?.isValid?.decision?.score ?? null);
+    const decisionState = resolveDecisionState(signal);
+    const decisionScore = resolveDecisionScore(signal);
     const confidence = Number(signal?.confidence) || 0;
     const strength = Number(signal?.strength) || 0;
 
@@ -304,8 +366,30 @@ class TradeManager {
       return reject('Trade already open for pair');
     }
 
-    // Safety: never execute watchlist/blocked/non-enter signals.
-    if (decisionState !== 'ENTER' || signal?.isValid?.isValid !== true) {
+    const allowLiquidityOverride = readEnvBool('AUTO_TRADING_LIQUIDITY_OVERRIDE', false) === true;
+    const liquidityMin = Number.isFinite(readEnvNumber('AUTO_TRADING_LIQUIDITY_MIN_SCORE'))
+      ? readEnvNumber('AUTO_TRADING_LIQUIDITY_MIN_SCORE')
+      : 80;
+    const confluenceMin = Number.isFinite(readEnvNumber('AUTO_TRADING_LIQUIDITY_MIN_CONFLUENCE'))
+      ? readEnvNumber('AUTO_TRADING_LIQUIDITY_MIN_CONFLUENCE')
+      : layers18MinConfluence;
+
+    const liquidityScore = resolveLiquidityScore(signal);
+    const confluenceScore = resolveConfluenceScore(signal);
+    const layersStatus = this.realtimeRequireLayers18 ? getLayers18Status(signal) : null;
+
+    const liquidityOverrideOk =
+      allowLiquidityOverride &&
+      decisionState === 'WAIT_MONITOR' &&
+      signal?.isValid?.isValid === true &&
+      layersStatus?.strongOverride?.ok === true &&
+      Number.isFinite(liquidityScore) &&
+      liquidityScore >= liquidityMin &&
+      Number.isFinite(confluenceScore) &&
+      confluenceScore >= confluenceMin;
+
+    // Safety: never execute blocked/non-enter signals unless the strict liquidity override applies.
+    if ((decisionState !== 'ENTER' || signal?.isValid?.isValid !== true) && !liquidityOverrideOk) {
       return reject(`Signal not executable (state=${decisionState || 'unknown'})`);
     }
 
@@ -338,10 +422,10 @@ class TradeManager {
     }
 
     if (this.realtimeRequireLayers18) {
-      const layersStatus = getLayers18Status(signal);
-      if (!layersStatus.ok) {
+      const status = layersStatus || getLayers18Status(signal);
+      if (!status.ok && !liquidityOverrideOk) {
         return reject(`Missing/failed 18-layer readiness (layers=${layersStatus.layersCount})`, {
-          layersStatus,
+          layersStatus: status,
         });
       }
     }
@@ -1003,7 +1087,7 @@ class TradeManager {
               confidence: signal.confidence,
               isValid: signal.isValid?.isValid,
               decisionScore: signal.isValid?.decision?.score,
-              decisionState: signal?.isValid?.decision?.state,
+              decisionState: resolveDecisionState(signal),
               shouldExecute: shouldExecuteHint,
             },
             'Auto-trading signal evaluated'
@@ -1222,7 +1306,7 @@ class TradeManager {
           continue;
         }
 
-        const decisionState = signal?.isValid?.decision?.state || null;
+        const decisionState = resolveDecisionState(signal);
         const decisionScore = Number(signal?.isValid?.decision?.score ?? null);
         const confidence = Number(signal?.confidence) || 0;
         const strength = Number(signal?.strength) || 0;

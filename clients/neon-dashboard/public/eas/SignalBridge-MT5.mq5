@@ -1,5 +1,5 @@
 #property copyright "Neon Trading Stack"
-#property version   "1.04"
+#property version   "1.05"
 #property strict
 
 input string BridgeUrl          = "http://127.0.0.1:4101/api/broker/bridge/mt5";
@@ -23,6 +23,30 @@ string JsonLongOrNull(const long v, const bool allowZero)
    if(allowZero && v < 0)
       return "null";
    return (string)v;
+}
+
+void NormalizeQuotePrices(const string sym, double &bid, double &ask, double &last)
+{
+   if(last <= 0.0 && bid > 0.0 && ask > 0.0)
+      last = (bid + ask) / 2.0;
+   if(last <= 0.0 && bid > 0.0)
+      last = bid;
+   if(last <= 0.0 && ask > 0.0)
+      last = ask;
+   if(last <= 0.0)
+      last = GetLastCloseM1Safe(sym);
+
+   if(bid <= 0.0 && last > 0.0)
+      bid = last;
+   if(ask <= 0.0 && last > 0.0)
+      ask = last;
+
+   if(bid > 0.0 && ask > 0.0 && ask <= bid)
+   {
+      double point = SymbolInfoDouble(sym, SYMBOL_POINT);
+      double minStep = point > 0.0 ? point : MathMax(1e-6, last * 0.00001);
+      ask = bid + minStep;
+   }
 }
 
 string BuildQuoteJson(
@@ -77,17 +101,17 @@ input bool   EnableTimeframeSeeding = true; // periodically seed M15/H1/H4/D1 hi
 input int    TimeframeSeedIntervalSec = 60; // per symbol per timeframe
 input string FeedSymbolsCsv        = ""; // empty = chart symbol + MarketWatch (if enabled)
 input bool   IncludeMarketWatch    = true;
-input int    MaxSymbolsToSend      = 500;
-input int    MaxQuotesPerPost      = 120;
+input int    MaxSymbolsToSend      = 2000;
+input int    MaxQuotesPerPost      = 200;
 input bool   AutoPopulateMarketWatch = true; // tries to "Show All" symbols by selecting them into MarketWatch
-input int    MaxMarketWatchSymbols   = 3000; // safety cap; broker may expose thousands
+input int    MaxMarketWatchSymbols   = 5000; // safety cap; broker may expose thousands
 
 // Register the full MarketWatch symbol universe with the server so it can background-scan
 // far beyond the currently streamed quotes.
 input bool   EnableSymbolUniverseRegistration = true;
-input int    SymbolUniverseRegistrationIntervalSec = 300; // 5m
-input int    MaxSymbolUniverseToRegister = 2000;
-input int    SymbolUniverseChunkSize = 250; // send in chunks to avoid MT5 WebRequest payload limits
+input int    SymbolUniverseRegistrationIntervalSec = 180; // 3m
+input int    MaxSymbolUniverseToRegister = 5000;
+input int    SymbolUniverseChunkSize = 300; // send in chunks to avoid MT5 WebRequest payload limits
 
 // === Smart / Low-Load Improvements ===
 // Keep EA very fast while avoiding freezes and unnecessary network pressure.
@@ -2395,12 +2419,7 @@ bool PostMarketSnapshotForSymbol(string sym, bool force)
    double bid = hasTick ? tick.bid : SymbolInfoDouble(sym, SYMBOL_BID);
    double ask = hasTick ? tick.ask : SymbolInfoDouble(sym, SYMBOL_ASK);
    double last = hasTick ? tick.last : SymbolInfoDouble(sym, SYMBOL_LAST);
-   if(last <= 0.0 && bid > 0.0 && ask > 0.0)
-      last = (bid + ask) / 2.0;
-   if(last <= 0.0 && bid > 0.0)
-      last = bid;
-   if(last <= 0.0 && ask > 0.0)
-      last = ask;
+   NormalizeQuotePrices(sym, bid, ask, last);
 
    double spreadPoints = -1.0;
    if(point > 0.0 && bid > 0.0 && ask > 0.0 && ask > bid)
@@ -2899,6 +2918,7 @@ bool PostMarketQuotes()
          double bid = hasTick ? tick.bid : SymbolInfoDouble(sym, SYMBOL_BID);
          double ask = hasTick ? tick.ask : SymbolInfoDouble(sym, SYMBOL_ASK);
          double last = hasTick ? tick.last : SymbolInfoDouble(sym, SYMBOL_LAST);
+         NormalizeQuotePrices(sym, bid, ask, last);
 
          int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
          double point = SymbolInfoDouble(sym, SYMBOL_POINT);
@@ -2966,6 +2986,7 @@ bool PostMarketQuotes()
                double bid = hasTick ? tick.bid : SymbolInfoDouble(chartSym, SYMBOL_BID);
                double ask = hasTick ? tick.ask : SymbolInfoDouble(chartSym, SYMBOL_ASK);
                double last = hasTick ? tick.last : SymbolInfoDouble(chartSym, SYMBOL_LAST);
+               NormalizeQuotePrices(chartSym, bid, ask, last);
 
                int digits = (int)SymbolInfoInteger(chartSym, SYMBOL_DIGITS);
                double point = SymbolInfoDouble(chartSym, SYMBOL_POINT);
@@ -3046,6 +3067,7 @@ bool PostMarketQuotes()
       double bid = hasTick ? tick.bid : SymbolInfoDouble(sym, SYMBOL_BID);
       double ask = hasTick ? tick.ask : SymbolInfoDouble(sym, SYMBOL_ASK);
       double last = hasTick ? tick.last : SymbolInfoDouble(sym, SYMBOL_LAST);
+      NormalizeQuotePrices(sym, bid, ask, last);
 
       int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
       double point = SymbolInfoDouble(sym, SYMBOL_POINT);
@@ -3097,20 +3119,7 @@ bool PostMarketQuotes()
          double bid = hasTick ? tick.bid : SymbolInfoDouble(chartSymFallback, SYMBOL_BID);
          double ask = hasTick ? tick.ask : SymbolInfoDouble(chartSymFallback, SYMBOL_ASK);
          double last = hasTick ? tick.last : SymbolInfoDouble(chartSymFallback, SYMBOL_LAST);
-         if(last <= 0.0 && bid > 0.0 && ask > 0.0)
-            last = (bid + ask) / 2.0;
-         if(last <= 0.0 && bid > 0.0)
-            last = bid;
-         if(last <= 0.0 && ask > 0.0)
-            last = ask;
-         if(last <= 0.0)
-            last = GetLastCloseM1Safe(chartSymFallback);
-
-         // If bid/ask are missing but last exists, populate them so the backend has a usable eaQuote.
-         if(bid <= 0.0 && last > 0.0)
-            bid = last;
-         if(ask <= 0.0 && last > 0.0)
-            ask = last;
+         NormalizeQuotePrices(chartSymFallback, bid, ask, last);
 
          if(last > 0.0)
          {
