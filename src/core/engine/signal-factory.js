@@ -5,6 +5,7 @@
  */
 
 import logger from '../../infrastructure/services/logging/logger.js';
+import LayerOrchestrator from './layer-orchestrator.js';
 
 class SignalFactory {
   constructor(options = {}) {
@@ -13,6 +14,13 @@ class SignalFactory {
     this.orchestrationCoordinator = options.orchestrationCoordinator;
     this.layeredDecisionEngine = options.layeredDecisionEngine;
     this.eaBridgeService = options.eaBridgeService;
+    this.snapshotManager = options.snapshotManager;
+
+    // Initialize layer orchestrator
+    this.layerOrchestrator = new LayerOrchestrator({
+      logger: this.logger,
+      snapshotManager: this.snapshotManager,
+    });
 
     // Signal generation metrics
     this.metrics = {
@@ -45,19 +53,35 @@ class SignalFactory {
 
       const { broker, symbol, timeframe, source } = validatedRequest;
 
-      // Step 2: Check cache for recent signal (avoid re-computation)
-      const cached = this.getCachedSignal({ broker, symbol, maxAgeMs: 2500 });
-      if (cached) {
-        this.metrics.cached += 1;
-        return {
-          success: true,
-          signal: cached,
-          cached: true,
-          computeTimeMs: Date.now() - startTime,
-        };
+      // Step 2: Get or create snapshot
+      let snapshot = this.snapshotManager ? this.snapshotManager.getSnapshot(broker, symbol) : null;
+
+      // If no snapshot exists, create one
+      if (!snapshot && this.snapshotManager) {
+        snapshot = this.snapshotManager.createSnapshot({
+          broker,
+          symbol,
+          data: {},
+        });
       }
 
-      // Step 3: Generate signal through orchestration coordinator
+      // Step 3: Check cache for recent signal (avoid re-computation)
+      if (snapshot && snapshot.signal && snapshot.signalValid) {
+        const age = Date.now() - snapshot.updatedAt;
+        if (age < 2500) {
+          // Signal is fresh
+          this.metrics.cached += 1;
+          return {
+            success: true,
+            signal: snapshot.signal,
+            cached: true,
+            computeTimeMs: Date.now() - startTime,
+            snapshot,
+          };
+        }
+      }
+
+      // Step 4: Generate signal through orchestration coordinator
       const orchestrationResult = await this.orchestrationCoordinator.generateSignal({
         broker,
         symbol,
@@ -77,7 +101,7 @@ class SignalFactory {
 
       const signal = orchestrationResult.signal;
 
-      // Step 4: Validate signal structure and data quality
+      // Step 5: Validate signal structure and data quality
       const qualityCheck = this.validateSignalQuality(signal);
       if (!qualityCheck.valid) {
         this.metrics.rejected += 1;
@@ -89,11 +113,12 @@ class SignalFactory {
         };
       }
 
-      // Step 5: Apply layered decision engine (20-layer validation)
-      const layeredAnalysis = await this.layeredDecisionEngine.analyze({
-        signal,
+      // Step 6: Process through 20-layer orchestrator
+      const layeredAnalysis = await this.layerOrchestrator.processSignal({
         broker,
         symbol,
+        snapshot,
+        signal,
       });
 
       if (!layeredAnalysis) {
@@ -109,16 +134,28 @@ class SignalFactory {
       signal.layeredAnalysis = layeredAnalysis;
       signal.layers = layeredAnalysis.layers;
 
-      // Step 6: Check Layer 18 readiness (validation gate)
-      const layer18Ready = this.checkLayer18Readiness(layeredAnalysis);
+      // Step 7: Check Layer 18 readiness (from orchestrator)
+      const layer18Ready = layeredAnalysis.layer18Ready;
       signal.layer18Ready = layer18Ready;
 
-      // Step 7: Final validation - is this signal tradeable?
+      // Step 8: Final validation - is this signal tradeable?
       const tradeValid = this.isTradeable(signal, layeredAnalysis);
       signal.tradeValid = tradeValid;
 
-      // Step 8: Cache the result
-      this.cacheSignal({ broker, symbol, signal, ttlMs: 2500 });
+      // Step 9: Update snapshot with complete signal and layer results
+      if (this.snapshotManager) {
+        this.snapshotManager.updateSnapshot({
+          broker,
+          symbol,
+          updates: {
+            signal,
+            layers: layeredAnalysis.layers,
+            layeredAnalysis,
+            signalValid: tradeValid,
+            layer18Ready,
+          },
+        });
+      }
 
       // Update metrics
       if (tradeValid) {
@@ -134,6 +171,7 @@ class SignalFactory {
         cached: false,
         layer18Ready,
         tradeValid,
+        layeredAnalysis,
         computeTimeMs: Date.now() - startTime,
         metrics: {
           generated: this.metrics.generated,
@@ -252,39 +290,12 @@ class SignalFactory {
   }
 
   /**
-   * Check if Layer 18 readiness criteria are met
-   */
-  checkLayer18Readiness(layeredAnalysis) {
-    if (!layeredAnalysis || !layeredAnalysis.layers) {
-      return false;
-    }
-
-    // Layer 18 must exist and be ready
-    const layer18 = layeredAnalysis.layers.find((l) => l.layer === 18);
-    if (!layer18) {
-      return false;
-    }
-
-    // Check readiness flag
-    if (layer18.ready === false) {
-      return false;
-    }
-
-    // Check minimum confluence score (from layer metadata)
-    const confluenceScore = layeredAnalysis.confluenceScore || 0;
-    if (confluenceScore < 60) {
-      return false;
-    }
-
-    return true;
-  }
-
-  /**
    * Determine if signal is tradeable (final gate)
+   * Uses LayerOrchestrator's layer18Ready flag
    */
   isTradeable(signal, layeredAnalysis) {
-    // Must pass layer 18 readiness
-    if (!this.checkLayer18Readiness(layeredAnalysis)) {
+    // Must pass layer 18 readiness from orchestrator
+    if (!layeredAnalysis.layer18Ready) {
       return false;
     }
 
