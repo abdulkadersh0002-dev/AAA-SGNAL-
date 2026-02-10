@@ -1,10 +1,11 @@
 import crypto from 'crypto';
+import { secureRandomInt } from '../../../lib/utils/crypto-utils.js';
 
 const defaultId = () => {
   try {
     return crypto.randomUUID();
   } catch (_error) {
-    return `job_${Date.now()}_${Math.floor(Math.random() * 1e6)}`;
+    return `job_${Date.now()}_${secureRandomInt(1000000)}`;
   }
 };
 

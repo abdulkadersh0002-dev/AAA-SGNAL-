@@ -20,6 +20,7 @@ import IntelligentTradeManager from './intelligent-trade-manager.js';
 import CacheCoordinator from '../cache/cache-coordinator.js';
 import UnifiedSnapshotManager from '../../../core/engine/unified-snapshot-manager.js';
 import SignalFactory from '../../../core/engine/signal-factory.js';
+import { secureRandomString } from '../../../lib/utils/crypto-utils.js';
 
 class EaBridgeService {
   constructor(options = {}) {
@@ -3333,9 +3334,7 @@ class EaBridgeService {
           continue;
         }
         const base = {
-          id: `${broker || 'ea'}:${symbol}:${action.type}:${now}:${Math.random()
-            .toString(36)
-            .slice(2, 8)}`,
+          id: `${broker || 'ea'}:${symbol}:${action.type}:${now}:${secureRandomString(6)}`,
           broker,
           symbol,
           reason: action.reason || null,

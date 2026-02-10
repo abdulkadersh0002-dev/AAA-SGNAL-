@@ -18,6 +18,7 @@ import { orchestrationCoordinator } from './modules/orchestration-coordinator.js
 import { dataQualityGuard } from './modules/data-quality-guard.js';
 import { evaluateLayeredDecision } from './modules/layered-decision-engine.js';
 import { createMarketRules } from './market-rules.js';
+import { secureRandomString } from '../../lib/utils/crypto-utils.js';
 import {
   getPairMetadata,
   getPipSize,
@@ -6849,7 +6850,7 @@ class TradingEngine {
   }
 
   generateTradeId() {
-    return `TRADE_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    return `TRADE_${Date.now()}_${secureRandomString(9)}`;
   }
 
   getPairCorrelationScore(pairA, pairB) {

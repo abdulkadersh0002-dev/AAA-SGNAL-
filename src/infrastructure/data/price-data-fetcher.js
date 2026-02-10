@@ -15,6 +15,7 @@ import {
   getPipSize,
 } from '../../config/pair-catalog.js';
 import { recordDataQuality } from '../services/metrics.js';
+import { secureRandomFloat, secureRandomRange } from '../../lib/utils/crypto-utils.js';
 
 const PROVIDERS = ['twelveData', 'polygon', 'finnhub', 'alphaVantage'];
 
@@ -1877,13 +1878,13 @@ export default class PriceDataFetcher {
     let price = basePrice;
     for (let i = count - 1; i >= 0; i -= 1) {
       const timestamp = now - i * timeframeMs;
-      const drift = (Math.random() - 0.5) * volatility;
+      const drift = (secureRandomFloat() - 0.5) * volatility;
       const open = price;
       price = Math.max(0.0001, price + drift);
       const close = price;
-      const high = Math.max(open, close) + Math.random() * volatility * 0.6;
-      const low = Math.min(open, close) - Math.random() * volatility * 0.6;
-      const volume = Math.random() * 10_000 + 1_000;
+      const high = Math.max(open, close) + secureRandomFloat() * volatility * 0.6;
+      const low = Math.min(open, close) - secureRandomFloat() * volatility * 0.6;
+      const volume = secureRandomRange(1000, 11000);
       series.push({
         time: timestamp,
         timestamp,
@@ -1919,7 +1920,7 @@ export default class PriceDataFetcher {
   generateSyntheticQuote(pair, options = {}) {
     const basePrice = getSyntheticBasePrice(pair) || 1.0;
     const volatility = getSyntheticVolatility(pair) || 0.0025;
-    const mid = basePrice + (Math.random() - 0.5) * volatility;
+    const mid = basePrice + (secureRandomFloat() - 0.5) * volatility;
     const spread = volatility * 0.2;
     const bid = mid - spread / 2;
     const ask = mid + spread / 2;
