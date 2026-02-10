@@ -5,6 +5,20 @@
  */
 
 import logger from '../../../infrastructure/services/logging/logger.js';
+import {
+  calculateRSI,
+  calculateMACD,
+  calculateStochastic,
+  calculateSMA,
+  calculateEMA,
+  determineTrend,
+  calculateADX,
+  calculatePivotPoints,
+  calculateFibonacciLevels,
+  checkSupportResistance,
+  detectMACrossover,
+  calculateATR,
+} from '../../../lib/utils/technical-analysis.js';
 
 class LayerOrchestrator {
   constructor(options = {}) {
@@ -429,24 +443,500 @@ class LayerOrchestrator {
   // Placeholder processors for remaining layers (4-20)
   // In production, these would contain the actual analysis logic
 
-  async processLayer4({ snapshot: _snapshot }) {
-    // Trend Direction - placeholder
-    return { status: 'PASS', score: 75, confidence: 70, reason: 'Trend analysis passed' };
+  async processLayer4({ snapshot, signal }) {
+    // Trend Direction - Multi-timeframe trend analysis
+    try {
+      const bars = snapshot?.bars || {};
+      const direction = signal?.direction?.toLowerCase();
+
+      if (!direction) {
+        return {
+          status: 'FAIL',
+          score: 0,
+          confidence: 0,
+          reason: 'Signal direction not specified',
+        };
+      }
+
+      // Analyze trend across multiple timeframes
+      const timeframes = ['H1', 'H4', 'D1'];
+      const trends = {};
+      let totalStrength = 0;
+      let alignedCount = 0;
+
+      for (const tf of timeframes) {
+        const tfBars = bars[tf];
+        if (!tfBars || !Array.isArray(tfBars) || tfBars.length < 50) {
+          continue;
+        }
+
+        const closes = tfBars.map((b) => b.close);
+        const trendInfo = determineTrend(closes, 20, 50);
+
+        trends[tf] = trendInfo;
+        totalStrength += trendInfo.strength;
+
+        // Check if trend aligns with signal direction
+        const trendDirection = trendInfo.direction.toLowerCase();
+        if (
+          (direction === 'buy' && trendDirection === 'bullish') ||
+          (direction === 'sell' && trendDirection === 'bearish')
+        ) {
+          alignedCount++;
+        }
+      }
+
+      const analyzedCount = Object.keys(trends).length;
+      if (analyzedCount === 0) {
+        return {
+          status: 'FAIL',
+          score: 0,
+          confidence: 0,
+          reason: 'Insufficient bar data for trend analysis',
+          metrics: { trends },
+        };
+      }
+
+      // Calculate scores
+      const alignmentRatio = alignedCount / analyzedCount;
+      const avgStrength = totalStrength / analyzedCount;
+      const score = Math.round(alignmentRatio * 100);
+      const confidence = Math.min(95, Math.round(avgStrength * 0.8 + alignmentRatio * 20));
+
+      // Determine pass/fail
+      const minAlignment = 0.66; // At least 2 out of 3 timeframes
+      const status = alignmentRatio >= minAlignment ? 'PASS' : 'FAIL';
+
+      const reason =
+        status === 'PASS'
+          ? `${alignedCount}/${analyzedCount} timeframes aligned with ${direction.toUpperCase()}`
+          : `Only ${alignedCount}/${analyzedCount} timeframes aligned (need ${Math.ceil(analyzedCount * minAlignment)})`;
+
+      return {
+        status,
+        score,
+        confidence,
+        reason,
+        metrics: {
+          trends,
+          alignedCount,
+          totalTimeframes: analyzedCount,
+          alignmentRatio,
+          avgStrength: Math.round(avgStrength),
+        },
+      };
+    } catch (error) {
+      return {
+        status: 'ERROR',
+        score: 0,
+        confidence: 0,
+        reason: `Trend analysis error: ${error.message}`,
+      };
+    }
   }
 
-  async processLayer5({ snapshot: _snapshot }) {
-    // Support/Resistance - placeholder
-    return { status: 'PASS', score: 70, confidence: 65, reason: 'S/R levels clear' };
+  async processLayer5({ snapshot, signal }) {
+    // Support/Resistance - Key level detection
+    try {
+      const bars = snapshot?.bars || {};
+      const quote = snapshot?.quote;
+      const currentPrice = quote?.bid || signal?.entry;
+
+      if (!currentPrice) {
+        return {
+          status: 'FAIL',
+          score: 0,
+          confidence: 0,
+          reason: 'Current price not available',
+        };
+      }
+
+      const direction = signal?.direction?.toLowerCase();
+
+      // Get daily bars for pivot calculation
+      const dailyBars = bars.D1;
+      if (!dailyBars || dailyBars.length < 2) {
+        return {
+          status: 'PASS',
+          score: 60,
+          confidence: 40,
+          reason: 'Insufficient data for S/R analysis (passing with low confidence)',
+          metrics: { method: 'insufficient_data' },
+        };
+      }
+
+      // Calculate pivot points from previous day
+      const prevBar = dailyBars[dailyBars.length - 2];
+      const pivots = calculatePivotPoints(prevBar.high, prevBar.low, prevBar.close);
+
+      // Create array of S/R levels
+      const levels = [
+        { value: pivots.pp, type: 'PIVOT' },
+        { value: pivots.r1, type: 'RESISTANCE' },
+        { value: pivots.r2, type: 'RESISTANCE' },
+        { value: pivots.s1, type: 'SUPPORT' },
+        { value: pivots.s2, type: 'SUPPORT' },
+      ];
+
+      // Check if price is near a key level
+      const srCheck = checkSupportResistance(currentPrice, levels, 0.002);
+
+      let score = 70;
+      let confidence = 65;
+      let status = 'PASS';
+      let reason = 'Price not at major S/R level';
+
+      if (srCheck && srCheck.atLevel) {
+        // Price is at a key level
+        const levelType = srCheck.type.toLowerCase();
+
+        if (
+          (direction === 'buy' && levelType === 'support') ||
+          (direction === 'sell' && levelType === 'resistance')
+        ) {
+          // Good - bouncing off support/resistance in signal direction
+          score = 90;
+          confidence = 85;
+          status = 'PASS';
+          reason = `At ${levelType} level ${srCheck.level.toFixed(5)} (${srCheck.distancePips.toFixed(1)} pips)`;
+        } else if (
+          (direction === 'buy' && levelType === 'resistance') ||
+          (direction === 'sell' && levelType === 'support')
+        ) {
+          // Bad - signal against key level
+          score = 30;
+          confidence = 70;
+          status = 'FAIL';
+          reason = `Signal against ${levelType} at ${srCheck.level.toFixed(5)}`;
+        }
+      } else if (srCheck) {
+        // Not at level, check distance
+        const distancePips = srCheck.distancePips;
+
+        if (distancePips < 10) {
+          // Very close to level
+          score = 75;
+          confidence = 70;
+          reason = `Near ${srCheck.type} at ${srCheck.level.toFixed(5)} (${distancePips.toFixed(1)} pips away)`;
+        } else {
+          // Clear of major levels
+          score = 80;
+          confidence = 75;
+          reason = `Clear of major levels (nearest: ${srCheck.type} at ${distancePips.toFixed(1)} pips)`;
+        }
+      }
+
+      return {
+        status,
+        score,
+        confidence,
+        reason,
+        metrics: {
+          currentPrice,
+          pivots,
+          nearestLevel: srCheck
+            ? {
+                value: srCheck.level,
+                type: srCheck.type,
+                distancePips: srCheck.distancePips.toFixed(1),
+                atLevel: srCheck.atLevel,
+              }
+            : null,
+        },
+      };
+    } catch (error) {
+      return {
+        status: 'ERROR',
+        score: 0,
+        confidence: 0,
+        reason: `S/R analysis error: ${error.message}`,
+      };
+    }
   }
 
-  async processLayer6({ snapshot: _snapshot }) {
-    // Technical Indicators - placeholder
-    return { status: 'PASS', score: 80, confidence: 75, reason: 'Indicators aligned' };
+  async processLayer6({ snapshot, signal }) {
+    // Technical Indicators - RSI, MACD, Stochastic
+    try {
+      const bars = snapshot?.bars || {};
+      const direction = signal?.direction?.toLowerCase();
+
+      if (!direction) {
+        return {
+          status: 'FAIL',
+          score: 0,
+          confidence: 0,
+          reason: 'Signal direction not specified',
+        };
+      }
+
+      // Use H1 timeframe for indicators
+      const h1Bars = bars.H1;
+      if (!h1Bars || h1Bars.length < 30) {
+        return {
+          status: 'PASS',
+          score: 60,
+          confidence: 40,
+          reason: 'Insufficient H1 data (passing with low confidence)',
+        };
+      }
+
+      const closes = h1Bars.map((b) => b.close);
+      const highs = h1Bars.map((b) => b.high);
+      const lows = h1Bars.map((b) => b.low);
+
+      // Calculate indicators
+      const rsi = calculateRSI(closes, 14);
+      const macd = calculateMACD(closes, 12, 26, 9);
+      const stoch = calculateStochastic(highs, lows, closes, 14, 3, 3);
+
+      const indicators = { rsi, macd, stoch };
+      let aligned = 0;
+      let total = 0;
+      const signals = {};
+
+      // RSI analysis
+      if (rsi !== null) {
+        total++;
+        signals.rsi = {
+          value: rsi.toFixed(2),
+          signal: 'NEUTRAL',
+          aligned: false,
+        };
+
+        if (direction === 'buy' && rsi < 50 && rsi > 30) {
+          // RSI not overbought, good for buy
+          aligned++;
+          signals.rsi.signal = 'BULLISH';
+          signals.rsi.aligned = true;
+        } else if (direction === 'sell' && rsi > 50 && rsi < 70) {
+          // RSI not oversold, good for sell
+          aligned++;
+          signals.rsi.signal = 'BEARISH';
+          signals.rsi.aligned = true;
+        } else if ((direction === 'buy' && rsi > 70) || (direction === 'sell' && rsi < 30)) {
+          // Overbought/oversold against signal
+          signals.rsi.signal = direction === 'buy' ? 'OVERBOUGHT' : 'OVERSOLD';
+          signals.rsi.aligned = false;
+        } else {
+          signals.rsi.aligned = true; // Neutral is acceptable
+          aligned += 0.5;
+        }
+      }
+
+      // MACD analysis
+      if (macd !== null) {
+        total++;
+        const macdSignal = macd.histogram > 0 ? 'BULLISH' : 'BEARISH';
+        signals.macd = {
+          value: macd.histogram.toFixed(5),
+          signal: macdSignal,
+          aligned: false,
+        };
+
+        if (
+          (direction === 'buy' && macd.histogram > 0) ||
+          (direction === 'sell' && macd.histogram < 0)
+        ) {
+          aligned++;
+          signals.macd.aligned = true;
+        }
+      }
+
+      // Stochastic analysis
+      if (stoch !== null) {
+        total++;
+        const stochSignal = stoch.k > 50 ? 'BULLISH' : 'BEARISH';
+        signals.stoch = {
+          k: stoch.k.toFixed(2),
+          d: stoch.d.toFixed(2),
+          signal: stochSignal,
+          aligned: false,
+        };
+
+        if ((direction === 'buy' && stoch.k < 70) || (direction === 'sell' && stoch.k > 30)) {
+          // Not extreme levels
+          aligned++;
+          signals.stoch.aligned = true;
+        }
+      }
+
+      // Calculate consensus
+      const consensus = total > 0 ? aligned / total : 0;
+      const score = Math.round(consensus * 100);
+      const confidence = Math.min(90, Math.round(50 + consensus * 40));
+
+      // Minimum 60% consensus required
+      const status = consensus >= 0.6 ? 'PASS' : 'FAIL';
+
+      const reason =
+        status === 'PASS'
+          ? `${Math.round(aligned)}/${total} indicators aligned with ${direction.toUpperCase()}`
+          : `Only ${Math.round(aligned)}/${total} indicators aligned (need 60%+ consensus)`;
+
+      return {
+        status,
+        score,
+        confidence,
+        reason,
+        metrics: {
+          indicators,
+          signals,
+          consensus: Math.round(consensus * 100),
+          aligned: Math.round(aligned * 10) / 10,
+          total,
+        },
+      };
+    } catch (error) {
+      return {
+        status: 'ERROR',
+        score: 0,
+        confidence: 0,
+        reason: `Indicator analysis error: ${error.message}`,
+      };
+    }
   }
 
-  async processLayer7({ snapshot: _snapshot }) {
-    // Moving Averages - placeholder
-    return { status: 'PASS', score: 75, confidence: 70, reason: 'MA alignment confirmed' };
+  async processLayer7({ snapshot, signal }) {
+    // Moving Averages - MA crossovers and alignment
+    try {
+      const bars = snapshot?.bars || {};
+      const direction = signal?.direction?.toLowerCase();
+      const quote = snapshot?.quote;
+      const currentPrice = quote?.bid || signal?.entry;
+
+      if (!direction || !currentPrice) {
+        return {
+          status: 'FAIL',
+          score: 0,
+          confidence: 0,
+          reason: 'Missing signal direction or price',
+        };
+      }
+
+      // Use H1 timeframe
+      const h1Bars = bars.H1;
+      if (!h1Bars || h1Bars.length < 200) {
+        return {
+          status: 'PASS',
+          score: 60,
+          confidence: 40,
+          reason: 'Insufficient H1 data for MA analysis (passing with low confidence)',
+        };
+      }
+
+      const closes = h1Bars.map((b) => b.close);
+
+      // Calculate key moving averages
+      const sma20 = calculateSMA(closes, 20);
+      const sma50 = calculateSMA(closes, 50);
+      const sma200 = calculateSMA(closes, 200);
+      const ema9 = calculateEMA(closes, 9);
+      const ema21 = calculateEMA(closes, 21);
+
+      // Check for crossovers
+      const crossover50_200 = detectMACrossover(closes, 50, 200, 10);
+
+      const mas = { sma20, sma50, sma200, ema9, ema21 };
+      let aligned = 0;
+      let total = 0;
+
+      // Check price position vs MAs
+      const priceVsMAs = {};
+
+      if (sma20 !== null) {
+        total++;
+        const above = currentPrice > sma20;
+        priceVsMAs.sma20 = { value: sma20, above };
+        if ((direction === 'buy' && above) || (direction === 'sell' && !above)) {
+          aligned++;
+        }
+      }
+
+      if (sma50 !== null) {
+        total++;
+        const above = currentPrice > sma50;
+        priceVsMAs.sma50 = { value: sma50, above };
+        if ((direction === 'buy' && above) || (direction === 'sell' && !above)) {
+          aligned++;
+        }
+      }
+
+      if (ema21 !== null) {
+        total++;
+        const above = currentPrice > ema21;
+        priceVsMAs.ema21 = { value: ema21, above };
+        if ((direction === 'buy' && above) || (direction === 'sell' && !above)) {
+          aligned++;
+        }
+      }
+
+      // Check MA alignment
+      let maAlignment = 'NEUTRAL';
+      if (sma20 !== null && sma50 !== null && sma200 !== null) {
+        if (sma20 > sma50 && sma50 > sma200) {
+          maAlignment = 'BULLISH';
+        } else if (sma20 < sma50 && sma50 < sma200) {
+          maAlignment = 'BEARISH';
+        }
+      }
+
+      // Bonus for MA alignment
+      if (
+        (direction === 'buy' && maAlignment === 'BULLISH') ||
+        (direction === 'sell' && maAlignment === 'BEARISH')
+      ) {
+        aligned += 0.5;
+        total += 0.5;
+      }
+
+      // Bonus/penalty for golden/death cross
+      if (crossover50_200.crossover) {
+        if (
+          (direction === 'buy' && crossover50_200.type === 'GOLDEN_CROSS') ||
+          (direction === 'sell' && crossover50_200.type === 'DEATH_CROSS')
+        ) {
+          aligned += 1;
+          total += 1;
+        } else {
+          total += 1; // Count but don't add to aligned
+        }
+      }
+
+      const alignmentRatio = total > 0 ? aligned / total : 0;
+      const score = Math.round(alignmentRatio * 100);
+      const confidence = Math.min(90, Math.round(40 + alignmentRatio * 50));
+
+      const status = alignmentRatio >= 0.65 ? 'PASS' : 'FAIL';
+
+      const reason =
+        status === 'PASS'
+          ? `${Math.round(aligned * 10) / 10}/${total} MA criteria aligned with ${direction.toUpperCase()}`
+          : `Only ${Math.round(aligned * 10) / 10}/${total} MA aligned (need 65%+)`;
+
+      return {
+        status,
+        score,
+        confidence,
+        reason,
+        metrics: {
+          mas,
+          currentPrice,
+          priceVsMAs,
+          maAlignment,
+          crossover: crossover50_200.crossover ? crossover50_200.type : 'NONE',
+          alignmentRatio: Math.round(alignmentRatio * 100),
+          aligned: Math.round(aligned * 10) / 10,
+          total,
+        },
+      };
+    } catch (error) {
+      return {
+        status: 'ERROR',
+        score: 0,
+        confidence: 0,
+        reason: `MA analysis error: ${error.message}`,
+      };
+    }
   }
 
   async processLayer8({ snapshot: _snapshot }) {
@@ -464,9 +954,116 @@ class LayerOrchestrator {
     return { status: 'PASS', score: 75, confidence: 70, reason: 'Pattern detected' };
   }
 
-  async processLayer11({ snapshot: _snapshot }) {
-    // Multi-Timeframe Confluence - placeholder
-    return { status: 'PASS', score: 85, confidence: 80, reason: 'Timeframes aligned' };
+  async processLayer11({ snapshot, signal }) {
+    // Multi-Timeframe Confluence - Ensure timeframes agree
+    try {
+      const bars = snapshot?.bars || {};
+      const direction = signal?.direction?.toLowerCase();
+
+      if (!direction) {
+        return {
+          status: 'FAIL',
+          score: 0,
+          confidence: 0,
+          reason: 'Signal direction not specified',
+        };
+      }
+
+      // Analyze trend across all timeframes with weights
+      const timeframes = [
+        { name: 'M15', weight: 1 },
+        { name: 'H1', weight: 2 },
+        { name: 'H4', weight: 3 },
+        { name: 'D1', weight: 4 },
+      ];
+
+      let totalWeight = 0;
+      let alignedWeight = 0;
+      const tfAnalysis = {};
+
+      for (const tf of timeframes) {
+        const tfBars = bars[tf.name];
+
+        if (!tfBars || !Array.isArray(tfBars) || tfBars.length < 50) {
+          tfAnalysis[tf.name] = {
+            available: false,
+            trend: null,
+            aligned: false,
+          };
+          continue;
+        }
+
+        const closes = tfBars.map((b) => b.close);
+        const trendInfo = determineTrend(closes, 20, 50);
+
+        const trendDirection = trendInfo.direction.toLowerCase();
+        const aligned =
+          (direction === 'buy' && trendDirection === 'bullish') ||
+          (direction === 'sell' && trendDirection === 'bearish') ||
+          trendDirection === 'neutral';
+
+        tfAnalysis[tf.name] = {
+          available: true,
+          trend: trendInfo.direction,
+          strength: Math.round(trendInfo.strength),
+          aligned,
+          weight: tf.weight,
+        };
+
+        totalWeight += tf.weight;
+        if (aligned) {
+          alignedWeight += tf.weight;
+        }
+      }
+
+      if (totalWeight === 0) {
+        return {
+          status: 'FAIL',
+          score: 0,
+          confidence: 0,
+          reason: 'No timeframe data available',
+          metrics: { tfAnalysis },
+        };
+      }
+
+      // Calculate weighted confluence
+      const confluenceScore = Math.round((alignedWeight / totalWeight) * 100);
+      const confidence = Math.min(95, Math.round(confluenceScore * 0.9));
+
+      // Require 75% weighted confluence (higher timeframes more important)
+      const status = confluenceScore >= 75 ? 'PASS' : 'FAIL';
+
+      // Count available timeframes
+      const availableCount = Object.values(tfAnalysis).filter((tf) => tf.available).length;
+      const alignedCount = Object.values(tfAnalysis).filter((tf) => tf.aligned).length;
+
+      const reason =
+        status === 'PASS'
+          ? `${confluenceScore}% weighted confluence (${alignedCount}/${availableCount} TFs aligned)`
+          : `Only ${confluenceScore}% confluence (need 75%+, ${alignedCount}/${availableCount} aligned)`;
+
+      return {
+        status,
+        score: confluenceScore,
+        confidence,
+        reason,
+        metrics: {
+          tfAnalysis,
+          confluenceScore,
+          weightedAlignment: alignedWeight,
+          totalWeight,
+          availableTimeframes: availableCount,
+          alignedTimeframes: alignedCount,
+        },
+      };
+    } catch (error) {
+      return {
+        status: 'ERROR',
+        score: 0,
+        confidence: 0,
+        reason: `MTF confluence error: ${error.message}`,
+      };
+    }
   }
 
   async processLayer12({ snapshot }) {
@@ -523,9 +1120,110 @@ class LayerOrchestrator {
     };
   }
 
-  async processLayer17({ snapshot: _snapshot, signal: _signal }) {
-    // Position Sizing - placeholder
-    return { status: 'PASS', score: 85, confidence: 80, reason: 'Position size calculated' };
+  async processLayer17({ snapshot, signal }) {
+    // Position Sizing - Calculate optimal position size
+    try {
+      const entry = signal?.entry;
+      const sl = signal?.sl;
+      const pair = signal?.pair || snapshot?.symbol;
+
+      if (!entry || !sl || !pair) {
+        return {
+          status: 'FAIL',
+          score: 0,
+          confidence: 0,
+          reason: 'Missing entry, SL, or pair information',
+        };
+      }
+
+      // Get account balance (default to 10,000 if not in snapshot)
+      const accountBalance = snapshot?.accountBalance || 10000;
+
+      // Calculate stop loss distance in pips
+      const slDistance = Math.abs(entry - sl);
+      const slPips = slDistance * 10000; // Approximate for forex
+
+      // Risk percentage (1-2% of balance)
+      const riskPercent = 1.5; // 1.5% risk per trade
+      const riskAmount = accountBalance * (riskPercent / 100);
+
+      // Calculate position size
+      // Formula: Position Size = Risk Amount / (SL in Pips * Pip Value)
+      // For forex majors, pip value = 10 for standard lot, 1 for mini lot
+
+      const pipValue = 10; // Standard lot pip value for majors
+      let positionSize = riskAmount / (slPips * pipValue);
+
+      // Apply constraints
+      const minLotSize = 0.01;
+      const maxLotSize = 5.0; // Safety limit
+      positionSize = Math.max(minLotSize, Math.min(maxLotSize, positionSize));
+
+      // Round to 2 decimals
+      positionSize = Math.round(positionSize * 100) / 100;
+
+      // Calculate actual risk with this position size
+      const actualRisk = positionSize * slPips * pipValue;
+      const actualRiskPercent = (actualRisk / accountBalance) * 100;
+
+      // Validate position size is reasonable
+      let status = 'PASS';
+      let score = 85;
+      let confidence = 80;
+      let reason = `Position: ${positionSize} lots, Risk: $${actualRisk.toFixed(2)} (${actualRiskPercent.toFixed(2)}%)`;
+
+      if (positionSize < minLotSize) {
+        status = 'FAIL';
+        score = 0;
+        confidence = 0;
+        reason = `Position size ${positionSize} below minimum ${minLotSize}`;
+      } else if (positionSize >= maxLotSize) {
+        status = 'FAIL';
+        score = 30;
+        confidence = 70;
+        reason = `Position size ${positionSize} at maximum limit ${maxLotSize} (risk too high)`;
+      } else if (actualRiskPercent > 3) {
+        status = 'FAIL';
+        score = 40;
+        confidence = 75;
+        reason = `Risk ${actualRiskPercent.toFixed(2)}% exceeds 3% limit`;
+      } else if (slPips < 10) {
+        status = 'FAIL';
+        score = 35;
+        confidence = 70;
+        reason = `Stop loss too tight (${slPips.toFixed(1)} pips < 10 pips minimum)`;
+      } else if (slPips > 200) {
+        status = 'FAIL';
+        score = 40;
+        confidence = 70;
+        reason = `Stop loss too wide (${slPips.toFixed(1)} pips > 200 pips maximum)`;
+      }
+
+      return {
+        status,
+        score,
+        confidence,
+        reason,
+        metrics: {
+          accountBalance,
+          riskPercent,
+          riskAmount: actualRisk.toFixed(2),
+          actualRiskPercent: actualRiskPercent.toFixed(2),
+          positionSize,
+          slPips: slPips.toFixed(1),
+          entry,
+          sl,
+          pair,
+        },
+      };
+    } catch (error) {
+      return {
+        status: 'ERROR',
+        score: 0,
+        confidence: 0,
+        reason: `Position sizing error: ${error.message}`,
+      };
+    }
   }
 
   async processLayer18({ previousLayers }) {
