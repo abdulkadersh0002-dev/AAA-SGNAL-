@@ -3,12 +3,10 @@
  * Tests for the 6 reimplemented layers with production logic
  */
 
-import { describe, it, beforeEach, expect } from 'vitest';
+import { describe, it, beforeEach } from 'node:test';
+import assert from 'node:assert/strict';
 import LayerOrchestrator from '../../../src/core/engine/layer-orchestrator.js';
-import {
-  createBullishSnapshot,
-  createBearishSnapshot,
-} from '../../fixtures/layer-test-data.js';
+import { createBullishSnapshot, createBearishSnapshot } from '../../fixtures/layer-test-data.js';
 
 describe('LayerOrchestrator - Reimplemented Layers', () => {
   let orchestrator;
@@ -37,13 +35,16 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
         signal: bullishSnapshot.signal,
       });
 
-      expect(result.status).toBe('PASS');
-      expect(result.score).toBeGreaterThanOrEqual(75);
-      expect(result.confidence).toBeGreaterThanOrEqual(70);
-      expect(result.reason).toContain('aligned');
-      expect(result.metrics).toBeDefined();
-      expect(result.metrics.alignedCount).toBeGreaterThanOrEqual(2);
-      expect(result.metrics.totalTimeframes).toBe(3);
+      assert.equal(result.status, 'PASS');
+      assert.ok(result.score >= 75, `result.score should be >= 75`);
+      assert.ok(result.confidence >= 70, `result.confidence should be >= 70`);
+      assert.ok(result.reason.includes('aligned'), `result.reason should contain 'aligned'`);
+      assert.ok(
+        result.metrics !== undefined && result.metrics !== null,
+        `result.metrics should be defined`
+      );
+      assert.ok(result.metrics.alignedCount >= 2, `result.metrics.alignedCount should be >= 2`);
+      assert.equal(result.metrics.totalTimeframes, 3);
     });
 
     it('passes with bearish trend across all timeframes', async () => {
@@ -54,11 +55,11 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
         signal: bearishSnapshot.signal,
       });
 
-      expect(result.status).toBe('PASS');
-      expect(result.score).toBeGreaterThanOrEqual(75);
-      expect(result.confidence).toBeGreaterThanOrEqual(70);
-      expect(result.reason).toContain('aligned');
-      expect(result.metrics.alignedCount).toBeGreaterThanOrEqual(2);
+      assert.equal(result.status, 'PASS');
+      assert.ok(result.score >= 75, `result.score should be >= 75`);
+      assert.ok(result.confidence >= 70, `result.confidence should be >= 70`);
+      assert.ok(result.reason.includes('aligned'), `result.reason should contain 'aligned'`);
+      assert.ok(result.metrics.alignedCount >= 2, `result.metrics.alignedCount should be >= 2`);
     });
 
     it('handles partial alignment (2/3 timeframes)', async () => {
@@ -75,9 +76,9 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
       });
 
       // Should still pass with lower score
-      expect(result.status).toBe('PASS');
-      expect(result.score).toBeGreaterThanOrEqual(60);
-      expect(result.metrics.alignedCount).toBe(2);
+      assert.equal(result.status, 'PASS');
+      assert.ok(result.score >= 60, `result.score should be >= 60`);
+      assert.equal(result.metrics.alignedCount, 2);
     });
 
     it('handles missing bar data gracefully', async () => {
@@ -93,9 +94,15 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
       });
 
       // Should handle gracefully
-      expect(result).toBeDefined();
-      expect(result.status).toBeDefined();
-      expect(result.metrics).toBeDefined();
+      assert.ok(result !== undefined && result !== null, `result should be defined`);
+      assert.ok(
+        result.status !== undefined && result.status !== null,
+        `result.status should be defined`
+      );
+      assert.ok(
+        result.metrics !== undefined && result.metrics !== null,
+        `result.metrics should be defined`
+      );
     });
 
     it('calculates alignment ratio correctly', async () => {
@@ -106,9 +113,12 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
         signal: bullishSnapshot.signal,
       });
 
-      expect(result.metrics.alignmentRatio).toBeDefined();
-      expect(result.metrics.alignmentRatio).toBeGreaterThanOrEqual(0);
-      expect(result.metrics.alignmentRatio).toBeLessThanOrEqual(1);
+      assert.ok(
+        result.metrics.alignmentRatio !== undefined && result.metrics.alignmentRatio !== null,
+        `result.metrics.alignmentRatio should be defined`
+      );
+      assert.ok(result.metrics.alignmentRatio >= 0, `result.metrics.alignmentRatio should be >= 0`);
+      assert.ok(result.metrics.alignmentRatio <= 1, `result.metrics.alignmentRatio should be <= 1`);
     });
   });
 
@@ -125,11 +135,20 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
         signal: bullishSnapshot.signal,
       });
 
-      expect(result.status).toBe('PASS');
-      expect(result.score).toBeGreaterThanOrEqual(75);
-      expect(result.metrics).toBeDefined();
-      expect(result.metrics.pivots).toBeDefined();
-      expect(result.metrics.currentPrice).toBeDefined();
+      assert.equal(result.status, 'PASS');
+      assert.ok(result.score >= 75, `result.score should be >= 75`);
+      assert.ok(
+        result.metrics !== undefined && result.metrics !== null,
+        `result.metrics should be defined`
+      );
+      assert.ok(
+        result.metrics.pivots !== undefined && result.metrics.pivots !== null,
+        `result.metrics.pivots should be defined`
+      );
+      assert.ok(
+        result.metrics.currentPrice !== undefined && result.metrics.currentPrice !== null,
+        `result.metrics.currentPrice should be defined`
+      );
     });
 
     it('gives high score at resistance level with SELL signal', async () => {
@@ -140,9 +159,12 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
         signal: bearishSnapshot.signal,
       });
 
-      expect(result.status).toBe('PASS');
-      expect(result.score).toBeGreaterThanOrEqual(75);
-      expect(result.metrics.pivots).toBeDefined();
+      assert.equal(result.status, 'PASS');
+      assert.ok(result.score >= 75, `result.score should be >= 75`);
+      assert.ok(
+        result.metrics.pivots !== undefined && result.metrics.pivots !== null,
+        `result.metrics.pivots should be defined`
+      );
     });
 
     it('validates pivot point calculations', async () => {
@@ -154,12 +176,12 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
       });
 
       const { pivots } = result.metrics;
-      expect(pivots).toBeDefined();
-      expect(pivots.pp).toBeDefined();
-      expect(pivots.r1).toBeGreaterThan(pivots.pp);
-      expect(pivots.r2).toBeGreaterThan(pivots.r1);
-      expect(pivots.s1).toBeLessThan(pivots.pp);
-      expect(pivots.s2).toBeLessThan(pivots.s1);
+      assert.ok(pivots !== undefined && pivots !== null, `pivots should be defined`);
+      assert.ok(pivots.pp !== undefined && pivots.pp !== null, `pivots.pp should be defined`);
+      assert.ok(pivots.r1 > pivots.pp, `pivots.r1 should be > pivots.pp`);
+      assert.ok(pivots.r2 > pivots.r1, `pivots.r2 should be > pivots.r1`);
+      assert.ok(pivots.s1 < pivots.pp, `pivots.s1 should be < pivots.pp`);
+      assert.ok(pivots.s2 < pivots.s1, `pivots.s2 should be < pivots.s1`);
     });
 
     it('calculates distance in pips correctly', async () => {
@@ -171,8 +193,12 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
       });
 
       if (result.metrics.nearestLevel) {
-        expect(result.metrics.nearestLevel.distancePips).toBeDefined();
-        expect(typeof result.metrics.nearestLevel.distancePips).toBe('number');
+        assert.ok(
+          result.metrics.nearestLevel.distancePips !== undefined &&
+            result.metrics.nearestLevel.distancePips !== null,
+          `result.metrics.nearestLevel.distancePips should be defined`
+        );
+        assert.equal(typeof result.metrics.nearestLevel.distancePips, 'number');
       }
     });
 
@@ -185,7 +211,10 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
       });
 
       if (result.metrics.nearestLevel && result.metrics.nearestLevel.type) {
-        expect(['SUPPORT', 'RESISTANCE']).toContain(result.metrics.nearestLevel.type);
+        assert.ok(
+          ['SUPPORT', 'RESISTANCE'].includes(result.metrics.nearestLevel.type),
+          `['SUPPORT', 'RESISTANCE'] should contain result.metrics.nearestLevel.type`
+        );
       }
     });
   });
@@ -203,10 +232,13 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
         signal: bullishSnapshot.signal,
       });
 
-      expect(result.status).toBe('PASS');
-      expect(result.score).toBeGreaterThanOrEqual(60);
-      expect(result.metrics.signals).toBeDefined();
-      expect(result.metrics.consensus).toBeGreaterThanOrEqual(60);
+      assert.equal(result.status, 'PASS');
+      assert.ok(result.score >= 60, `result.score should be >= 60`);
+      assert.ok(
+        result.metrics.signals !== undefined && result.metrics.signals !== null,
+        `result.metrics.signals should be defined`
+      );
+      assert.ok(result.metrics.consensus >= 60, `result.metrics.consensus should be >= 60`);
     });
 
     it('validates RSI calculation and signal', async () => {
@@ -217,10 +249,23 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
         signal: bullishSnapshot.signal,
       });
 
-      expect(result.metrics.signals.rsi).toBeDefined();
-      expect(result.metrics.signals.rsi.value).toBeDefined();
-      expect(result.metrics.signals.rsi.signal).toBeDefined();
-      expect(['BULLISH', 'BEARISH', 'NEUTRAL']).toContain(result.metrics.signals.rsi.signal);
+      assert.ok(
+        result.metrics.signals.rsi !== undefined && result.metrics.signals.rsi !== null,
+        `result.metrics.signals.rsi should be defined`
+      );
+      assert.ok(
+        result.metrics.signals.rsi.value !== undefined && result.metrics.signals.rsi.value !== null,
+        `result.metrics.signals.rsi.value should be defined`
+      );
+      assert.ok(
+        result.metrics.signals.rsi.signal !== undefined &&
+          result.metrics.signals.rsi.signal !== null,
+        `result.metrics.signals.rsi.signal should be defined`
+      );
+      assert.ok(
+        ['BULLISH', 'BEARISH', 'NEUTRAL'].includes(result.metrics.signals.rsi.signal),
+        `['BULLISH', 'BEARISH', 'NEUTRAL'] should contain result.metrics.signals.rsi.signal`
+      );
     });
 
     it('validates MACD calculation and signal', async () => {
@@ -231,10 +276,24 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
         signal: bullishSnapshot.signal,
       });
 
-      expect(result.metrics.signals.macd).toBeDefined();
-      expect(result.metrics.signals.macd.value).toBeDefined();
-      expect(result.metrics.signals.macd.signal).toBeDefined();
-      expect(['BULLISH', 'BEARISH', 'NEUTRAL']).toContain(result.metrics.signals.macd.signal);
+      assert.ok(
+        result.metrics.signals.macd !== undefined && result.metrics.signals.macd !== null,
+        `result.metrics.signals.macd should be defined`
+      );
+      assert.ok(
+        result.metrics.signals.macd.value !== undefined &&
+          result.metrics.signals.macd.value !== null,
+        `result.metrics.signals.macd.value should be defined`
+      );
+      assert.ok(
+        result.metrics.signals.macd.signal !== undefined &&
+          result.metrics.signals.macd.signal !== null,
+        `result.metrics.signals.macd.signal should be defined`
+      );
+      assert.ok(
+        ['BULLISH', 'BEARISH', 'NEUTRAL'].includes(result.metrics.signals.macd.signal),
+        `['BULLISH', 'BEARISH', 'NEUTRAL'] should contain result.metrics.signals.macd.signal`
+      );
     });
 
     it('validates Stochastic calculation and signal', async () => {
@@ -245,10 +304,23 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
         signal: bullishSnapshot.signal,
       });
 
-      expect(result.metrics.signals.stoch).toBeDefined();
-      expect(result.metrics.signals.stoch.k).toBeDefined();
-      expect(result.metrics.signals.stoch.d).toBeDefined();
-      expect(result.metrics.signals.stoch.signal).toBeDefined();
+      assert.ok(
+        result.metrics.signals.stoch !== undefined && result.metrics.signals.stoch !== null,
+        `result.metrics.signals.stoch should be defined`
+      );
+      assert.ok(
+        result.metrics.signals.stoch.k !== undefined && result.metrics.signals.stoch.k !== null,
+        `result.metrics.signals.stoch.k should be defined`
+      );
+      assert.ok(
+        result.metrics.signals.stoch.d !== undefined && result.metrics.signals.stoch.d !== null,
+        `result.metrics.signals.stoch.d should be defined`
+      );
+      assert.ok(
+        result.metrics.signals.stoch.signal !== undefined &&
+          result.metrics.signals.stoch.signal !== null,
+        `result.metrics.signals.stoch.signal should be defined`
+      );
     });
 
     it('requires 60% consensus threshold', async () => {
@@ -259,11 +331,11 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
         signal: bullishSnapshot.signal,
       });
 
-      expect(result.metrics.consensus).toBeGreaterThanOrEqual(0);
-      expect(result.metrics.consensus).toBeLessThanOrEqual(100);
+      assert.ok(result.metrics.consensus >= 0, `result.metrics.consensus should be >= 0`);
+      assert.ok(result.metrics.consensus <= 100, `result.metrics.consensus should be <= 100`);
 
       if (result.status === 'PASS') {
-        expect(result.metrics.consensus).toBeGreaterThanOrEqual(60);
+        assert.ok(result.metrics.consensus >= 60, `result.metrics.consensus should be >= 60`);
       }
     });
 
@@ -275,8 +347,8 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
         signal: bearishSnapshot.signal,
       });
 
-      expect(result.status).toBe('PASS');
-      expect(result.metrics.consensus).toBeGreaterThanOrEqual(60);
+      assert.equal(result.status, 'PASS');
+      assert.ok(result.metrics.consensus >= 60, `result.metrics.consensus should be >= 60`);
     });
   });
 
@@ -293,10 +365,16 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
         signal: bullishSnapshot.signal,
       });
 
-      expect(result.status).toBe('PASS');
-      expect(result.score).toBeGreaterThanOrEqual(65);
-      expect(result.metrics.mas).toBeDefined();
-      expect(result.metrics.currentPrice).toBeDefined();
+      assert.equal(result.status, 'PASS');
+      assert.ok(result.score >= 65, `result.score should be >= 65`);
+      assert.ok(
+        result.metrics.mas !== undefined && result.metrics.mas !== null,
+        `result.metrics.mas should be defined`
+      );
+      assert.ok(
+        result.metrics.currentPrice !== undefined && result.metrics.currentPrice !== null,
+        `result.metrics.currentPrice should be defined`
+      );
     });
 
     it('passes with price below MAs for bearish signal', async () => {
@@ -307,8 +385,8 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
         signal: bearishSnapshot.signal,
       });
 
-      expect(result.status).toBe('PASS');
-      expect(result.score).toBeGreaterThanOrEqual(65);
+      assert.equal(result.status, 'PASS');
+      assert.ok(result.score >= 65, `result.score should be >= 65`);
     });
 
     it('calculates all required MAs', async () => {
@@ -319,11 +397,26 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
         signal: bullishSnapshot.signal,
       });
 
-      expect(result.metrics.mas.sma20).toBeDefined();
-      expect(result.metrics.mas.sma50).toBeDefined();
-      expect(result.metrics.mas.sma200).toBeDefined();
-      expect(result.metrics.mas.ema9).toBeDefined();
-      expect(result.metrics.mas.ema21).toBeDefined();
+      assert.ok(
+        result.metrics.mas.sma20 !== undefined && result.metrics.mas.sma20 !== null,
+        `result.metrics.mas.sma20 should be defined`
+      );
+      assert.ok(
+        result.metrics.mas.sma50 !== undefined && result.metrics.mas.sma50 !== null,
+        `result.metrics.mas.sma50 should be defined`
+      );
+      assert.ok(
+        result.metrics.mas.sma200 !== undefined && result.metrics.mas.sma200 !== null,
+        `result.metrics.mas.sma200 should be defined`
+      );
+      assert.ok(
+        result.metrics.mas.ema9 !== undefined && result.metrics.mas.ema9 !== null,
+        `result.metrics.mas.ema9 should be defined`
+      );
+      assert.ok(
+        result.metrics.mas.ema21 !== undefined && result.metrics.mas.ema21 !== null,
+        `result.metrics.mas.ema21 should be defined`
+      );
     });
 
     it('validates MA alignment detection', async () => {
@@ -334,8 +427,14 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
         signal: bullishSnapshot.signal,
       });
 
-      expect(result.metrics.maAlignment).toBeDefined();
-      expect(['BULLISH', 'BEARISH', 'NEUTRAL']).toContain(result.metrics.maAlignment);
+      assert.ok(
+        result.metrics.maAlignment !== undefined && result.metrics.maAlignment !== null,
+        `result.metrics.maAlignment should be defined`
+      );
+      assert.ok(
+        ['BULLISH', 'BEARISH', 'NEUTRAL'].includes(result.metrics.maAlignment),
+        `['BULLISH', 'BEARISH', 'NEUTRAL'] should contain result.metrics.maAlignment`
+      );
     });
 
     it('requires 65% alignment threshold', async () => {
@@ -346,12 +445,21 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
         signal: bullishSnapshot.signal,
       });
 
-      expect(result.metrics.alignmentRatio).toBeDefined();
-      expect(result.metrics.alignmentRatio).toBeGreaterThanOrEqual(0);
-      expect(result.metrics.alignmentRatio).toBeLessThanOrEqual(100);
+      assert.ok(
+        result.metrics.alignmentRatio !== undefined && result.metrics.alignmentRatio !== null,
+        `result.metrics.alignmentRatio should be defined`
+      );
+      assert.ok(result.metrics.alignmentRatio >= 0, `result.metrics.alignmentRatio should be >= 0`);
+      assert.ok(
+        result.metrics.alignmentRatio <= 100,
+        `result.metrics.alignmentRatio should be <= 100`
+      );
 
       if (result.status === 'PASS') {
-        expect(result.metrics.alignmentRatio).toBeGreaterThanOrEqual(65);
+        assert.ok(
+          result.metrics.alignmentRatio >= 65,
+          `result.metrics.alignmentRatio should be >= 65`
+        );
       }
     });
   });
@@ -369,9 +477,12 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
         signal: bullishSnapshot.signal,
       });
 
-      expect(result.status).toBe('PASS');
-      expect(result.score).toBeGreaterThanOrEqual(75);
-      expect(result.metrics.confluenceScore).toBeGreaterThanOrEqual(75);
+      assert.equal(result.status, 'PASS');
+      assert.ok(result.score >= 75, `result.score should be >= 75`);
+      assert.ok(
+        result.metrics.confluenceScore >= 75,
+        `result.metrics.confluenceScore should be >= 75`
+      );
     });
 
     it('validates weighted scoring (D1 > H4 > H1 > M15)', async () => {
@@ -382,11 +493,14 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
         signal: bullishSnapshot.signal,
       });
 
-      expect(result.metrics.tfAnalysis).toBeDefined();
-      expect(result.metrics.tfAnalysis.M15.weight).toBe(1);
-      expect(result.metrics.tfAnalysis.H1.weight).toBe(2);
-      expect(result.metrics.tfAnalysis.H4.weight).toBe(3);
-      expect(result.metrics.tfAnalysis.D1.weight).toBe(4);
+      assert.ok(
+        result.metrics.tfAnalysis !== undefined && result.metrics.tfAnalysis !== null,
+        `result.metrics.tfAnalysis should be defined`
+      );
+      assert.equal(result.metrics.tfAnalysis.M15.weight, 1);
+      assert.equal(result.metrics.tfAnalysis.H1.weight, 2);
+      assert.equal(result.metrics.tfAnalysis.H4.weight, 3);
+      assert.equal(result.metrics.tfAnalysis.D1.weight, 4);
     });
 
     it('requires 75% weighted confluence threshold', async () => {
@@ -398,9 +512,15 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
       });
 
       if (result.status === 'PASS') {
-        expect(result.metrics.confluenceScore).toBeGreaterThanOrEqual(75);
+        assert.ok(
+          result.metrics.confluenceScore >= 75,
+          `result.metrics.confluenceScore should be >= 75`
+        );
       } else {
-        expect(result.metrics.confluenceScore).toBeLessThan(75);
+        assert.ok(
+          result.metrics.confluenceScore < 75,
+          `result.metrics.confluenceScore should be < 75`
+        );
       }
     });
 
@@ -412,10 +532,22 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
         signal: bullishSnapshot.signal,
       });
 
-      expect(result.metrics.tfAnalysis.M15).toBeDefined();
-      expect(result.metrics.tfAnalysis.H1).toBeDefined();
-      expect(result.metrics.tfAnalysis.H4).toBeDefined();
-      expect(result.metrics.tfAnalysis.D1).toBeDefined();
+      assert.ok(
+        result.metrics.tfAnalysis.M15 !== undefined && result.metrics.tfAnalysis.M15 !== null,
+        `result.metrics.tfAnalysis.M15 should be defined`
+      );
+      assert.ok(
+        result.metrics.tfAnalysis.H1 !== undefined && result.metrics.tfAnalysis.H1 !== null,
+        `result.metrics.tfAnalysis.H1 should be defined`
+      );
+      assert.ok(
+        result.metrics.tfAnalysis.H4 !== undefined && result.metrics.tfAnalysis.H4 !== null,
+        `result.metrics.tfAnalysis.H4 should be defined`
+      );
+      assert.ok(
+        result.metrics.tfAnalysis.D1 !== undefined && result.metrics.tfAnalysis.D1 !== null,
+        `result.metrics.tfAnalysis.D1 should be defined`
+      );
     });
 
     it('handles bearish confluence correctly', async () => {
@@ -426,8 +558,11 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
         signal: bearishSnapshot.signal,
       });
 
-      expect(result.status).toBe('PASS');
-      expect(result.metrics.confluenceScore).toBeGreaterThanOrEqual(75);
+      assert.equal(result.status, 'PASS');
+      assert.ok(
+        result.metrics.confluenceScore >= 75,
+        `result.metrics.confluenceScore should be >= 75`
+      );
     });
   });
 
@@ -444,10 +579,16 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
         signal: bullishSnapshot.signal,
       });
 
-      expect(result.status).toBe('PASS');
-      expect(result.metrics.positionSize).toBeDefined();
-      expect(result.metrics.positionSize).toBeGreaterThan(0);
-      expect(result.metrics.riskAmount).toBeDefined();
+      assert.equal(result.status, 'PASS');
+      assert.ok(
+        result.metrics.positionSize !== undefined && result.metrics.positionSize !== null,
+        `result.metrics.positionSize should be defined`
+      );
+      assert.ok(result.metrics.positionSize > 0, `result.metrics.positionSize should be > 0`);
+      assert.ok(
+        result.metrics.riskAmount !== undefined && result.metrics.riskAmount !== null,
+        `result.metrics.riskAmount should be defined`
+      );
     });
 
     it('enforces minimum lot size (0.01)', async () => {
@@ -461,7 +602,10 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
         signal: smallAccountSnapshot.signal,
       });
 
-      expect(result.metrics.positionSize).toBeGreaterThanOrEqual(0.01);
+      assert.ok(
+        result.metrics.positionSize >= 0.01,
+        `result.metrics.positionSize should be >= 0.01`
+      );
     });
 
     it('enforces maximum lot size (5.0)', async () => {
@@ -475,7 +619,7 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
         signal: largeAccountSnapshot.signal,
       });
 
-      expect(result.metrics.positionSize).toBeLessThanOrEqual(5.0);
+      assert.ok(result.metrics.positionSize <= 5.0, `result.metrics.positionSize should be <= 5.0`);
     });
 
     it('validates SL distance (10-200 pips)', async () => {
@@ -487,8 +631,8 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
       });
 
       const slPips = parseFloat(result.metrics.slPips);
-      expect(slPips).toBeGreaterThanOrEqual(10);
-      expect(slPips).toBeLessThanOrEqual(200);
+      assert.ok(slPips >= 10, `slPips should be >= 10`);
+      assert.ok(slPips <= 200, `slPips should be <= 200`);
     });
 
     it('limits risk to reasonable percentage', async () => {
@@ -500,8 +644,8 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
       });
 
       const riskPercent = parseFloat(result.metrics.actualRiskPercent);
-      expect(riskPercent).toBeGreaterThan(0);
-      expect(riskPercent).toBeLessThanOrEqual(3);
+      assert.ok(riskPercent > 0, `riskPercent should be > 0`);
+      assert.ok(riskPercent <= 3, `riskPercent should be <= 3`);
     });
   });
 });

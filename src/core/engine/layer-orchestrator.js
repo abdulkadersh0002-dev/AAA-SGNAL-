@@ -4,7 +4,7 @@
  * Single unified path for layer analysis
  */
 
-import logger from '../../../infrastructure/services/logging/logger.js';
+import logger from '../../infrastructure/services/logging/logger.js';
 import {
   calculateRSI,
   calculateMACD,
@@ -12,13 +12,13 @@ import {
   calculateSMA,
   calculateEMA,
   determineTrend,
-  calculateADX,
+  // calculateADX,  // Reserved for future use
   calculatePivotPoints,
-  calculateFibonacciLevels,
+  // calculateFibonacciLevels,  // Reserved for future use
   checkSupportResistance,
   detectMACrossover,
-  calculateATR,
-} from '../../../lib/utils/technical-analysis.js';
+  // calculateATR,  // Reserved for future use
+} from '../../lib/utils/technical-analysis.js';
 
 class LayerOrchestrator {
   constructor(options = {}) {
@@ -40,7 +40,7 @@ class LayerOrchestrator {
   /**
    * Initialize all 20 layers with their processing functions
    */
-  initializeLayers(options) {
+  initializeLayers(_options) {
     return [
       {
         id: 1,
@@ -1097,7 +1097,7 @@ class LayerOrchestrator {
     return { status: 'PASS', score: 70, confidence: 60, reason: 'Correlations normal' };
   }
 
-  async processLayer16({ snapshot, signal }) {
+  async processLayer16({ snapshot: _snapshot, signal }) {
     // Risk/Reward Ratio
     if (!signal || !signal.riskRewardRatio) {
       return { status: 'SKIP', reason: 'R:R ratio not calculated' };

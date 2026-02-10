@@ -4,7 +4,7 @@
  * Used by both dashboard and execution engine
  */
 
-import logger from '../../../infrastructure/services/logging/logger.js';
+import logger from '../../infrastructure/services/logging/logger.js';
 
 class UnifiedSnapshotManager {
   constructor(options = {}) {
