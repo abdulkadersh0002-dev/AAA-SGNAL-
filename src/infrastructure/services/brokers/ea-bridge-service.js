@@ -19,6 +19,7 @@ import {
 import IntelligentTradeManager from './intelligent-trade-manager.js';
 import CacheCoordinator from '../cache/cache-coordinator.js';
 import UnifiedSnapshotManager from '../../../core/engine/unified-snapshot-manager.js';
+import SignalFactory from '../../../core/engine/signal-factory.js';
 
 class EaBridgeService {
   constructor(options = {}) {
@@ -104,6 +105,15 @@ class EaBridgeService {
         }
       });
     }
+
+    // Initialize signal factory with unified snapshot and layer orchestrator
+    this.signalFactory = new SignalFactory({
+      logger: this.logger,
+      tradingEngine: this.tradingEngine,
+      eaBridgeService: this,
+      snapshotManager: this.snapshotManager,
+      cacheCoordinator: this.cacheCoordinator,
+    });
 
     // Intelligent Trade Manager for advanced decision-making
     const newsAvoidanceMinutes = readEnvNumber('EA_NEWS_GUARD_BLACKOUT_MINUTES', null);
@@ -5296,6 +5306,13 @@ class EaBridgeService {
    */
   getSnapshotManager() {
     return this.snapshotManager;
+  }
+
+  /**
+   * Get the signal factory
+   */
+  getSignalFactory() {
+    return this.signalFactory;
   }
 }
 
