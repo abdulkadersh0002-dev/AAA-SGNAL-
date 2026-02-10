@@ -18,6 +18,7 @@ import brokerRoutes from './routes/broker/index.js';
 import featureRoutes from './routes/feature/index.js';
 import eaBridgeRoutes from './routes/ea-bridge/index.js';
 import scenarioRoutes from './routes/scenario/index.js';
+import snapshotRoutes from './routes/snapshot/index.js';
 import { createClientExperienceModule } from './routes/client-experience/index.js';
 import { notFound } from '../../utils/http-response.js';
 
@@ -241,6 +242,16 @@ export function createHttpApp({
     '/api',
     featureRoutes({
       tradingEngine,
+      logger,
+      requireBasicRead,
+    })
+  );
+
+  // Snapshot routes (unified snapshot system)
+  app.use(
+    '/api',
+    snapshotRoutes({
+      eaBridgeService,
       logger,
       requireBasicRead,
     })

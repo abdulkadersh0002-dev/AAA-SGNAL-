@@ -248,9 +248,13 @@ export function startRssToEaBridgeIngestor({
   };
 
   // Run immediately, then on interval.
-  runOnce().catch(() => {});
+  runOnce().catch((err) => {
+    log.error({ err }, 'RSS ingestor initial run failed');
+  });
   timer = setInterval(() => {
-    runOnce().catch(() => {});
+    runOnce().catch((err) => {
+      log.error({ err }, 'RSS ingestor periodic run failed');
+    });
   }, intervalMs);
 
   // Do not keep the process alive if this is the only timer.

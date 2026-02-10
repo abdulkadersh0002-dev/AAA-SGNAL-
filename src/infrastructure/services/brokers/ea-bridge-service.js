@@ -17,6 +17,10 @@ import {
   resolveNewsGuardThresholds,
 } from '../../../core/policy/trading-policy.js';
 import IntelligentTradeManager from './intelligent-trade-manager.js';
+import CacheCoordinator from '../cache/cache-coordinator.js';
+import UnifiedSnapshotManager from '../../../core/engine/unified-snapshot-manager.js';
+import SignalFactory from '../../../core/engine/signal-factory.js';
+import { secureRandomString } from '../../../lib/utils/crypto-utils.js';
 
 class EaBridgeService {
   constructor(options = {}) {
@@ -28,6 +32,89 @@ class EaBridgeService {
 
     // Active EA sessions
     this.sessions = new Map();
+
+    // Initialize centralized cache coordinator
+    this.cacheCoordinator = new CacheCoordinator({
+      logger: this.logger,
+      cleanupInterval: 60000, // 1 minute cleanup
+      maxTotalEntries: 50000,
+      memoryPressureThreshold: 40000,
+    });
+
+    // Register all caches with appropriate TTLs
+    this.cacheCoordinator.registerCache('quotes', {
+      ttl: 120000, // 2 minutes TTL for quotes
+      maxEntries: 10000,
+    });
+
+    this.cacheCoordinator.registerCache('quoteHistory', {
+      ttl: 300000, // 5 minutes for quote history
+      maxEntries: 10000,
+    });
+
+    this.cacheCoordinator.registerCache('news', {
+      ttl: 14 * 24 * 60 * 60 * 1000, // 14 days for news
+      maxEntries: 5000,
+    });
+
+    this.cacheCoordinator.registerCache('snapshots', {
+      ttl: 180000, // 3 minutes for technical snapshots
+      maxEntries: 10000,
+    });
+
+    this.cacheCoordinator.registerCache('bars', {
+      ttl: 300000, // 5 minutes for bar data
+      maxEntries: 20000,
+    });
+
+    this.cacheCoordinator.registerCache('syntheticCandles', {
+      ttl: 300000, // 5 minutes for synthetic candles
+      maxEntries: 20000,
+    });
+
+    this.cacheCoordinator.registerCache('candleAnalysis', {
+      ttl: 1500, // 1.5 seconds for candle analysis
+      maxEntries: 1000,
+    });
+
+    this.cacheCoordinator.registerCache('analysisSnapshot', {
+      ttl: 2500, // 2.5 seconds for analysis snapshots
+      maxEntries: 1000,
+    });
+
+    // Initialize unified snapshot manager
+    this.snapshotManager = new UnifiedSnapshotManager({
+      logger: this.logger,
+      cacheCoordinator: this.cacheCoordinator,
+      eaBridgeService: this,
+      snapshotTTL: 5000, // 5 seconds
+      maxSnapshots: 200,
+      enableVersioning: true,
+    });
+
+    // Subscribe to snapshot updates for broadcasting
+    if (this.broadcast) {
+      this.snapshotManager.subscribe((event, data) => {
+        if (event === 'update') {
+          this.broadcast('snapshot_update', {
+            broker: data.snapshot.broker,
+            symbol: data.snapshot.symbol,
+            version: data.snapshot.version,
+            layer18Ready: data.snapshot.layer18Ready,
+            signalValid: data.snapshot.signalValid,
+          });
+        }
+      });
+    }
+
+    // Initialize signal factory with unified snapshot and layer orchestrator
+    this.signalFactory = new SignalFactory({
+      logger: this.logger,
+      tradingEngine: this.tradingEngine,
+      eaBridgeService: this,
+      snapshotManager: this.snapshotManager,
+      cacheCoordinator: this.cacheCoordinator,
+    });
 
     // Intelligent Trade Manager for advanced decision-making
     const newsAvoidanceMinutes = readEnvNumber('EA_NEWS_GUARD_BLACKOUT_MINUTES', null);
@@ -65,23 +152,15 @@ class EaBridgeService {
     this.consecutiveWins = 0;
     this.maxConsecutiveLosses = 3;
 
-    // Market data + news coming from connected EAs
-    this.latestQuotes = new Map(); // key: `${broker}:${symbol}` -> quote
-    // Small per-symbol quote history for velocity/acceleration proxies (Layer 1 enrichments).
-    // key: `${broker}:${symbol}` -> [{ receivedAt, mid, bid, ask, spreadPoints }]
+    // Legacy data structures for backward compatibility
+    // These now use the cache coordinator internally
+    this.latestQuotes = new Map(); // Kept for backward compat, but will migrate to cache
     this.quoteHistory = new Map();
-    this.maxQuotes = 10000;
-    this.latestNews = new Map(); // key: `${broker}:${id}` -> item
-    this.newsTimeline = new Map(); // broker -> [ids newest-first]
+    this.latestNews = new Map();
+    this.newsTimeline = new Map();
     this.maxNewsPerBroker = 200;
-
-    // Latest technical snapshots coming from connected EAs
-    // key: `${broker}:${symbol}` -> snapshot
     this.latestSnapshots = new Map();
     this.maxSnapshots = 10000;
-
-    // Rolling bar windows (optional) coming from connected EAs
-    // key: `${broker}:${symbol}:${timeframe}` -> [{ time, open, high, low, close, volume, receivedAt, source }]
     this.latestBars = new Map();
     this.maxBarSeries = 20000;
     this.maxBarsPerSeries = 500;
@@ -321,7 +400,17 @@ class EaBridgeService {
               cachedAt: at,
             };
 
-      this.analysisSnapshotCache.set(key, { computedAt: at, result: cachedResult });
+      // Use cache coordinator with 2.5 second TTL
+      this.cacheCoordinator.set(
+        'analysisSnapshot',
+        key,
+        {
+          computedAt: at,
+          result: cachedResult,
+        },
+        2500
+      );
+
       return true;
     } catch (_error) {
       return false;
@@ -333,14 +422,14 @@ class EaBridgeService {
     if (!key) {
       return null;
     }
-    const entry = this.analysisSnapshotCache.get(key) || null;
+
+    const entry = this.cacheCoordinator.get('analysisSnapshot', key);
     if (!entry) {
       return null;
     }
+
     const now = Date.now();
-    const ttl = Number.isFinite(Number(maxAgeMs))
-      ? Math.max(0, Number(maxAgeMs))
-      : this.analysisSnapshotCacheTtlMs;
+    const ttl = Number.isFinite(Number(maxAgeMs)) ? Math.max(0, Number(maxAgeMs)) : 2500; // Default TTL
     const age = now - Number(entry.computedAt || 0);
     if (!Number.isFinite(age) || age < 0 || age > ttl) {
       return null;
@@ -1226,7 +1315,7 @@ class EaBridgeService {
           : null;
 
     const histKey = `${broker}:${symbol}`;
-    const history = this.quoteHistory.get(histKey) || [];
+    const history = this.cacheCoordinator.get('quoteHistory', histKey) || [];
     const prev = history.length ? history[history.length - 1] : null;
 
     const receivedAt = Date.now();
@@ -1264,6 +1353,11 @@ class EaBridgeService {
     };
 
     const key = `${broker}:${symbol}`;
+
+    // Store in cache coordinator with 2 minute TTL
+    this.cacheCoordinator.set('quotes', key, quote, 120000);
+
+    // Also update legacy Map for backward compatibility
     this.latestQuotes.set(key, quote);
 
     try {
@@ -1278,7 +1372,9 @@ class EaBridgeService {
       while (history.length > 6) {
         history.shift();
       }
-      this.quoteHistory.set(histKey, history);
+      // Store quote history in cache with 5 minute TTL
+      this.cacheCoordinator.set('quoteHistory', histKey, history, 300000);
+      this.quoteHistory.set(histKey, history); // Legacy compat
     } catch (_error) {
       // best-effort
     }
@@ -1289,12 +1385,15 @@ class EaBridgeService {
       // best-effort
     }
 
-    // bound memory
-    if (this.latestQuotes.size > this.maxQuotes) {
-      const firstKey = this.latestQuotes.keys().next().value;
-      if (firstKey) {
-        this.latestQuotes.delete(firstKey);
-      }
+    // Update unified snapshot with new quote
+    try {
+      this.snapshotManager.updateQuote({
+        broker,
+        symbol,
+        quote,
+      });
+    } catch (_error) {
+      this.logger?.warn?.({ err: _error, broker, symbol }, 'Failed to update snapshot with quote');
     }
 
     return { success: true, message: 'Quote recorded', quote };
@@ -3235,9 +3334,7 @@ class EaBridgeService {
           continue;
         }
         const base = {
-          id: `${broker || 'ea'}:${symbol}:${action.type}:${now}:${Math.random()
-            .toString(36)
-            .slice(2, 8)}`,
+          id: `${broker || 'ea'}:${symbol}:${action.type}:${now}:${secureRandomString(6)}`,
           broker,
           symbol,
           reason: action.reason || null,
@@ -5159,6 +5256,62 @@ class EaBridgeService {
     // Treat a fresh quote feed as a connected bridge.
     const quotes = this.getQuotes({ broker, maxAgeMs });
     return Array.isArray(quotes) && quotes.length > 0;
+  }
+
+  /**
+   * Get cache statistics for monitoring
+   */
+  getCacheStatistics() {
+    return this.cacheCoordinator.getAllStats();
+  }
+
+  /**
+   * Force cache cleanup (for testing/debugging)
+   */
+  cleanupCaches() {
+    this.cacheCoordinator.cleanupExpired();
+    this.cacheCoordinator.handleMemoryPressure();
+  }
+
+  /**
+   * Cleanup and destroy service
+   */
+  destroy() {
+    // Cleanup cache coordinator
+    if (this.cacheCoordinator) {
+      this.cacheCoordinator.destroy();
+    }
+
+    // Cleanup snapshot manager
+    if (this.snapshotManager) {
+      this.snapshotManager.destroy();
+    }
+
+    // Clear all maps
+    this.sessions.clear();
+    this.latestQuotes.clear();
+    this.quoteHistory.clear();
+    this.latestNews.clear();
+    this.newsTimeline.clear();
+    this.latestSnapshots.clear();
+    this.latestBars.clear();
+    this.entryContextBySymbol.clear();
+
+    this.logger?.info?.('EA Bridge Service destroyed');
+  }
+
+  /**
+   * Get the unified snapshot manager
+   */
+  getSnapshotManager() {
+    return this.snapshotManager;
+  }
+
+  /**
+   * Get the signal factory
+   */
+  getSignalFactory() {
+    return this.signalFactory;
   }
 }
 

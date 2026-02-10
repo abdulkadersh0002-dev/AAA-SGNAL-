@@ -1,4 +1,5 @@
 import logger from '../../infrastructure/services/logging/logger.js';
+import { secureRandomFloat } from '../../lib/utils/crypto-utils.js';
 
 const DEFAULT_AVAILABILITY_QUALITY_THRESHOLD = 0.55;
 
@@ -487,14 +488,14 @@ class TechnicalAnalyzer {
     this.logger.debug({ pair, timeframe }, 'Technical analyzer generating simulated data');
     const bars = this.getBarCount(timeframe);
     const data = [];
-    let basePrice = 1.1 + Math.random() * 0.1;
+    let basePrice = 1.1 + secureRandomFloat() * 0.1;
 
     for (let i = 0; i < bars; i++) {
-      const change = (Math.random() - 0.5) * 0.001;
+      const change = (secureRandomFloat() - 0.5) * 0.001;
       basePrice += change;
 
-      const high = basePrice + Math.random() * 0.0005;
-      const low = basePrice - Math.random() * 0.0005;
+      const high = basePrice + secureRandomFloat() * 0.0005;
+      const low = basePrice - secureRandomFloat() * 0.0005;
       const open = i === 0 ? basePrice : data[i - 1].close;
       const close = basePrice;
 
@@ -504,7 +505,7 @@ class TechnicalAnalyzer {
         high,
         low,
         close,
-        volume: Math.random() * 10000,
+        volume: secureRandomFloat() * 10000,
       });
     }
 

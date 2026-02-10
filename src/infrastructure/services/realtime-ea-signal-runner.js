@@ -1082,13 +1082,36 @@ export class RealtimeEaSignalRunner {
       }
     }
 
+    // Use unified SignalFactory instead of direct tradingEngine call
+    // This ensures all signals go through LayerOrchestrator and update UnifiedSnapshotManager
     let rawSignal;
     try {
-      rawSignal = await this.tradingEngine.generateSignal(symbol, {
-        broker,
-        analysisMode: 'ea',
-        eaOnly: true,
-      });
+      const signalFactory = this.eaBridgeService?.getSignalFactory?.();
+      const snapshotManager = this.eaBridgeService?.getSnapshotManager?.();
+
+      if (!signalFactory) {
+        // Fallback to old method if SignalFactory not available
+        rawSignal = await this.tradingEngine.generateSignal(symbol, {
+          broker,
+          analysisMode: 'ea',
+          eaOnly: true,
+        });
+      } else {
+        // Use unified SignalFactory (includes LayerOrchestrator)
+        const result = await signalFactory.generateSignal({
+          broker,
+          symbol,
+          options: {
+            analysisMode: 'ea',
+            eaOnly: true,
+          },
+        });
+
+        rawSignal = result?.signal || null;
+
+        // Signal is already enriched with layered analysis and validated
+        // No need for manual layer attachment - LayerOrchestrator already did it
+      }
     } catch (error) {
       this.recordReject('generate_signal_error', {
         broker,
@@ -1111,26 +1134,31 @@ export class RealtimeEaSignalRunner {
     // Ensure the DTO includes broker context (used by the dashboard to filter).
     rawSignal.broker = broker;
 
-    // Attach the canonical 18-layer analysis for dashboard visibility.
-    // Best-effort: never throw.
-    try {
-      attachLayeredAnalysisToSignal({
-        rawSignal,
-        broker,
-        symbol,
-        eaBridgeService: this.eaBridgeService,
-        quoteMaxAgeMs: this.quoteMaxAgeMs,
-        barFallback,
-        now,
-      });
-    } catch (error) {
-      this.recordReject('attach_layers_error', {
-        broker,
-        symbol,
-        message: error?.message || null,
-      });
-      this.lastGeneratedAt.set(key, now);
-      return;
+    // LEGACY: Attach the canonical 18-layer analysis for dashboard visibility
+    // if SignalFactory was not available (fallback path).
+    // If using SignalFactory, layers are already attached by LayerOrchestrator.
+    const signalFactory = this.eaBridgeService?.getSignalFactory?.();
+    if (!signalFactory) {
+      // Fallback: manual layer attachment (old path)
+      try {
+        attachLayeredAnalysisToSignal({
+          rawSignal,
+          broker,
+          symbol,
+          eaBridgeService: this.eaBridgeService,
+          quoteMaxAgeMs: this.quoteMaxAgeMs,
+          barFallback,
+          now,
+        });
+      } catch (error) {
+        this.recordReject('attach_layers_error', {
+          broker,
+          symbol,
+          message: error?.message || null,
+        });
+        this.lastGeneratedAt.set(key, now);
+        return;
+      }
     }
 
     if (this.smartStrong && this.smartRequireBarsCoverage && this.dashboardRequireBars) {

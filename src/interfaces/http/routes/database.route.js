@@ -75,7 +75,7 @@ router.get('/queries', (req, res) => {
  * Get slow queries
  */
 router.get('/slow-queries', (req, res) => {
-  const limit = parseInt(req.query.limit) || 10;
+  const limit = parseInt(req.query.limit, 10) || 10;
   const slowQueries = getSlowQueries(limit);
 
   res.json({

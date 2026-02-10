@@ -789,8 +789,8 @@ class IntelligentTradeManager {
       const entries = Array.from(this.tradeQualityScores.entries());
       // Extract timestamp from key format: "${broker}:${symbol}:${timestamp}"
       entries.sort((a, b) => {
-        const tsA = parseInt(a[0].split(':')[2] || '0');
-        const tsB = parseInt(b[0].split(':')[2] || '0');
+        const tsA = parseInt(a[0].split(':')[2] || '0', 10);
+        const tsB = parseInt(b[0].split(':')[2] || '0', 10);
         return tsB - tsA; // Descending
       });
       // Keep only the most recent entries
