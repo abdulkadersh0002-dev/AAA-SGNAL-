@@ -10,7 +10,7 @@
  * @returns {number|null} SMA value
  */
 export function calculateSMA(prices, period) {
-  if (!Array.isArray(prices) || prices.length < period) {
+  if (!Array.isArray(prices) || prices.length < period || period <= 0) {
     return null;
   }
 
@@ -26,14 +26,16 @@ export function calculateSMA(prices, period) {
  * @returns {number|null} EMA value
  */
 export function calculateEMA(prices, period) {
-  if (!Array.isArray(prices) || prices.length < period) {
+  if (!Array.isArray(prices) || prices.length < period || period <= 0) {
     return null;
   }
 
   const multiplier = 2 / (period + 1);
   let ema = calculateSMA(prices.slice(0, period), period);
 
-  if (ema === null) return null;
+  if (ema === null) {
+    return null;
+  }
 
   for (let i = period; i < prices.length; i++) {
     ema = (prices[i] - ema) * multiplier + ema;
@@ -49,7 +51,7 @@ export function calculateEMA(prices, period) {
  * @returns {number|null} RSI value (0-100)
  */
 export function calculateRSI(prices, period = 14) {
-  if (!Array.isArray(prices) || prices.length < period + 1) {
+  if (!Array.isArray(prices) || prices.length < period + 1 || period <= 0) {
     return null;
   }
 
@@ -64,7 +66,9 @@ export function calculateRSI(prices, period = 14) {
   const avgGain = gains.slice(-period).reduce((a, b) => a + b, 0) / period;
   const avgLoss = losses.slice(-period).reduce((a, b) => a + b, 0) / period;
 
-  if (avgLoss === 0) return 100;
+  if (avgLoss === 0) {
+    return 100;
+  }
 
   const rs = avgGain / avgLoss;
   const rsi = 100 - 100 / (1 + rs);
@@ -117,14 +121,7 @@ export function calculateMACD(prices, fastPeriod = 12, slowPeriod = 26, signalPe
  * @param {number} smoothD - %D period (default 3)
  * @returns {Object|null} Stochastic values {k, d}
  */
-export function calculateStochastic(
-  highs,
-  lows,
-  closes,
-  period = 14,
-  smoothK = 3,
-  smoothD = 3
-) {
+export function calculateStochastic(highs, lows, closes, period = 14, smoothK = 3, smoothD = 3) {
   if (
     !Array.isArray(highs) ||
     !Array.isArray(lows) ||
@@ -210,8 +207,7 @@ export function calculateADX(highs, lows, closes, period = 14) {
   const plusDI = avgTR !== 0 ? (avgPlusDM / avgTR) * 100 : 0;
   const minusDI = avgTR !== 0 ? (avgMinusDM / avgTR) * 100 : 0;
 
-  const dx =
-    plusDI + minusDI !== 0 ? (Math.abs(plusDI - minusDI) / (plusDI + minusDI)) * 100 : 0;
+  const dx = plusDI + minusDI !== 0 ? (Math.abs(plusDI - minusDI) / (plusDI + minusDI)) * 100 : 0;
 
   // ADX is smoothed DX (simplified here)
   const adx = dx;
@@ -288,13 +284,13 @@ export function calculateFibonacciLevels(high, low, isUptrend = true) {
   const diff = high - low;
 
   const levels = {
-    '0': isUptrend ? high : low,
-    '23.6': isUptrend ? high - diff * 0.236 : low + diff * 0.236,
-    '38.2': isUptrend ? high - diff * 0.382 : low + diff * 0.382,
-    '50': isUptrend ? high - diff * 0.5 : low + diff * 0.5,
-    '61.8': isUptrend ? high - diff * 0.618 : low + diff * 0.618,
-    '78.6': isUptrend ? high - diff * 0.786 : low + diff * 0.786,
-    '100': isUptrend ? low : high,
+    0: isUptrend ? high : low,
+    23.6: isUptrend ? high - diff * 0.236 : low + diff * 0.236,
+    38.2: isUptrend ? high - diff * 0.382 : low + diff * 0.382,
+    50: isUptrend ? high - diff * 0.5 : low + diff * 0.5,
+    61.8: isUptrend ? high - diff * 0.618 : low + diff * 0.618,
+    78.6: isUptrend ? high - diff * 0.786 : low + diff * 0.786,
+    100: isUptrend ? low : high,
   };
 
   return levels;
