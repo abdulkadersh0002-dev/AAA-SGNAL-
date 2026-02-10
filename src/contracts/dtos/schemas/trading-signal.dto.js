@@ -12,6 +12,7 @@ import { z } from 'zod';
  * @property {('BUY'|'SELL'|'NEUTRAL')} direction
  * @property {number} strength
  * @property {number} confidence
+ * @property {number|null|undefined} winRate
  * @property {number} finalScore
  * @property {Object} components
  * @property {Object|null} entry
@@ -43,6 +44,7 @@ export const TradingSignalSchema = z
     direction: z.enum(['BUY', 'SELL', 'NEUTRAL']),
     strength: z.number(),
     confidence: z.number(),
+    winRate: z.number().nullable().optional(),
     finalScore: z.number(),
     finalDecision: z
       .object({
@@ -109,6 +111,14 @@ export const TradingSignalSchema = z
           contributors: z.record(z.unknown()).optional(),
           modifiers: z.record(z.unknown()).optional(),
           context: z.record(z.unknown()).optional(),
+          profile: z
+            .object({
+              enterScore: z.number().optional(),
+              minStrength: z.number().optional(),
+              minWinRate: z.number().optional(),
+              minConfidence: z.number().optional(),
+            })
+            .optional(),
         })
         .optional(),
     }),
@@ -130,6 +140,7 @@ export function createTradingSignalDTO(raw) {
       direction: 'NEUTRAL',
       strength: 0,
       confidence: 0,
+      winRate: null,
       finalScore: 0,
       finalDecision: null,
       components: {},
@@ -140,6 +151,22 @@ export function createTradingSignalDTO(raw) {
       reasoning: null,
     };
   }
+
+  const winRate = (() => {
+    const direct = raw.estimatedWinRate;
+    if (Number.isFinite(Number(direct))) {
+      return Number(direct);
+    }
+    const alt = raw.winRate;
+    if (Number.isFinite(Number(alt))) {
+      return Number(alt);
+    }
+    const adv = raw.components?.advancedFilter?.metrics?.winRate;
+    if (Number.isFinite(Number(adv))) {
+      return Number(adv);
+    }
+    return null;
+  })();
 
   const timeframe = (() => {
     const direct = raw.timeframe ?? raw.meta?.timeframe;
@@ -152,6 +179,77 @@ export function createTradingSignalDTO(raw) {
     }
     return null;
   })();
+
+  const layeredDecisionFallback = (() => {
+    const layers = raw?.components?.layeredAnalysis?.layers;
+    if (!Array.isArray(layers) || layers.length === 0) {
+      return null;
+    }
+
+    for (const layer of layers) {
+      const decision = layer?.metrics?.decision;
+      if (!decision || typeof decision !== 'object') {
+        continue;
+      }
+      const state = decision?.state != null ? String(decision.state).trim() : '';
+      if (!state) {
+        continue;
+      }
+      const direction = layer?.metrics?.direction != null ? String(layer.metrics.direction) : null;
+      const confidence = layer?.metrics?.confidence ?? layer?.confidence ?? null;
+      return {
+        state,
+        score: Number.isFinite(Number(decision?.score)) ? Number(decision.score) : null,
+        blocked: decision?.blocked === true,
+        missing: Array.isArray(decision?.missing) ? decision.missing.map((v) => String(v)) : null,
+        whatWouldChange: Array.isArray(decision?.whatWouldChange)
+          ? decision.whatWouldChange.map((v) => String(v))
+          : null,
+        missingInputs:
+          decision?.missingInputs && typeof decision.missingInputs === 'object'
+            ? decision.missingInputs
+            : null,
+        nextSteps: Array.isArray(decision?.nextSteps)
+          ? decision.nextSteps.map((v) => String(v))
+          : null,
+        killSwitch:
+          decision?.killSwitch && typeof decision.killSwitch === 'object'
+            ? decision.killSwitch
+            : null,
+        direction: direction != null ? String(direction).trim().toUpperCase() : null,
+        confidence: Number.isFinite(Number(confidence)) ? Number(confidence) : null,
+      };
+    }
+
+    return null;
+  })();
+
+  const technicalPrimary = raw?.components?.technical?.signals?.[0] || null;
+  const directionFallback =
+    layeredDecisionFallback?.direction ||
+    raw?.finalDecision?.action ||
+    technicalPrimary?.direction ||
+    null;
+  const normalizedDirection = (() => {
+    const dir = String(raw?.direction || directionFallback || 'NEUTRAL')
+      .trim()
+      .toUpperCase();
+    return dir === 'BUY' || dir === 'SELL' ? dir : 'NEUTRAL';
+  })();
+
+  const strengthFallback =
+    raw?.components?.technical?.strength ??
+    technicalPrimary?.strength ??
+    raw?.components?.technical?.signals?.[0]?.strength ??
+    (Number.isFinite(Number(raw?.finalScore))
+      ? Math.min(100, Math.abs(Number(raw.finalScore)))
+      : null) ??
+    null;
+  const confidenceFallback =
+    raw?.components?.technical?.confidence ??
+    technicalPrimary?.confidence ??
+    layeredDecisionFallback?.confidence ??
+    null;
 
   return {
     broker: raw.broker || null,
@@ -179,9 +277,18 @@ export function createTradingSignalDTO(raw) {
             reason: raw.validity.reason != null ? String(raw.validity.reason) : null,
           }
         : null,
-    direction: raw.direction || 'NEUTRAL',
-    strength: Number(raw.strength) || 0,
-    confidence: Number(raw.confidence) || 0,
+    direction: normalizedDirection,
+    strength: Number.isFinite(Number(raw.strength))
+      ? Number(raw.strength)
+      : Number.isFinite(Number(strengthFallback))
+        ? Number(strengthFallback)
+        : 0,
+    confidence: Number.isFinite(Number(raw.confidence))
+      ? Number(raw.confidence)
+      : Number.isFinite(Number(confidenceFallback))
+        ? Number(confidenceFallback)
+        : 0,
+    winRate,
     finalScore: Number(raw.finalScore) || 0,
     finalDecision:
       raw.finalDecision && typeof raw.finalDecision === 'object'
@@ -223,7 +330,7 @@ export function createTradingSignalDTO(raw) {
       decision:
         raw.isValid?.decision && typeof raw.isValid.decision === 'object'
           ? {
-              state: raw.isValid.decision.state || undefined,
+              state: raw.isValid.decision.state || layeredDecisionFallback?.state || undefined,
               blocked:
                 raw.isValid.decision.blocked === undefined
                   ? undefined
@@ -261,10 +368,14 @@ export function createTradingSignalDTO(raw) {
                 : undefined,
               missing: Array.isArray(raw.isValid.decision.missing)
                 ? raw.isValid.decision.missing.map((v) => String(v)).slice(0, 12)
-                : undefined,
+                : layeredDecisionFallback?.missing
+                  ? layeredDecisionFallback.missing.slice(0, 12)
+                  : undefined,
               whatWouldChange: Array.isArray(raw.isValid.decision.whatWouldChange)
                 ? raw.isValid.decision.whatWouldChange.map((v) => String(v)).slice(0, 12)
-                : undefined,
+                : layeredDecisionFallback?.whatWouldChange
+                  ? layeredDecisionFallback.whatWouldChange.slice(0, 12)
+                  : undefined,
               contributors:
                 raw.isValid.decision.contributors &&
                 typeof raw.isValid.decision.contributors === 'object'
@@ -278,8 +389,52 @@ export function createTradingSignalDTO(raw) {
                 raw.isValid.decision.context && typeof raw.isValid.decision.context === 'object'
                   ? raw.isValid.decision.context
                   : undefined,
+              profile:
+                raw.isValid.decision.profile && typeof raw.isValid.decision.profile === 'object'
+                  ? {
+                      enterScore: Number.isFinite(Number(raw.isValid.decision.profile.enterScore))
+                        ? Number(raw.isValid.decision.profile.enterScore)
+                        : undefined,
+                      minStrength: Number.isFinite(Number(raw.isValid.decision.profile.minStrength))
+                        ? Number(raw.isValid.decision.profile.minStrength)
+                        : undefined,
+                      minWinRate: Number.isFinite(Number(raw.isValid.decision.profile.minWinRate))
+                        ? Number(raw.isValid.decision.profile.minWinRate)
+                        : undefined,
+                      minConfidence: Number.isFinite(
+                        Number(raw.isValid.decision.profile.minConfidence)
+                      )
+                        ? Number(raw.isValid.decision.profile.minConfidence)
+                        : undefined,
+                    }
+                  : undefined,
             }
-          : undefined,
+          : layeredDecisionFallback
+            ? {
+                state: layeredDecisionFallback.state,
+                blocked: layeredDecisionFallback.blocked,
+                score: layeredDecisionFallback.score ?? undefined,
+                missing: layeredDecisionFallback.missing
+                  ? layeredDecisionFallback.missing.slice(0, 12)
+                  : undefined,
+                whatWouldChange: layeredDecisionFallback.whatWouldChange
+                  ? layeredDecisionFallback.whatWouldChange.slice(0, 12)
+                  : undefined,
+                missingInputs:
+                  layeredDecisionFallback.missingInputs &&
+                  typeof layeredDecisionFallback.missingInputs === 'object'
+                    ? layeredDecisionFallback.missingInputs
+                    : undefined,
+                nextSteps: layeredDecisionFallback.nextSteps
+                  ? layeredDecisionFallback.nextSteps.slice(0, 10)
+                  : undefined,
+                killSwitch:
+                  layeredDecisionFallback.killSwitch &&
+                  typeof layeredDecisionFallback.killSwitch === 'object'
+                    ? layeredDecisionFallback.killSwitch
+                    : undefined,
+              }
+            : undefined,
     },
     explainability: raw.explainability ?? null,
     reasoning: Array.isArray(raw.reasoning) ? raw.reasoning : null,

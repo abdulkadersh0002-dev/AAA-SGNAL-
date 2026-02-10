@@ -922,6 +922,9 @@ if (
 ) {
   schedulerOptions.maxPairsPerTick = pairPrefetchSettings.maxPairsPerTick;
 }
+if (Array.isArray(pairPrefetchSettings.timeframes) && pairPrefetchSettings.timeframes.length > 0) {
+  schedulerOptions.defaultTimeframes = pairPrefetchSettings.timeframes;
+}
 const pairPrefetchScheduler = new PairPrefetchScheduler({
   priceDataFetcher: tradingEngine.priceDataFetcher,
   catalog: pairCatalog.filter((instrument) => instrument.enabled !== false),
@@ -980,6 +983,20 @@ if (pairPrefetchSettings.enabled) {
 // Auto-start trading if configured
 const autoTradingAutostart = autoTradingConfig.autostart;
 if (autoTradingAutostart) {
+  const eaOnlyRaw = String(process.env.EA_ONLY_MODE || '')
+    .trim()
+    .toLowerCase();
+  const eaOnlyEnabled =
+    eaOnlyRaw === '1' || eaOnlyRaw === 'true' || eaOnlyRaw === 'yes' || eaOnlyRaw === 'on';
+  const forceAutostartRaw = String(process.env.AUTO_TRADING_AUTOSTART_FORCE || '')
+    .trim()
+    .toLowerCase();
+  const forceAutostart =
+    forceAutostartRaw === '1' ||
+    forceAutostartRaw === 'true' ||
+    forceAutostartRaw === 'yes' ||
+    forceAutostartRaw === 'on';
+
   // MT4/MT5 EAs often connect *after* the server boots. One-shot autostart can miss that.
   // Keep retrying until the broker is connected, then confirm automation is enabled.
   const autostartRetryMs = Number.isFinite(Number(process.env.AUTO_TRADING_AUTOSTART_RETRY_MS))
@@ -1000,76 +1017,94 @@ if (autoTradingAutostart) {
     tradeManager.getDefaultBrokerId?.() ||
     null;
 
-  const attemptAutostart = async () => {
-    autostartAttempts += 1;
+  // In EA-only mode, MT4/MT5 order execution is expected to happen inside the terminal.
+  // Auto-starting the server-side trade manager would just generate execute attempts that
+  // then get rejected (or hit an absent REST bridge). Skip autostart unless forced.
+  if (
+    !forceAutostart &&
+    eaOnlyEnabled &&
+    (autostartBroker === 'mt4' || autostartBroker === 'mt5')
+  ) {
+    logger.info(
+      { broker: autostartBroker },
+      'Auto trading autostart skipped (EA-only mode). EA will execute trades via /signal/get.'
+    );
+  } else {
+    const attemptAutostart = async () => {
+      autostartAttempts += 1;
 
-    try {
-      if (!autostartBroker) {
-        logger.warn('Auto trading auto-start pending: no broker resolved');
-        return;
+      try {
+        if (!autostartBroker) {
+          logger.warn('Auto trading auto-start pending: no broker resolved');
+          return;
+        }
+
+        const connected = await tradeManager.isBrokerConnected(autostartBroker);
+        const enabled = tradeManager.isAutoTradingEnabled(autostartBroker);
+
+        // If automation is enabled AND the EA is actually connected, we're done.
+        if (enabled && connected) {
+          logger.info({ broker: autostartBroker }, 'Auto trading auto-started (EA connected)');
+          if (autostartTimer) {
+            clearInterval(autostartTimer);
+            autostartTimer = null;
+          }
+          return;
+        }
+
+        // If not enabled yet, enable it (even if disconnected) and keep waiting.
+        if (!enabled) {
+          const result = await tradeManager.startAutoTrading({
+            broker: autostartBroker,
+            allowDisconnected: true,
+          });
+          logger.info(
+            {
+              broker: result?.broker || autostartBroker,
+              connected: result?.connected,
+              pairs: result?.pairs,
+              interval: result?.checkIntervalMs,
+            },
+            'Auto trading autostart enabled (waiting for EA connection)'
+          );
+          return;
+        }
+
+        // Enabled already, still waiting on EA connectivity.
+        logger.warn(
+          {
+            broker: autostartBroker,
+            attempt: autostartAttempts,
+            maxAttempts: autostartMaxAttempts,
+          },
+          'Auto trading auto-start pending (EA offline)'
+        );
+      } catch (error) {
+        logger.error(
+          { err: error, attempt: autostartAttempts, maxAttempts: autostartMaxAttempts },
+          'Failed to auto-start trading manager'
+        );
       }
 
-      const connected = await tradeManager.isBrokerConnected(autostartBroker);
-      const enabled = tradeManager.isAutoTradingEnabled(autostartBroker);
-
-      // If automation is enabled AND the EA is actually connected, we're done.
-      if (enabled && connected) {
-        logger.info({ broker: autostartBroker }, 'Auto trading auto-started (EA connected)');
+      if (autostartMaxAttempts != null && autostartAttempts >= autostartMaxAttempts) {
+        logger.warn(
+          { attempts: autostartAttempts, retryMs: autostartRetryMs },
+          'Auto trading auto-start gave up; broker may be offline'
+        );
         if (autostartTimer) {
           clearInterval(autostartTimer);
           autostartTimer = null;
         }
-        return;
       }
+    };
 
-      // If not enabled yet, enable it (even if disconnected) and keep waiting.
-      if (!enabled) {
-        const result = await tradeManager.startAutoTrading({
-          broker: autostartBroker,
-          allowDisconnected: true,
-        });
-        logger.info(
-          {
-            broker: result?.broker || autostartBroker,
-            connected: result?.connected,
-            pairs: result?.pairs,
-            interval: result?.checkIntervalMs,
-          },
-          'Auto trading autostart enabled (waiting for EA connection)'
-        );
-        return;
-      }
-
-      // Enabled already, still waiting on EA connectivity.
-      logger.warn(
-        { broker: autostartBroker, attempt: autostartAttempts, maxAttempts: autostartMaxAttempts },
-        'Auto trading auto-start pending (EA offline)'
-      );
-    } catch (error) {
-      logger.error(
-        { err: error, attempt: autostartAttempts, maxAttempts: autostartMaxAttempts },
-        'Failed to auto-start trading manager'
-      );
-    }
-
-    if (autostartMaxAttempts != null && autostartAttempts >= autostartMaxAttempts) {
-      logger.warn(
-        { attempts: autostartAttempts, retryMs: autostartRetryMs },
-        'Auto trading auto-start gave up; broker may be offline'
-      );
-      if (autostartTimer) {
-        clearInterval(autostartTimer);
-        autostartTimer = null;
-      }
-    }
-  };
-
-  // First attempt immediately, then retry in the background.
-  void attemptAutostart();
-  autostartTimer = setInterval(() => {
+    // First attempt immediately, then retry in the background.
     void attemptAutostart();
-  }, autostartRetryMs);
-  autostartTimer.unref?.();
+    autostartTimer = setInterval(() => {
+      void attemptAutostart();
+    }, autostartRetryMs);
+    autostartTimer.unref?.();
+  }
 } else {
   logger.info('Auto trading auto-start disabled; awaiting manual start command');
 }

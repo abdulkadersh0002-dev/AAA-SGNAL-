@@ -48,7 +48,11 @@ class IntelligentTradeManager {
 
     // News impact tracking
     this.recentHighImpactNews = new Map(); // currency -> { items: [], lastUpdate }
-    this.newsAvoidanceWindow = 15 * 60 * 1000; // 15 minutes before/after news
+    this.newsAvoidanceWindow =
+      Number.isFinite(Number(options.newsAvoidanceWindowMs)) &&
+      Number(options.newsAvoidanceWindowMs) > 0
+        ? Number(options.newsAvoidanceWindowMs)
+        : 15 * 60 * 1000; // 15 minutes before/after news
 
     // Profit protection settings
     this.profitProtectionThreshold = 0.6; // 60% of TP reached

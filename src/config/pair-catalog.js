@@ -106,7 +106,7 @@ function createCommodityInstrument(config) {
   const pair = config.pair.toUpperCase();
   return {
     pair,
-    assetClass: 'commodity',
+    assetClass: config.assetClass || 'commodity',
     base: config.base,
     quote: config.quote || 'USD',
     displayName: config.displayName || config.base,
@@ -355,6 +355,7 @@ const indexInstruments = [
 const commodityInstruments = [
   createCommodityInstrument({
     pair: 'XAUUSD',
+    assetClass: 'metals',
     base: 'XAU',
     quote: 'USD',
     displayName: 'Gold Spot',
@@ -378,6 +379,7 @@ const commodityInstruments = [
   }),
   createCommodityInstrument({
     pair: 'XAGUSD',
+    assetClass: 'metals',
     base: 'XAG',
     quote: 'USD',
     displayName: 'Silver Spot',
@@ -396,6 +398,28 @@ const commodityInstruments = [
       polygon: 'C:XAGUSD',
     },
     syntheticBasePrice: 24,
+    syntheticVolatility: 0.6,
+    enabled: false,
+  }),
+  createCommodityInstrument({
+    pair: 'XAGEUR',
+    assetClass: 'metals',
+    base: 'XAG',
+    quote: 'EUR',
+    displayName: 'Silver Spot (EUR)',
+    pricePrecision: 3,
+    pipSize: 0.01,
+    volatilityTier: 'high',
+    liquidityNotes: 'EUR-quoted silver; spreads may widen outside EU/US overlap.',
+    sessions: [
+      { label: 'London Bullion', start: '08:00', end: '16:00', weight: 1.4 },
+      { label: 'Comex', start: '13:25', end: '18:25', weight: 1.3 },
+    ],
+    aliases: ['Silver', 'XAG', 'XAGEUR', 'XAG/EUR'],
+    providers: {
+      twelveData: 'XAG/EUR',
+    },
+    syntheticBasePrice: 22,
     syntheticVolatility: 0.6,
     enabled: false,
   }),
@@ -474,11 +498,43 @@ const instrumentIndex = new Map(
   pairCatalog.map((instrument) => [instrument.pair.toUpperCase(), instrument])
 );
 
+function normalizePairKey(pair) {
+  const s = String(pair || '')
+    .trim()
+    .toUpperCase();
+  if (!s) {
+    return null;
+  }
+
+  // Formats like EUR/USD, EUR:USD, EUR-USD
+  const sepMatch = s.match(/^([A-Z]{3})(?:-|:|\/)([A-Z]{3})/);
+  if (sepMatch) {
+    return `${sepMatch[1]}${sepMatch[2]}`;
+  }
+
+  // Formats like EURUSD, EURUSDm, EURUSD.r, USDJPYC, XAUUSD.J26
+  const prefixMatch = s.match(/^([A-Z]{6})/);
+  if (prefixMatch) {
+    return prefixMatch[1];
+  }
+
+  // Best-effort fallback.
+  const lettersOnly = s.replace(/[^A-Z]/g, '');
+  if (lettersOnly.length >= 6) {
+    return lettersOnly.slice(0, 6);
+  }
+  return lettersOnly || null;
+}
+
 export function getPairMetadata(pair) {
   if (!pair) {
     return null;
   }
-  return instrumentIndex.get(String(pair).toUpperCase()) || null;
+  const key = normalizePairKey(pair);
+  if (!key) {
+    return null;
+  }
+  return instrumentIndex.get(key) || null;
 }
 
 export function listTargetPairs() {

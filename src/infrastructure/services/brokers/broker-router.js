@@ -36,6 +36,52 @@ class BrokerRouter {
     this.initializeConnectors(options);
   }
 
+  getBreakerSnapshot(brokerId) {
+    const entry = this.brokerBreakers.get(brokerId);
+    if (!entry) {
+      return {
+        broker: brokerId,
+        active: false,
+        failures: 0,
+        expiresAt: 0,
+        remainingMs: 0,
+      };
+    }
+    const now = Date.now();
+    const remainingMs = entry.expiresAt && entry.expiresAt > now ? entry.expiresAt - now : 0;
+    return {
+      broker: brokerId,
+      active: Boolean(entry.active) && remainingMs > 0,
+      failures: Number(entry.failures) || 0,
+      expiresAt: Number(entry.expiresAt) || 0,
+      remainingMs,
+    };
+  }
+
+  getBreakersStatus() {
+    const brokers = this.listConnectorIds();
+    const known = new Set([...brokers, ...Array.from(this.brokerBreakers.keys())]);
+    return Array.from(known)
+      .sort()
+      .map((brokerId) => this.getBreakerSnapshot(brokerId));
+  }
+
+  resetBreaker(brokerId) {
+    if (!brokerId) {
+      const error = new Error('brokerId is required');
+      error.code = 'INVALID_BROKER_ID';
+      throw error;
+    }
+    this.brokerBreakers.delete(brokerId);
+    return this.getBreakerSnapshot(brokerId);
+  }
+
+  resetAllBreakers() {
+    const before = this.getBreakersStatus();
+    this.brokerBreakers.clear();
+    return { before, after: this.getBreakersStatus() };
+  }
+
   initializeConnectors(options) {
     const cfg = options || {};
 
@@ -107,6 +153,7 @@ class BrokerRouter {
       connectors: this.listConnectorIds(),
       defaultBroker: this.defaultBroker,
       lastSyncAt: this.lastSyncAt,
+      breakers: this.getBreakersStatus(),
       recentOrders: this.orderLog.slice(-10),
     };
   }
@@ -193,6 +240,26 @@ class BrokerRouter {
       return {
         success: false,
         error: `Kill switch engaged${this.killSwitchReason ? `: ${this.killSwitchReason}` : ''}`,
+      };
+    }
+
+    // In EA-only mode, MT4/MT5 execution is expected to happen inside the terminal EA,
+    // not via the optional REST connector microservices (ports 5001/5002).
+    const eaOnlyRaw = String(process.env.EA_ONLY_MODE || '')
+      .trim()
+      .toLowerCase();
+    const eaOnlyEnabled =
+      eaOnlyRaw === '1' || eaOnlyRaw === 'true' || eaOnlyRaw === 'yes' || eaOnlyRaw === 'on';
+    const wantedBrokerId = String(request?.broker || this.defaultBroker || '')
+      .trim()
+      .toLowerCase();
+    const isEaBroker = wantedBrokerId === 'mt4' || wantedBrokerId === 'mt5';
+    if (eaOnlyEnabled && isEaBroker) {
+      return {
+        success: false,
+        error:
+          'EA-only mode is enabled: MT4/MT5 orders are executed by the EA (not via REST bridge). ' +
+          'Disable EA-only mode (EA_ONLY_MODE=false) and configure MT4_BRIDGE_URL/MT5_BRIDGE_URL if you want server-side order execution.',
       };
     }
 

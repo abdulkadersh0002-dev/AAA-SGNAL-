@@ -1,7 +1,9 @@
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
+import fs from 'node:fs';
 import http from 'node:http';
 import https from 'node:https';
 import net from 'node:net';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import dotenv from 'dotenv';
@@ -19,7 +21,7 @@ const DASHBOARD_URL = `http://127.0.0.1:${DASHBOARD_PORT}/`;
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 function parseArgs(argv) {
-  /** @type {{ preset?: string, listPresets?: boolean, help?: boolean }} */
+  /** @type {{ preset?: string, listPresets?: boolean, help?: boolean, detached?: boolean, freePorts?: boolean }} */
   const out = {};
 
   for (let i = 0; i < argv.length; i += 1) {
@@ -35,6 +37,21 @@ function parseArgs(argv) {
 
     if (arg === '--list-presets') {
       out.listPresets = true;
+      continue;
+    }
+
+    if (arg === '--detached') {
+      out.detached = true;
+      continue;
+    }
+
+    if (arg === '--attached') {
+      out.detached = false;
+      continue;
+    }
+
+    if (arg === '--free-ports') {
+      out.freePorts = true;
       continue;
     }
 
@@ -55,11 +72,83 @@ function parseArgs(argv) {
 
 function printHelp() {
   // Keep help text compact; this is a dev utility.
-  console.log('[start-all] Usage: npm run start:all -- [--preset <name>] [--list-presets]');
+  console.log(
+    '[start-all] Usage: npm run start:all -- [--preset <name>] [--list-presets] [--detached|--attached] [--free-ports]'
+  );
   console.log('[start-all] Examples:');
   console.log('  npm run start:all');
+  console.log('  npm run start:all -- --detached --free-ports');
   console.log('  npm run start:all -- --preset synthetic');
   console.log('  npm run start:all -- --list-presets');
+}
+
+const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const logsDir = path.join(repoRoot, 'logs');
+
+function ensureLogsDir() {
+  try {
+    fs.mkdirSync(logsDir, { recursive: true });
+  } catch {
+    // ignore
+  }
+}
+
+function openLogFiles(prefix) {
+  ensureLogsDir();
+  const outPath = path.join(logsDir, `${prefix}.out.log`);
+  const errPath = path.join(logsDir, `${prefix}.err.log`);
+  try {
+    fs.rmSync(outPath, { force: true });
+    fs.rmSync(errPath, { force: true });
+  } catch {
+    // ignore
+  }
+  return { outPath, errPath };
+}
+
+function teeToFile(stream, filePath, label) {
+  if (!stream) {
+    return;
+  }
+  let fileStream = null;
+  try {
+    fileStream = fs.createWriteStream(filePath, { flags: 'a' });
+  } catch {
+    return;
+  }
+
+  stream.on('data', (chunk) => {
+    try {
+      fileStream.write(chunk);
+    } catch {
+      // ignore
+    }
+  });
+
+  stream.on('error', (error) => {
+    // Keep this quiet but visible; log writing should never crash start-all.
+    console.error(`[start-all] Failed to write ${label} logs: ${error?.message || error}`);
+  });
+}
+
+function maybeFreePortsOnWindows(ports) {
+  if (process.platform !== 'win32') {
+    return;
+  }
+  const portsArg = ports.join(',');
+  const scriptPath = path.join(repoRoot, 'scripts', 'free-ports.ps1');
+  const result = spawnSync(
+    'powershell',
+    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', scriptPath, '-Ports', portsArg],
+    { encoding: 'utf8' }
+  );
+
+  if (result.stdout) {
+    process.stdout.write(result.stdout);
+  }
+  if (result.stderr) {
+    process.stderr.write(result.stderr);
+  }
 }
 
 function isReachable(url, timeoutMs = 1500) {
@@ -154,7 +243,7 @@ function isPortInUse(port, host = '127.0.0.1', timeoutMs = 400) {
   });
 }
 
-function spawnBackend() {
+function spawnBackend({ detached = false } = {}) {
   const nodeEnv = process.env.NODE_ENV || 'development';
   const rawTradingScope = String(process.env.TRADING_SCOPE || '')
     .trim()
@@ -200,6 +289,11 @@ function spawnBackend() {
     AUTO_TRADING_LIQUIDITY_MIN_SCORE: process.env.AUTO_TRADING_LIQUIDITY_MIN_SCORE ?? '80',
     AUTO_TRADING_LIQUIDITY_MIN_CONFLUENCE:
       process.env.AUTO_TRADING_LIQUIDITY_MIN_CONFLUENCE ?? '70',
+    // Gentle relax for HTF alignment + advanced filter (keeps quality while allowing more flow).
+    AUTO_TRADING_HTF_RELAXED: process.env.AUTO_TRADING_HTF_RELAXED ?? 'true',
+    ADVANCED_SIGNAL_MIN_WIN_RATE: process.env.ADVANCED_SIGNAL_MIN_WIN_RATE ?? '55',
+    ADVANCED_SIGNAL_MIN_STRENGTH: process.env.ADVANCED_SIGNAL_MIN_STRENGTH ?? '20',
+    AUTO_TRADING_MIN_SIGNAL_STRENGTH: process.env.AUTO_TRADING_MIN_SIGNAL_STRENGTH ?? '28',
     // Dev UX: allow showing analyzed WAIT/monitor candidates in the dashboard.
     // Auto-trading remains gated by the stronger ENTER + validity rules.
     EA_DASHBOARD_ALLOW_CANDIDATES: process.env.EA_DASHBOARD_ALLOW_CANDIDATES ?? 'true',
@@ -210,26 +304,87 @@ function spawnBackend() {
     ENABLE_PORT_FALLBACK: process.env.ENABLE_PORT_FALLBACK ?? 'false',
   };
 
-  return spawn(process.execPath, ['src/server.js'], {
-    stdio: 'inherit',
+  const logPrefix = `start-all-backend-${BACKEND_PORT}`;
+  const { outPath, errPath } = openLogFiles(logPrefix);
+
+  if (detached) {
+    const outFd = fs.openSync(outPath, 'a');
+    const errFd = fs.openSync(errPath, 'a');
+    const child = spawn(process.execPath, ['src/server.js'], {
+      env,
+      detached: true,
+      windowsHide: false,
+      stdio: ['ignore', outFd, errFd],
+    });
+    child.unref();
+    console.log(`[start-all] Backend detached pid=${child.pid} logs=${outPath}`);
+    return child;
+  }
+
+  const child = spawn(process.execPath, ['src/server.js'], {
     env,
+    stdio: ['inherit', 'pipe', 'pipe'],
   });
+  teeToFile(child.stdout, outPath, 'backend stdout');
+  teeToFile(child.stderr, errPath, 'backend stderr');
+  if (child.stdout) {
+    child.stdout.pipe(process.stdout);
+  }
+  if (child.stderr) {
+    child.stderr.pipe(process.stderr);
+  }
+  console.log(`[start-all] Backend logs: ${outPath}`);
+  console.log(`[start-all] Backend logs: ${errPath}`);
+  return child;
 }
 
-function spawnDashboard() {
+function spawnDashboard({ detached = false } = {}) {
   const env = {
     ...process.env,
     VITE_DEV_PROXY_TARGET: `http://127.0.0.1:${BACKEND_PORT}`,
     VITE_API_BASE_URL: `http://127.0.0.1:${BACKEND_PORT}`,
+    VITE_WATCHLIST_MIN_CONFIDENCE: process.env.VITE_WATCHLIST_MIN_CONFIDENCE ?? '55',
+    VITE_WATCHLIST_MIN_STRENGTH: process.env.VITE_WATCHLIST_MIN_STRENGTH ?? '20',
   };
+
+  const logPrefix = `start-all-dashboard-${DASHBOARD_PORT}`;
+  const { outPath, errPath } = openLogFiles(logPrefix);
 
   // On Windows, run through cmd.exe to avoid direct .cmd spawn issues.
   if (process.platform === 'win32') {
     const cmd = `npm --prefix clients\\neon-dashboard run dev -- --host 127.0.0.1 --port ${DASHBOARD_PORT}`;
-    return spawn('cmd.exe', ['/d', '/s', '/c', cmd], { stdio: 'inherit', env });
+    if (detached) {
+      const outFd = fs.openSync(outPath, 'a');
+      const errFd = fs.openSync(errPath, 'a');
+      const child = spawn('cmd.exe', ['/d', '/s', '/c', cmd], {
+        env,
+        detached: true,
+        windowsHide: false,
+        stdio: ['ignore', outFd, errFd],
+      });
+      child.unref();
+      console.log(`[start-all] Dashboard detached pid=${child.pid} logs=${outPath}`);
+      return child;
+    }
+
+    const child = spawn('cmd.exe', ['/d', '/s', '/c', cmd], {
+      stdio: ['inherit', 'pipe', 'pipe'],
+      env,
+    });
+    teeToFile(child.stdout, outPath, 'dashboard stdout');
+    teeToFile(child.stderr, errPath, 'dashboard stderr');
+    if (child.stdout) {
+      child.stdout.pipe(process.stdout);
+    }
+    if (child.stderr) {
+      child.stderr.pipe(process.stderr);
+    }
+    console.log(`[start-all] Dashboard logs: ${outPath}`);
+    console.log(`[start-all] Dashboard logs: ${errPath}`);
+    return child;
   }
 
-  return spawn(
+  const child = spawn(
     'npm',
     [
       '--prefix',
@@ -242,8 +397,32 @@ function spawnDashboard() {
       '--port',
       String(DASHBOARD_PORT),
     ],
-    { stdio: 'inherit', env }
+    {
+      stdio: detached
+        ? ['ignore', fs.openSync(outPath, 'a'), fs.openSync(errPath, 'a')]
+        : ['inherit', 'pipe', 'pipe'],
+      env,
+      detached,
+    }
   );
+
+  if (detached) {
+    child.unref();
+    console.log(`[start-all] Dashboard detached pid=${child.pid} logs=${outPath}`);
+    return child;
+  }
+
+  teeToFile(child.stdout, outPath, 'dashboard stdout');
+  teeToFile(child.stderr, errPath, 'dashboard stderr');
+  if (child.stdout) {
+    child.stdout.pipe(process.stdout);
+  }
+  if (child.stderr) {
+    child.stderr.pipe(process.stderr);
+  }
+  console.log(`[start-all] Dashboard logs: ${outPath}`);
+  console.log(`[start-all] Dashboard logs: ${errPath}`);
+  return child;
 }
 
 let backendChild = null;
@@ -287,21 +466,41 @@ if (presetKey !== 'default') {
   console.log(`[start-all] Preset: ${presetKey} (${preset.label})`);
 }
 
-const backendPortInUse = await isPortInUse(BACKEND_PORT);
-const backendAlreadyRunning = backendPortInUse && (await isReachable(BACKEND_STATUS_URL));
+const envDetachedRaw = String(process.env.START_ALL_DETACHED || '')
+  .trim()
+  .toLowerCase();
+const envDetached = envDetachedRaw === '1' || envDetachedRaw === 'true' || envDetachedRaw === 'yes';
+const defaultDetached = process.platform === 'win32' && Boolean(process.env.VSCODE_PID);
+const detached = typeof cli.detached === 'boolean' ? cli.detached : envDetached || defaultDetached;
+
+if (cli.freePorts) {
+  console.log('[start-all] Freeing ports...');
+  maybeFreePortsOnWindows([BACKEND_PORT, DASHBOARD_PORT]);
+}
+
+let backendPortInUse = await isPortInUse(BACKEND_PORT);
+let backendAlreadyRunning = backendPortInUse && (await isReachable(BACKEND_STATUS_URL));
 
 if (backendPortInUse && !backendAlreadyRunning) {
   console.error(
-    `[start-all] Port ${BACKEND_PORT} is already in use, but backend is not reachable at ${BACKEND_STATUS_URL}. Stop the stale listener (or change PORT) and try again.`
+    `[start-all] Port ${BACKEND_PORT} is already in use, but backend is not reachable at ${BACKEND_STATUS_URL}. Trying to free the stale listener...`
   );
-  process.exit(1);
+  maybeFreePortsOnWindows([BACKEND_PORT]);
+  backendPortInUse = await isPortInUse(BACKEND_PORT);
+  backendAlreadyRunning = backendPortInUse && (await isReachable(BACKEND_STATUS_URL));
+  if (backendPortInUse && !backendAlreadyRunning) {
+    console.error(
+      `[start-all] Port ${BACKEND_PORT} is still in use and backend is not reachable. Stop the stale listener (or change PORT) and try again.`
+    );
+    process.exit(1);
+  }
 }
 
 if (backendAlreadyRunning) {
   console.log(`[start-all] Backend already running: ${BACKEND_STATUS_URL}`);
 } else {
   console.log(`[start-all] Starting backend: ${BACKEND_STATUS_URL}`);
-  backendChild = spawnBackend();
+  backendChild = spawnBackend({ detached });
 
   const backendReady = await waitFor(BACKEND_STATUS_URL, { timeoutMs: 30000 });
   if (!backendReady) {
@@ -311,22 +510,41 @@ if (backendAlreadyRunning) {
   }
 }
 
-const dashboardPortInUse = await isPortInUse(DASHBOARD_PORT);
-const dashboardAlreadyRunning = dashboardPortInUse && (await isReachable(DASHBOARD_URL));
+let dashboardPortInUse = await isPortInUse(DASHBOARD_PORT);
+let dashboardAlreadyRunning = dashboardPortInUse && (await isReachable(DASHBOARD_URL));
 
 if (dashboardPortInUse && !dashboardAlreadyRunning) {
   console.error(
-    `[start-all] Dashboard port ${DASHBOARD_PORT} is already in use, but dashboard is not reachable at ${DASHBOARD_URL}. Stop the stale listener (or change DASHBOARD_PORT) and try again.`
+    `[start-all] Dashboard port ${DASHBOARD_PORT} is already in use, but dashboard is not reachable at ${DASHBOARD_URL}. Trying to free the stale listener...`
   );
-  shutdown('SIGTERM');
-  process.exit(1);
+  maybeFreePortsOnWindows([DASHBOARD_PORT]);
+  dashboardPortInUse = await isPortInUse(DASHBOARD_PORT);
+  dashboardAlreadyRunning = dashboardPortInUse && (await isReachable(DASHBOARD_URL));
+  if (dashboardPortInUse && !dashboardAlreadyRunning) {
+    console.error(
+      `[start-all] Dashboard port ${DASHBOARD_PORT} is still in use and dashboard is not reachable. Stop the stale listener (or change DASHBOARD_PORT) and try again.`
+    );
+    shutdown('SIGTERM');
+    process.exit(1);
+  }
 }
 
 if (dashboardAlreadyRunning) {
   console.log(`[start-all] Dashboard already running: ${DASHBOARD_URL}`);
 } else {
   console.log(`[start-all] Starting dashboard: ${DASHBOARD_URL}`);
-  dashboardChild = spawnDashboard();
+  dashboardChild = spawnDashboard({ detached });
+}
+
+if (detached) {
+  console.log('[start-all] Detached mode: verifying services then exiting.');
+  const dashboardReady = await waitFor(DASHBOARD_URL, { timeoutMs: 45000, intervalMs: 750 });
+  if (!dashboardReady) {
+    console.error(`[start-all] Dashboard did not become ready: ${DASHBOARD_URL}`);
+    process.exit(1);
+  }
+  console.log(`[start-all] Ready: backend=${BACKEND_STATUS_URL} dashboard=${DASHBOARD_URL}`);
+  process.exit(0);
 }
 
 // If we didn't start anything, exit cleanly.

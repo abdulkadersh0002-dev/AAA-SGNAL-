@@ -128,4 +128,69 @@ describe('Broker routes (integration)', () => {
     assert.equal(missingBody.success, false);
     assert.ok(missingBody.requestId);
   });
+
+  it('resets circuit breakers (all + per-broker)', async () => {
+    const app = express();
+    app.use(requestIdMiddleware());
+    app.use(express.json());
+
+    const calls = [];
+    const brokerRouter = {
+      defaultBroker: 'mt5',
+      getStatus: () => ({ routing: 'ok', breakers: [] }),
+      getHealthSnapshots: async () => [{ id: 'mt5', ok: true }],
+      resetAllBreakers: () => {
+        calls.push({ kind: 'all' });
+        return {
+          before: [{ broker: 'mt5', active: true }],
+          after: [{ broker: 'mt5', active: false }],
+        };
+      },
+      resetBreaker: (broker) => {
+        calls.push({ kind: 'one', broker });
+        return { broker, active: false, failures: 0 };
+      },
+    };
+
+    const router = brokerRoutes({
+      tradingEngine: { activeTrades: new Map() },
+      brokerRouter,
+      auditLogger: { record: async () => {} },
+      logger: createLogger(),
+      config: { brokerRouting: { enabled: true } },
+      requireBrokerRead: (req, res, next) => next(),
+      requireBrokerWrite: (req, res, next) => next(),
+    });
+
+    app.use('/api', router);
+    app.use(createErrorHandler({ logger: createLogger() }));
+
+    const started = await startEphemeralServer(app);
+    server = started.server;
+    baseUrl = started.baseUrl;
+
+    const resAll = await fetch(`${baseUrl}/api/broker/circuit/reset`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ all: true }),
+    });
+    assert.equal(resAll.status, 200);
+    const bodyAll = await resAll.json();
+    assert.equal(bodyAll.success, true);
+    assert.ok(bodyAll.requestId);
+
+    const resOne = await fetch(`${baseUrl}/api/broker/circuit/reset`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ broker: 'mt5' }),
+    });
+    assert.equal(resOne.status, 200);
+    const bodyOne = await resOne.json();
+    assert.equal(bodyOne.success, true);
+    assert.ok(bodyOne.requestId);
+
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls[0], { kind: 'all' });
+    assert.deepEqual(calls[1], { kind: 'one', broker: 'mt5' });
+  });
 });

@@ -11,6 +11,7 @@ import {
 import { attachLayeredAnalysisToSignal, evaluateLayers18Readiness } from '../ea-signal-pipeline.js';
 import { getPairMetadata } from '../../../config/pair-catalog.js';
 import { isSaneEaSymbolToken } from '../../../utils/ea-symbols.js';
+import { readEnvBool, readEnvNumber } from '../../../utils/env.js';
 import {
   resolveLiquidityGuardThresholds,
   resolveNewsGuardThresholds,
@@ -29,10 +30,23 @@ class EaBridgeService {
     this.sessions = new Map();
 
     // Intelligent Trade Manager for advanced decision-making
+    const newsAvoidanceMinutes = readEnvNumber('EA_NEWS_GUARD_BLACKOUT_MINUTES', null);
+    const intelligentMinExecutionConfidence = readEnvNumber(
+      'INTELLIGENT_MIN_EXECUTION_CONFIDENCE',
+      null
+    );
+    const newsAvoidanceWindowMs = Number.isFinite(Number(newsAvoidanceMinutes))
+      ? Math.max(1, Number(newsAvoidanceMinutes)) * 60 * 1000
+      : null;
+
     this.intelligentTradeManager = new IntelligentTradeManager({
       logger: this.logger,
       eaBridgeService: this,
       newsAggregator: options.newsAggregator,
+      newsAvoidanceWindowMs,
+      minExecutionConfidence: Number.isFinite(Number(intelligentMinExecutionConfidence))
+        ? Number(intelligentMinExecutionConfidence)
+        : null,
     });
 
     // Trade performance history for learning
@@ -75,6 +89,13 @@ class EaBridgeService {
     // Entry context cache for live trade monitoring (broker:symbol:direction -> entryContext)
     this.entryContextBySymbol = new Map();
 
+    // Poll/telemetry counters for quick "where is it stuck" diagnostics.
+    // Stored in-memory (resets on server restart).
+    this.pollMetrics = {
+      signalGetByBroker: new Map(),
+      transactionByBroker: new Map(),
+    };
+
     // Synthetic candles derived from EA quotes (free realtime fallback).
     // Only maintained for symbols the dashboard marks as active/requested.
     // key: `${broker}:${symbol}:${timeframe}` -> [{ time, open, high, low, close, volume, receivedAt, source }]
@@ -89,6 +110,14 @@ class EaBridgeService {
     this.candleAnalysisCacheTtlMs = Number.isFinite(Number(process.env.EA_CANDLE_ANALYSIS_TTL_MS))
       ? Math.max(250, Number(process.env.EA_CANDLE_ANALYSIS_TTL_MS))
       : 1500;
+
+    // Analysis snapshot cache (shared between dashboard broadcast + EA execution polls).
+    // This prevents signal double-compute and ensures dashboard/execution see the same 20-layer snapshot.
+    this.analysisSnapshotCache = new Map();
+    const envSnapshotTtl = Number(process.env.EA_ANALYSIS_SNAPSHOT_CACHE_TTL_MS);
+    this.analysisSnapshotCacheTtlMs = Number.isFinite(envSnapshotTtl)
+      ? Math.max(250, Math.trunc(envSnapshotTtl))
+      : 2500;
 
     // EA management command queue (server -> EA).
     this.managementQueue = new Map(); // broker -> [{ id, symbol, type, payload, createdAt, expiresAt }]
@@ -205,6 +234,28 @@ class EaBridgeService {
     this.respectDashboardActiveSymbols =
       explicitRespectActive != null ? explicitRespectActive : !this.fullScanEnabled;
 
+    // If the dashboard isn't connected yet (or hasn't sent active symbols), the EA can end up with
+    // an empty active list and therefore stream no quotes/bars (leading to 0 candidates/signals).
+    // Provide a small, safe fallback list so the EA can bootstrap market data.
+    const defaultActiveRaw = String(process.env.EA_DEFAULT_ACTIVE_SYMBOLS || '')
+      .trim()
+      .toUpperCase();
+    const defaultActive = defaultActiveRaw
+      ? defaultActiveRaw
+          .split(/[\s,;|]+/g)
+          .map((s) =>
+            String(s || '')
+              .trim()
+              .toUpperCase()
+          )
+          .filter(Boolean)
+      : ['EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'USDCAD', 'AUDUSD', 'NZDUSD', 'XAUUSD', 'XAGUSD'];
+
+    this.defaultActiveSymbols = defaultActive
+      .filter((s) => isSaneEaSymbolToken(s))
+      .filter((s) => this.isAllowedAssetSymbol(s))
+      .slice(0, 200);
+
     // Defensive ingestion caps (avoid runaway payloads harming server stability).
     // These are soft caps: we accept the request but only process up to N items.
     this.maxQuotesPerIngest = Number.isFinite(Number(process.env.EA_MAX_QUOTES_PER_INGEST))
@@ -232,6 +283,69 @@ class EaBridgeService {
     this.maxFutureNewsMs = Number.isFinite(Number(process.env.EA_MAX_NEWS_FUTURE_MS))
       ? Math.max(60 * 1000, Number(process.env.EA_MAX_NEWS_FUTURE_MS))
       : 365 * 24 * 60 * 60 * 1000;
+  }
+
+  getAnalysisSnapshotCacheKey({ broker, symbol } = {}) {
+    const b = this.normalizeBroker(broker) || 'ea';
+    const s = this.normalizeSymbol(symbol) || null;
+    return s ? `${b}:${s}` : null;
+  }
+
+  cacheAnalysisSnapshot({ broker, symbol, result, signal, tradeValid, message, computedAt } = {}) {
+    try {
+      const key = this.getAnalysisSnapshotCacheKey({ broker, symbol });
+      if (!key) {
+        return false;
+      }
+      const at = Number.isFinite(Number(computedAt)) ? Number(computedAt) : Date.now();
+      const cachedResult =
+        result && typeof result === 'object'
+          ? {
+              ...result,
+              success: result.success !== false,
+              signal: result.signal || signal || null,
+              tradeValid:
+                result.tradeValid != null
+                  ? Boolean(result.tradeValid)
+                  : tradeValid != null
+                    ? Boolean(tradeValid)
+                    : undefined,
+              message: result.message || message || 'OK',
+              cachedAt: at,
+            }
+          : {
+              success: true,
+              message: message || 'OK',
+              signal: signal || null,
+              tradeValid: tradeValid != null ? Boolean(tradeValid) : undefined,
+              cachedAt: at,
+            };
+
+      this.analysisSnapshotCache.set(key, { computedAt: at, result: cachedResult });
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  }
+
+  getCachedAnalysisSnapshot({ broker, symbol, maxAgeMs } = {}) {
+    const key = this.getAnalysisSnapshotCacheKey({ broker, symbol });
+    if (!key) {
+      return null;
+    }
+    const entry = this.analysisSnapshotCache.get(key) || null;
+    if (!entry) {
+      return null;
+    }
+    const now = Date.now();
+    const ttl = Number.isFinite(Number(maxAgeMs))
+      ? Math.max(0, Number(maxAgeMs))
+      : this.analysisSnapshotCacheTtlMs;
+    const age = now - Number(entry.computedAt || 0);
+    if (!Number.isFinite(age) || age < 0 || age > ttl) {
+      return null;
+    }
+    return entry.result || null;
   }
 
   getMarketCandleAnalysis({ broker, symbol, timeframe, limit = 200, maxAgeMs = 0 } = {}) {
@@ -614,7 +728,13 @@ class EaBridgeService {
         return [];
       }
       const max = Number.isFinite(Number(options.max)) ? Math.max(1, Number(options.max)) : 2000;
-      return this.listKnownSymbols({ broker, max, maxAgeMs: null });
+      const known = this.listKnownSymbols({ broker, max, maxAgeMs: null });
+      if (Array.isArray(known) && known.length > 0) {
+        return known;
+      }
+      return Array.isArray(this.defaultActiveSymbols)
+        ? this.defaultActiveSymbols.slice(0, max)
+        : [];
     }
     const broker = this.normalizeBroker(options.broker);
     if (!broker) {
@@ -622,10 +742,13 @@ class EaBridgeService {
     }
     this.pruneExpiredActiveSymbols(broker);
     const map = this.activeSymbols.get(broker);
-    if (!map) {
-      return [];
-    }
     const max = Number.isFinite(Number(options.max)) ? Math.max(1, Number(options.max)) : 200;
+
+    if (!map || map.size === 0) {
+      return Array.isArray(this.defaultActiveSymbols)
+        ? this.defaultActiveSymbols.slice(0, max)
+        : [];
+    }
     return Array.from(map.keys()).slice(0, max);
   }
 
@@ -1372,7 +1495,12 @@ class EaBridgeService {
       ingested += 1;
 
       // Feed high-impact news to intelligent trade manager
-      if (this.intelligentTradeManager && item.currency && item.impact >= 70) {
+      if (
+        this.intelligentTradeManager &&
+        item.currency &&
+        item.impact >= 70 &&
+        item.kind === 'calendar'
+      ) {
         this.intelligentTradeManager.recordHighImpactNews(item.currency, {
           id: item.id,
           title: item.title,
@@ -2158,11 +2286,19 @@ class EaBridgeService {
     try {
       if (timeframe === 'M1') {
         const existingQuote = this.latestQuotes.get(`${broker}:${symbol}`) || null;
+        const existingHasBidAsk =
+          existingQuote &&
+          Number.isFinite(existingQuote.bid) &&
+          Number.isFinite(existingQuote.ask) &&
+          Number(existingQuote.bid) > 0 &&
+          Number(existingQuote.ask) > 0;
         const existingFresh =
           existingQuote && existingQuote.receivedAt
             ? now - Number(existingQuote.receivedAt || 0) <= 30 * 1000
             : false;
-        if (!existingFresh && normalizedIncoming.length > 0) {
+        // Never downgrade a real bid/ask quote to a bars-only last price.
+        // Doing so would erase spreadPoints and cause spreadOk/executionCostOk to fail.
+        if (!existingFresh && !existingHasBidAsk && normalizedIncoming.length > 0) {
           const latest = normalizedIncoming[normalizedIncoming.length - 1] || null;
           const close = Number(latest?.close);
           if (Number.isFinite(close) && close > 0) {
@@ -2501,6 +2637,7 @@ class EaBridgeService {
     const config = this.tradingEngine?.config || {};
 
     const { impactThreshold, blackoutMinutes } = resolveNewsGuardThresholds(config);
+    const includeHeadlines = readEnvBool('EA_NEWS_GUARD_INCLUDE_HEADLINES', false) === true;
     const now = Date.now();
 
     const items = Array.isArray(this.getNews({ broker, limit: 200 }))
@@ -2531,6 +2668,23 @@ class EaBridgeService {
         };
       })
       .filter(Boolean)
+      .filter((evt) => {
+        if (includeHeadlines) {
+          return true;
+        }
+
+        const kind = String(evt.kind || '').toLowerCase();
+        if (kind === 'headline') {
+          return false;
+        }
+
+        // Avoid treating generic news items (no currency) as economic blackout events.
+        if (!evt.currency) {
+          return false;
+        }
+
+        return true;
+      })
       .filter((evt) => evt.impact >= impactThreshold)
       .sort((a, b) => a.minutes - b.minutes);
 
@@ -2780,6 +2934,16 @@ class EaBridgeService {
     const positions = Array.isArray(payload.positions) ? payload.positions : [];
     const now = Date.now();
 
+    const layeredMgmtEnabled = readEnvBool('EA_LAYERS18_MANAGEMENT_ENABLED', false) === true;
+    const envReducePct = readEnvNumber('EA_LAYERS18_REDUCE_PCT', null);
+    const layeredReducePct = Number.isFinite(envReducePct)
+      ? Math.min(0.9, Math.max(0.1, envReducePct))
+      : 0.5;
+    const killSwitchOnNews = readEnvBool('EA_KILL_SWITCH_ON_NEWS', false) === true;
+    const killSwitchOnDataQuality = readEnvBool('EA_KILL_SWITCH_ON_DATA_QUALITY', false) === true;
+    const killSwitchSpreadPips = readEnvNumber('EA_KILL_SWITCH_SPREAD_PIPS', null);
+    const killSwitchGapPips = readEnvNumber('EA_KILL_SWITCH_GAP_PIPS', null);
+
     const guards = {
       news: this.buildNewsGuard({ broker }),
       dataQuality: this.buildDataQualityGuard({ broker }),
@@ -2791,7 +2955,6 @@ class EaBridgeService {
       .map((pos) => this.evaluateSinglePosition(pos, { broker, now, guards }))
       .filter(Boolean);
 
-    const commands = this.buildManagementCommands(actions, { broker, now });
     const liveContexts = [];
     for (const position of positions) {
       try {
@@ -2803,6 +2966,124 @@ class EaBridgeService {
         // best-effort
       }
     }
+
+    if (layeredMgmtEnabled && liveContexts.length > 0) {
+      const bySymbol = new Map(actions.map((entry) => [entry.symbol, entry]));
+      for (const ctx of liveContexts) {
+        if (!ctx || !ctx.symbol) {
+          continue;
+        }
+        const symbol = ctx.symbol;
+        const decision = String(ctx.decision || '').toUpperCase();
+        if (!decision || decision === 'HOLD') {
+          continue;
+        }
+
+        let entry = bySymbol.get(symbol);
+        if (!entry) {
+          entry = {
+            symbol,
+            direction: ctx.direction || null,
+            rMultiple: null,
+            profitPips: null,
+            riskPips: null,
+            actions: [],
+            managementPlan: null,
+          };
+          actions.push(entry);
+          bySymbol.set(symbol, entry);
+        }
+
+        const hasClose = entry.actions.some((a) => a?.type === 'close');
+        const hasReduce = entry.actions.some((a) => a?.type === 'partial_close');
+
+        if (decision === 'EXIT') {
+          if (!hasClose) {
+            entry.actions.push({ type: 'close', reason: 'layers18_exit' });
+          }
+          continue;
+        }
+
+        if (decision === 'REDUCE' && !hasReduce) {
+          entry.actions.push({
+            type: 'partial_close',
+            reason: 'layers18_reduce',
+            percent: layeredReducePct,
+          });
+        }
+      }
+    }
+
+    let killSwitchReason = null;
+    if (killSwitchOnNews && guards.news?.pauseTrading) {
+      killSwitchReason = 'news_blackout';
+    } else if (killSwitchOnDataQuality && guards.dataQuality?.blockTrading) {
+      killSwitchReason = 'data_quality_blocked';
+    }
+
+    if (!killSwitchReason && Number.isFinite(killSwitchSpreadPips)) {
+      const threshold = Number(killSwitchSpreadPips);
+      for (const ctx of liveContexts) {
+        const spread = Number(ctx?.currentContext?.spreadPoints);
+        if (Number.isFinite(spread) && spread >= threshold) {
+          killSwitchReason = `spread_spike_${threshold}`;
+          break;
+        }
+      }
+    }
+
+    if (!killSwitchReason && Number.isFinite(killSwitchGapPips)) {
+      const threshold = Number(killSwitchGapPips);
+      for (const pos of positions) {
+        const symbol = this.normalizeSymbol(pos?.symbol || pos?.pair || pos?.instrument);
+        const entryPrice = Number(pos?.entryPrice || pos?.price || pos?.openPrice);
+        const currentPrice = Number(pos?.currentPrice || pos?.priceCurrent || pos?.bid || pos?.ask);
+        if (!symbol || !Number.isFinite(entryPrice) || !Number.isFinite(currentPrice)) {
+          continue;
+        }
+        const pipSize =
+          Number(getPairMetadata(symbol)?.pipSize) || (symbol.endsWith('JPY') ? 0.01 : 0.0001);
+        if (pipSize <= 0) {
+          continue;
+        }
+        const movePips = Math.abs(currentPrice - entryPrice) / pipSize;
+        if (Number.isFinite(movePips) && movePips >= threshold) {
+          killSwitchReason = `price_spike_${threshold}`;
+          break;
+        }
+      }
+    }
+
+    if (killSwitchReason && this.brokerRouter?.setKillSwitch) {
+      this.brokerRouter.setKillSwitch(true, `auto:${killSwitchReason}`);
+      const bySymbol = new Map(actions.map((entry) => [entry.symbol, entry]));
+      for (const pos of positions) {
+        const symbol = this.normalizeSymbol(pos?.symbol || pos?.pair || pos?.instrument);
+        if (!symbol) {
+          continue;
+        }
+        let entry = bySymbol.get(symbol);
+        if (!entry) {
+          entry = {
+            symbol,
+            direction: pos?.direction || null,
+            rMultiple: null,
+            profitPips: null,
+            riskPips: null,
+            actions: [],
+            managementPlan: null,
+          };
+          actions.push(entry);
+          bySymbol.set(symbol, entry);
+        }
+        const hasClose = entry.actions.some((a) => a?.type === 'close');
+        if (!hasClose) {
+          entry.actions.push({ type: 'close', reason: 'kill_switch' });
+        }
+      }
+    }
+
+    const commands = this.buildManagementCommands(actions, { broker, now });
 
     const result = {
       success: true,
@@ -2905,10 +3186,16 @@ class EaBridgeService {
 
     const envMinConfluence = Number(process.env.EA_SIGNAL_LAYERS18_MIN_CONFLUENCE);
     const minConfluence = Number.isFinite(envMinConfluence) ? Math.max(0, envMinConfluence) : 30;
+    const envExitConfluence = Number(process.env.EA_LAYERS18_EXIT_MIN_CONFLUENCE);
+    const exitMinConfluence = Number.isFinite(envExitConfluence)
+      ? Math.max(0, envExitConfluence)
+      : 20;
     let decision = 'HOLD';
     if (decisionState && decisionState !== 'ENTER') {
       decision = 'EXIT';
     } else if (layer16?.metrics?.isTradeValid === false) {
+      decision = 'EXIT';
+    } else if (confluenceScore != null && confluenceScore < exitMinConfluence) {
       decision = 'EXIT';
     } else if (confluenceScore != null && confluenceScore < minConfluence) {
       decision = 'REDUCE';
@@ -3201,6 +3488,21 @@ class EaBridgeService {
       session.profitLoss += transaction.profit;
     }
 
+    try {
+      const key = broker || 'unknown';
+      const prev = this.pollMetrics.transactionByBroker.get(key) || { count: 0 };
+      this.pollMetrics.transactionByBroker.set(key, {
+        count: Number(prev.count || 0) + 1,
+        lastAt: Date.now(),
+        lastType: type || null,
+        lastSymbol: symbol || null,
+        lastProfit: Number.isFinite(Number(profit)) ? Number(profit) : null,
+        lastSessionId: sessionId,
+      });
+    } catch (_error) {
+      // best-effort
+    }
+
     this.logger.info(
       { sessionId, type, symbol, profit: transaction.profit },
       'EA transaction received'
@@ -3374,6 +3676,13 @@ class EaBridgeService {
         ? Math.max(1_000, envQuoteMaxAgeMs)
         : 120 * 1000;
 
+      // Execution needs a *fresh* tick; otherwise the MT5 EA (and spread/ATR guards) will refuse to trade.
+      // Keep the quoteMaxAgeMs (data availability) separate from execution freshness.
+      const envExecQuoteMaxAgeMs = Number(process.env.EA_SIGNAL_EXEC_QUOTE_MAX_AGE_MS);
+      const execQuoteMaxAgeMs = Number.isFinite(envExecQuoteMaxAgeMs)
+        ? Math.max(1_000, envExecQuoteMaxAgeMs)
+        : quoteMaxAgeMs;
+
       const isRealBidAskQuote = (q) => {
         if (!q || typeof q !== 'object') {
           return false;
@@ -3462,6 +3771,17 @@ class EaBridgeService {
         };
       }
 
+      const quoteReceivedAt = Number(quote.receivedAt || quote.timestamp || 0);
+      const quoteAgeMs =
+        Number.isFinite(quoteReceivedAt) && quoteReceivedAt > 0
+          ? Math.max(0, Date.now() - quoteReceivedAt)
+          : null;
+      const quoteOkForExecution =
+        isRealBidAskQuote(quote) &&
+        (quoteAgeMs == null ? false : quoteAgeMs <= execQuoteMaxAgeMs) &&
+        // Avoid executing on synthetic bar-derived quotes.
+        String(quote.source || '') !== 'ea_bars_synthetic';
+
       const snapshot = broker
         ? this.getMarketSnapshot({ broker, symbol: pair, maxAgeMs: 2 * 60 * 1000 })
         : null;
@@ -3531,14 +3851,37 @@ class EaBridgeService {
       }
 
       // Canonical pipeline: use the same analysis snapshot as the dashboard.
-      // This keeps the EA execution decision aligned with what the Price Bar analyzer shows.
-      const analysis = await this.getAnalysisSnapshot({
-        broker,
-        symbol: pair,
-        accountMode: payload?.accountMode,
-      });
+      // To avoid double-compute, callers may pass a precomputed dashboard signal.
+      const precomputedSignal =
+        payload?.signal && typeof payload.signal === 'object' ? payload.signal : null;
+
+      const analysis = precomputedSignal
+        ? {
+            success: true,
+            message: 'OK',
+            signal: precomputedSignal,
+            tradeValid: Boolean(precomputedSignal?.isValid?.isValid),
+          }
+        : await this.getAnalysisSnapshot({
+            broker,
+            symbol: pair,
+            accountMode: payload?.accountMode,
+          });
 
       const signal = analysis?.signal || null;
+
+      try {
+        const key = broker || 'unknown';
+        const prev = this.pollMetrics.signalGetByBroker.get(key) || { count: 0 };
+        this.pollMetrics.signalGetByBroker.set(key, {
+          count: Number(prev.count || 0) + 1,
+          lastAt: Date.now(),
+          lastSymbol: pair,
+          lastSuccess: Boolean(analysis?.success),
+        });
+      } catch (_error) {
+        // best-effort
+      }
 
       if (!signal) {
         return {
@@ -3588,32 +3931,162 @@ class EaBridgeService {
 
       // Require the canonical 18-layer payload to be present/ready before executing.
       const requireLayers18 = autoTradingConfig.realtimeRequireLayers18 !== false;
+      const requiresEnterState = true;
+
+      // Optional policy: allow promoting very strong WAIT_MONITOR signals to ENTER for execution.
+      // This is OFF by default and must be explicitly enabled via env.
+      const allowWaitMonitorExecution =
+        String(process.env.EA_SIGNAL_ALLOW_WAIT_MONITOR || '')
+          .trim()
+          .toLowerCase() === 'true';
+
+      const waitExecMinConfidenceRaw = Number(process.env.EA_SIGNAL_WAIT_EXEC_MIN_CONFIDENCE);
+      const waitExecMinStrengthRaw = Number(process.env.EA_SIGNAL_WAIT_EXEC_MIN_STRENGTH);
+      const waitExecMinWinRateRaw = Number(process.env.EA_SIGNAL_WAIT_EXEC_MIN_WIN_RATE);
+      const waitExecMinScoreRaw = Number(process.env.EA_SIGNAL_WAIT_EXEC_MIN_SCORE);
+
+      const waitExecMinConfidence = Number.isFinite(waitExecMinConfidenceRaw)
+        ? Math.max(0, Math.min(100, waitExecMinConfidenceRaw))
+        : 55;
+      const waitExecMinStrength = Number.isFinite(waitExecMinStrengthRaw)
+        ? Math.max(0, Math.min(100, waitExecMinStrengthRaw))
+        : 20;
+      const waitExecMinWinRate = Number.isFinite(waitExecMinWinRateRaw)
+        ? Math.max(0, Math.min(100, waitExecMinWinRateRaw))
+        : 75;
+      const waitExecMinScore = Number.isFinite(waitExecMinScoreRaw)
+        ? Math.max(0, Math.min(100, waitExecMinScoreRaw))
+        : 30;
+
+      const waitExecRequireLayers18 =
+        String(process.env.EA_SIGNAL_WAIT_EXEC_REQUIRE_LAYERS18 || '')
+          .trim()
+          .toLowerCase() === 'true';
 
       const confidence = Number(signal.confidence) || 0;
       const strength = Number(signal.strength) || 0;
       const direction = String(signal.direction || '').toUpperCase();
-      const layer18 = Array.isArray(signal?.components?.layeredAnalysis?.layers)
-        ? signal.components.layeredAnalysis.layers.find(
-            (layer) =>
-              String(layer?.key || '').toUpperCase() === 'L18' || Number(layer?.layer) === 18
-          )
-        : null;
+      const layers = Array.isArray(signal?.components?.layeredAnalysis?.layers)
+        ? signal.components.layeredAnalysis.layers
+        : [];
+
+      const layer18 =
+        layers.find(
+          (layer) => String(layer?.key || '').toUpperCase() === 'L18' || Number(layer?.layer) === 18
+        ) || null;
+
+      const layer20 =
+        layers.find(
+          (layer) => String(layer?.key || '').toUpperCase() === 'L20' || Number(layer?.layer) === 20
+        ) || null;
+
+      const layer18Verdict =
+        String(layer18?.metrics?.verdict || '')
+          .trim()
+          .toUpperCase() || null;
       const decisionState =
-        String(layer18?.metrics?.decision?.state || signal?.isValid?.decision?.state || '')
+        String(
+          layer20?.metrics?.decision?.state ||
+            signal?.finalDecision?.state ||
+            signal?.isValid?.decision?.state ||
+            ''
+        )
           .trim()
           .toUpperCase() || null;
 
-      const allowStrongOverrideExecution =
-        String(process.env.EA_ALLOW_STRONG_OVERRIDE_EXECUTION || '')
-          .trim()
-          .toLowerCase() === 'true' ||
-        String(process.env.EA_ALLOW_STRONG_OVERRIDE_EXECUTION || '')
-          .trim()
-          .toLowerCase() === '1';
+      const originalDecisionState = decisionState;
 
-      const isEnter = decisionState === 'ENTER' && Boolean(signal?.isValid?.isValid);
+      const isTradeable = (sig) => {
+        const entryPrice = sig?.entryPrice ?? sig?.entry?.price;
+        const stopLoss = sig?.stopLoss ?? sig?.entry?.stopLoss;
+        const takeProfit = sig?.takeProfit ?? sig?.entry?.takeProfit;
+        if (!Number.isFinite(Number(entryPrice))) {
+          return false;
+        }
+        if (!Number.isFinite(Number(stopLoss))) {
+          return false;
+        }
+        if (!Number.isFinite(Number(takeProfit))) {
+          return false;
+        }
+        return true;
+      };
+
+      const getSignalWinRate = (sig) => {
+        const raw = sig?.winRate;
+        if (raw == null || raw === '') {
+          return null;
+        }
+        const numeric = Number(raw);
+        return Number.isFinite(numeric) ? numeric : null;
+      };
+
+      const getDecisionScore = (sig) => {
+        const raw = sig?.isValid?.decision?.score ?? sig?.score;
+        const numeric = Number(raw);
+        return Number.isFinite(numeric) ? numeric : null;
+      };
+
+      const isWaitMonitor = decisionState === 'WAIT_MONITOR';
+      const decisionMissing = Array.isArray(signal?.isValid?.decision?.missing)
+        ? signal.isValid.decision.missing
+        : [];
+      const decisionBlocked = Boolean(signal?.isValid?.decision?.blocked);
+      const waitWinRate = getSignalWinRate(signal);
+      const waitScore = getDecisionScore(signal);
+
+      // Some live feeds don't include a stable winRate yet.
+      // Keep promotion strict, but don't hard-block solely because winRate is unavailable.
+      const passesWaitWinRate = waitWinRate == null ? true : waitWinRate >= waitExecMinWinRate;
+      const passesWaitScore = waitScore != null && waitScore >= waitExecMinScore;
+
+      // WAIT_MONITOR promotion is deliberately strict: only allow when the signal already
+      // looks like an "ENTER" candidate except for the final state.
+      const canPromoteWaitMonitor =
+        allowWaitMonitorExecution &&
+        isWaitMonitor &&
+        decisionBlocked !== true &&
+        confidence >= waitExecMinConfidence &&
+        strength >= waitExecMinStrength &&
+        passesWaitWinRate &&
+        passesWaitScore &&
+        !decisionMissing.includes('direction_confirmation') &&
+        !decisionMissing.includes('probability') &&
+        !decisionMissing.includes('strength');
+
+      const isEnterByState = decisionState === 'ENTER' && Boolean(signal?.isValid?.isValid);
+      const isEnterCandidateByPromotion =
+        canPromoteWaitMonitor && Boolean(signal?.isValid?.isValid);
+      const isEnter = isEnterByState || isEnterCandidateByPromotion;
 
       const adjustedSignal = this.adjustSignalWithLearning(signal);
+
+      // Backward-compatible execution fields:
+      // Some MT4/MT5 EAs expect entry/SL/TP at the top level (entryPrice/stopLoss/takeProfit),
+      // while the engine stores them under `signal.entry.*`.
+      // Populate top-level fields so the EA can open orders reliably.
+      try {
+        const entry =
+          adjustedSignal?.entry && typeof adjustedSignal.entry === 'object'
+            ? adjustedSignal.entry
+            : null;
+        if (entry) {
+          if (adjustedSignal.entryPrice == null && entry.price != null) {
+            adjustedSignal.entryPrice = entry.price;
+          }
+          if (adjustedSignal.stopLoss == null && entry.stopLoss != null) {
+            adjustedSignal.stopLoss = entry.stopLoss;
+          }
+          if (adjustedSignal.takeProfit == null && entry.takeProfit != null) {
+            adjustedSignal.takeProfit = entry.takeProfit;
+          }
+          if (adjustedSignal.riskReward == null && entry.riskReward != null) {
+            adjustedSignal.riskReward = entry.riskReward;
+          }
+        }
+      } catch (_error) {
+        // best-effort
+      }
       const managementPlan = this.buildTradeManagementPlan(adjustedSignal);
       const cacheSignalEntryContext = () => {
         if (!adjustedSignal?.components?.entryContext) {
@@ -3640,18 +4113,11 @@ class EaBridgeService {
           layeredAnalysis: adjustedSignal?.components?.layeredAnalysis,
           minConfluence: layers18MinConfluence,
           decisionStateFallback: decisionState,
-          allowStrongOverride: true,
           signal: adjustedSignal,
         });
         layersStatus = computedLayersStatus;
 
-        const isStrongOverrideExecution =
-          allowStrongOverrideExecution &&
-          computedLayersStatus?.strongOverride?.ok === true &&
-          decisionState === 'WAIT_MONITOR' &&
-          Boolean(signal?.isValid?.isValid);
-
-        if (!computedLayersStatus.ok && !isStrongOverrideExecution) {
+        if (!computedLayersStatus.ok) {
           // Keep WAIT_MONITOR visible (for UI/EA logging) but never executable.
           if (decisionState === 'WAIT_MONITOR') {
             cacheSignalEntryContext();
@@ -3675,6 +4141,7 @@ class EaBridgeService {
                   requireLayers18,
                   layersStatus: computedLayersStatus,
                   decisionState,
+                  layer18Verdict,
                   minConfluence: layers18MinConfluence,
                   minConfidence,
                   minStrength,
@@ -3687,9 +4154,7 @@ class EaBridgeService {
           cacheSignalEntryContext();
           return {
             success: true,
-            message: computedLayersStatus?.strongOverride?.ok
-              ? 'Signal passed strong override (layers18 bypass)'
-              : 'Signal missing/failed 18-layer readiness',
+            message: 'Signal missing/failed 18-layer readiness',
             signal: adjustedSignal,
             snapshotPending,
             shouldExecute: false,
@@ -3706,9 +4171,41 @@ class EaBridgeService {
                 requireLayers18,
                 layersStatus: computedLayersStatus,
                 decisionState,
+                layer18Verdict,
                 minConfluence: layers18MinConfluence,
                 minConfidence,
                 minStrength,
+              },
+            },
+          };
+        }
+      }
+
+      // Even when realtimeRequireLayers18=false (diagnostics mode), keep execution strict:
+      // if WAIT promotion is enabled, require L18 readiness unless explicitly disabled.
+      if (isEnterCandidateByPromotion && waitExecRequireLayers18) {
+        const computedLayersStatus = evaluateLayers18Readiness({
+          layeredAnalysis: signal?.components?.layeredAnalysis,
+          minConfluence: layers18MinConfluence,
+          decisionStateFallback: decisionState,
+          signal,
+        });
+        layersStatus = layersStatus || computedLayersStatus;
+        if (!computedLayersStatus?.ok) {
+          return {
+            success: true,
+            message: 'WAIT_MONITOR promotion blocked: layers18 readiness failed',
+            signal,
+            snapshotPending,
+            shouldExecute: false,
+            execution: {
+              shouldExecute: false,
+              requireLayers18: true,
+              requiresEnterState,
+              gates: {
+                decisionState,
+                originalDecisionState,
+                layersStatus: computedLayersStatus,
               },
             },
           };
@@ -3798,17 +4295,15 @@ class EaBridgeService {
         intelligentApproved = false;
       }
 
-      const isEnterOverride =
-        allowStrongOverrideExecution &&
-        layersStatus?.strongOverride?.ok === true &&
-        decisionState === 'WAIT_MONITOR' &&
-        Boolean(signal?.isValid?.isValid);
-
       const shouldExecuteNow =
         tradingEnabled &&
         passesStrengthFloor &&
-        (isEnter || isEnterOverride) &&
-        intelligentApproved;
+        isEnter &&
+        intelligentApproved &&
+        // Never execute without concrete levels.
+        isTradeable(signal) &&
+        // Never execute without a fresh, real-time quote.
+        quoteOkForExecution;
 
       const decision =
         adjustedSignal?.isValid?.decision && typeof adjustedSignal.isValid.decision === 'object'
@@ -3825,6 +4320,8 @@ class EaBridgeService {
 
       const baseExecution = {
         shouldExecute: false,
+        requireLayers18,
+        requiresEnterState,
         riskMultiplier: this.riskAdjustmentFactor,
         stopLossMultiplier: this.stopLossAdjustmentFactor,
         managementPlan,
@@ -3838,9 +4335,11 @@ class EaBridgeService {
         gates: {
           tradingEnabled,
           tradingEnableReason: enablement.reason,
-          decisionState,
-          isEnter,
-          isEnterOverride,
+          decisionState: shouldExecuteNow && isEnterCandidateByPromotion ? 'ENTER' : decisionState,
+          originalDecisionState,
+          layer18Verdict,
+          isEnter: shouldExecuteNow && isEnterCandidateByPromotion ? true : isEnter,
+          isEnterOverride: false,
           minConfidence,
           minStrength,
           confidence,
@@ -3848,12 +4347,16 @@ class EaBridgeService {
           passesStrengthFloor,
           intelligentApproved,
           intelligentReasons,
+          quoteOk: quoteOkForExecution,
+          quoteAgeMs,
+          execQuoteMaxAgeMs,
+          quoteSource: quote?.source || null,
           layersStatus,
           blockedReason: executionBlockedReason,
         },
       };
 
-      if (decisionState && !isEnter && !isEnterOverride) {
+      if (decisionState && !isEnter) {
         cacheSignalEntryContext();
         return {
           success: true,
@@ -3892,16 +4395,80 @@ class EaBridgeService {
       }
 
       cacheSignalEntryContext();
-      return {
+
+      // If we are executing a promoted WAIT_MONITOR, expose it as ENTER to downstream clients/EAs.
+      // This preserves the global invariant "ENTER is executable" while enabling the requested policy.
+      let responseSignal = adjustedSignal;
+      if (shouldExecuteNow && isEnterCandidateByPromotion) {
+        try {
+          responseSignal = {
+            ...(adjustedSignal || {}),
+            finalDecision: {
+              ...(adjustedSignal?.finalDecision || {}),
+              state: 'ENTER',
+            },
+            isValid: {
+              ...(adjustedSignal?.isValid || {}),
+              decision: {
+                ...(adjustedSignal?.isValid?.decision &&
+                typeof adjustedSignal.isValid.decision === 'object'
+                  ? adjustedSignal.isValid.decision
+                  : {}),
+                state: 'ENTER',
+                promotedFrom: originalDecisionState || 'WAIT_MONITOR',
+              },
+            },
+          };
+        } catch (_error) {
+          responseSignal = adjustedSignal;
+        }
+      }
+
+      const response = {
         success: true,
-        signal: adjustedSignal,
+        signal: responseSignal,
         snapshotPending,
         shouldExecute: shouldExecuteNow,
         execution: {
           ...baseExecution,
           shouldExecute: shouldExecuteNow,
+          gates: {
+            ...(baseExecution.gates || {}),
+            isEnterOverride: Boolean(shouldExecuteNow && isEnterCandidateByPromotion),
+            decisionState:
+              shouldExecuteNow && isEnterCandidateByPromotion ? 'ENTER' : decisionState,
+            originalDecisionState,
+            waitMonitorPromotion: Boolean(shouldExecuteNow && isEnterCandidateByPromotion),
+            waitExecThresholds: isEnterCandidateByPromotion
+              ? {
+                  minConfidence: waitExecMinConfidence,
+                  minStrength: waitExecMinStrength,
+                  minWinRate: waitExecMinWinRate,
+                  minScore: waitExecMinScore,
+                  requireLayers18: Boolean(waitExecRequireLayers18),
+                }
+              : undefined,
+          },
         },
       };
+
+      try {
+        const key = broker || 'unknown';
+        const prev = this.pollMetrics.signalGetByBroker.get(key) || { count: 0 };
+        this.pollMetrics.signalGetByBroker.set(key, {
+          ...prev,
+          lastAt: Date.now(),
+          lastSymbol: pair,
+          lastSuccess: true,
+          lastDecisionState: decisionState || null,
+          lastShouldExecute: Boolean(shouldExecuteNow),
+          lastApprovedAt: shouldExecuteNow ? Date.now() : prev.lastApprovedAt || null,
+        });
+      } catch (_error) {
+        // best-effort
+      }
+
+      return response;
     } catch (error) {
       this.logger.error({ err: error, symbol }, 'Error getting signal for EA');
       return {
@@ -3932,6 +4499,17 @@ class EaBridgeService {
     }
 
     const symbol = broker ? this.resolveSymbolFromQuotes(broker, requested) : requested;
+
+    // Fast-path: if a very recent snapshot exists (e.g. seeded by the realtime runner), reuse it.
+    // This ensures the EA execution poll sees the exact same 20-layer snapshot as the dashboard.
+    try {
+      const cached = this.getCachedAnalysisSnapshot({ broker, symbol });
+      if (cached && typeof cached === 'object' && cached.signal) {
+        return cached;
+      }
+    } catch (_error) {
+      // ignore
+    }
 
     if (broker && symbol) {
       this.touchActiveSymbol({ broker, symbol, ttlMs: 15 * 60 * 1000 });
@@ -4132,7 +4710,9 @@ class EaBridgeService {
           broker,
           symbol,
           eaBridgeService: this,
-          quoteMaxAgeMs: 30 * 1000,
+          // Dashboard analysis is informational; tolerate slightly older quotes so Layer 1 can
+          // display bid/ask + spread even when the stream is briefly idle.
+          quoteMaxAgeMs: 2 * 60 * 1000,
           barFallback: bestEffortBarFallback(),
           now,
         });
@@ -4140,18 +4720,158 @@ class EaBridgeService {
         // best-effort
       }
 
-      return {
+      const result = {
         success: true,
         message: isTradeValid ? 'OK' : 'Signal not valid for trading (showing analysis only)',
         signal: dashboardSignal || null,
         tradeValid: isTradeValid,
       };
+
+      try {
+        this.cacheAnalysisSnapshot({
+          broker,
+          symbol,
+          result,
+          computedAt: now,
+        });
+      } catch (_error) {
+        // ignore
+      }
+
+      return result;
     } catch (error) {
       this.logger.error({ err: error, symbol, broker }, 'Error getting analysis snapshot');
       return {
         success: false,
         message: error?.message || 'Failed to generate analysis',
         signal: null,
+      };
+    }
+  }
+
+  /**
+   * Smart unified snapshot:
+   * - Always returns an analysis `signal` when available (dashboard-safe)
+   * - Optionally enriches ENTER signals with EA execution gates (`shouldExecute`, `execution`)
+   * - Accepts `payload.signal` to avoid double-compute and keep dashboard/EA aligned
+   */
+  async getSmartSignalSnapshot(payload = {}) {
+    const broker = this.normalizeBroker(payload?.broker) || null;
+    const requested = this.normalizeSymbol(payload?.symbol) || null;
+
+    const precomputedSignal =
+      payload?.signal && typeof payload.signal === 'object' ? payload.signal : null;
+
+    const normalizedSymbol = (() => {
+      if (requested) {
+        return broker ? this.resolveSymbolFromQuotes(broker, requested) : requested;
+      }
+      const candidate = this.normalizeSymbol(precomputedSignal?.pair || precomputedSignal?.symbol);
+      return candidate
+        ? broker
+          ? this.resolveSymbolFromQuotes(broker, candidate)
+          : candidate
+        : null;
+    })();
+
+    if (!normalizedSymbol) {
+      return { success: false, message: 'Symbol is required', signal: null };
+    }
+
+    const analysis = precomputedSignal
+      ? {
+          success: true,
+          message: Boolean(precomputedSignal?.isValid?.isValid)
+            ? 'OK'
+            : 'Signal not valid for trading (showing analysis only)',
+          signal: precomputedSignal,
+          tradeValid: Boolean(precomputedSignal?.isValid?.isValid),
+        }
+      : await this.getAnalysisSnapshot({
+          broker,
+          symbol: normalizedSymbol,
+          accountMode: payload?.accountMode,
+        });
+
+    const signal = analysis?.signal || null;
+    if (!signal) {
+      return analysis;
+    }
+
+    // Cache the analysis snapshot (precomputed or computed) so other consumers reuse the same payload.
+    try {
+      this.cacheAnalysisSnapshot({
+        broker,
+        symbol: normalizedSymbol,
+        result: analysis,
+        computedAt: Date.now(),
+      });
+    } catch (_error) {
+      // best-effort
+    }
+
+    const layers = Array.isArray(signal?.components?.layeredAnalysis?.layers)
+      ? signal.components.layeredAnalysis.layers
+      : [];
+    const layer20 =
+      layers.find(
+        (layer) => String(layer?.key || '').toUpperCase() === 'L20' || Number(layer?.layer) === 20
+      ) || null;
+    const decisionState = String(
+      layer20?.metrics?.decision?.state ||
+        signal?.finalDecision?.state ||
+        signal?.isValid?.decision?.state ||
+        ''
+    )
+      .trim()
+      .toUpperCase();
+
+    const isEnterish =
+      decisionState === 'ENTER' ||
+      decisionState === 'ENTER_STRONG' ||
+      decisionState === 'ENTER_TRADE';
+    if (!isEnterish) {
+      return {
+        ...analysis,
+        shouldExecute: false,
+        execution: null,
+      };
+    }
+
+    // For ENTER signals only, compute EA-bridge execution gates using the *same* signal payload.
+    try {
+      const exec = await this.getSignalForExecution({
+        broker,
+        symbol: normalizedSymbol,
+        accountMode: payload?.accountMode,
+        signal,
+      });
+
+      const merged = {
+        ...analysis,
+        shouldExecute: exec?.shouldExecute === true,
+        execution: exec?.execution || null,
+        executionMessage: exec?.message || null,
+        snapshotPending: exec?.snapshotPending === true,
+      };
+
+      try {
+        this.cacheAnalysisSnapshot({
+          broker,
+          symbol: normalizedSymbol,
+          result: merged,
+          computedAt: Date.now(),
+        });
+      } catch (_error) {
+        // best-effort
+      }
+
+      return merged;
+    } catch (_error) {
+      return {
+        ...analysis,
+        shouldExecute: false,
+        execution: null,
       };
     }
   }
@@ -4219,6 +4939,10 @@ class EaBridgeService {
       activeSessions: activeSessions.length,
       totalTradesExecuted: activeSessions.reduce((sum, s) => sum + s.tradesExecuted, 0),
       totalProfitLoss: activeSessions.reduce((sum, s) => sum + s.profitLoss, 0),
+      polls: {
+        signalGetByBroker: Object.fromEntries(this.pollMetrics.signalGetByBroker.entries()),
+        transactionByBroker: Object.fromEntries(this.pollMetrics.transactionByBroker.entries()),
+      },
       marketFeed: {
         quotes: {
           total: this.latestQuotes.size,
@@ -4408,9 +5132,12 @@ class EaBridgeService {
       return false;
     }
 
+    const envMaxAgeMs = Number(process.env.EA_HEARTBEAT_MAX_AGE_MS);
     const maxAgeMs = Number.isFinite(Number(options.maxAgeMs))
       ? Math.max(0, Number(options.maxAgeMs))
-      : 2 * 60 * 1000;
+      : Number.isFinite(envMaxAgeMs)
+        ? Math.max(0, envMaxAgeMs)
+        : 10 * 60 * 1000;
     const now = Date.now();
 
     const hasFreshHeartbeat = this.getActiveSessions().some((session) => {

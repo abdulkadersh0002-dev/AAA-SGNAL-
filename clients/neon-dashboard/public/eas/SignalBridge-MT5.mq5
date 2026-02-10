@@ -1,5 +1,5 @@
 #property copyright "Neon Trading Stack"
-#property version   "1.05"
+#property version   "1.11"
 #property strict
 
 input string BridgeUrl          = "http://127.0.0.1:4101/api/broker/bridge/mt5";
@@ -87,24 +87,41 @@ string BuildQuoteJson(
    );
 }
 input bool   ForceReconnect     = true;
-input int    HeartbeatInterval  = 30;
+input int    HeartbeatInterval  = 20;
 input int    RequestTimeoutMs   = 7000;
+input int    RequestRetryCount  = 3;    // retry transient bridge failures
+input int    RequestRetryDelayMs= 250;  // delay between retries
+input int    SessionRefreshSec  = 180;  // refresh /session/connect periodically
+input int    BridgeHardResetSec = 600;  // force reconnect if no success for N seconds
+input int    KeepAliveIntervalSec = 10; // extra ping when the bridge is quiet
 
 // === Market Feed (Ticker) ===
 input bool   EnableMarketFeed      = true;
-input int    MarketFeedIntervalSec = 2;
+input int    MarketFeedIntervalSec = 1;
 input int    MarketBarsIntervalSec = 10; // bars update slower than quotes (candles don't change every 2s)
 input int    BarsHistoryDepthM1    = 120; // how many M1 bars to send per update
 input int    BarsHistoryDepthHTF   = 250; // how many bars to seed for M15/H1/H4/D1 (sent on close)
 input int    BarsSymbolsPerCycle   = 3;   // how many tape symbols to post bars for each cycle
 input bool   EnableTimeframeSeeding = true; // periodically seed M15/H1/H4/D1 history (don't wait for close)
 input int    TimeframeSeedIntervalSec = 60; // per symbol per timeframe
+// MarketWatch bars backfill: ensures M15/H1 bars are available for all selected symbols (forex+metals)
+input bool   EnableMarketWatchBars        = true;
+input int    MarketWatchBarsIntervalSec   = 15;
+input int    MarketWatchBarsSymbolsPerCycle = 6;
+input bool   MarketWatchBarsIncludeM1     = false;
+input bool   MarketWatchBarsIncludeM15    = true;
+input bool   MarketWatchBarsIncludeH1     = true;
+input bool   MarketWatchBarsIncludeH4     = true;
+input bool   MarketWatchBarsIncludeD1     = true;
 input string FeedSymbolsCsv        = ""; // empty = chart symbol + MarketWatch (if enabled)
 input bool   IncludeMarketWatch    = true;
-input int    MaxSymbolsToSend      = 2000;
-input int    MaxQuotesPerPost      = 200;
+input int    MaxSymbolsToSend      = 3000;
+input int    MaxQuotesPerPost      = 400;
 input bool   AutoPopulateMarketWatch = true; // tries to "Show All" symbols by selecting them into MarketWatch
 input int    MaxMarketWatchSymbols   = 5000; // safety cap; broker may expose thousands
+input bool   AutoPopulateForexMetalsOnly = true; // when auto-populating, keep only FX + metals
+input bool   AutoPopulateForexOnly = false; // when auto-populating, keep only FX pairs
+input bool   AutoCleanMarketWatchNonForex = true; // remove non-FX symbols before auto-populating FX only
 
 // Register the full MarketWatch symbol universe with the server so it can background-scan
 // far beyond the currently streamed quotes.
@@ -119,16 +136,25 @@ input bool   EnablePrioritySymbols     = true;  // prioritize requested symbols 
 input int    PrioritySymbolsTtlSec     = 900;   // keep requested symbols "hot" for N seconds
 input int    MaxPrioritySymbols        = 60;    // cap
 input int    MaxPriorityQuotesPerPost  = 25;    // cap per POST
-input int    QuoteResendIntervalSec    = 15;    // keepalive resend even if tick time doesn't change
+input int    QuoteResendIntervalSec    = 8;     // keepalive resend even if tick time doesn't change
+input int    QuoteStaleReconnectSec    = 60;    // force reconnect if no quotes sent for N seconds
 input int    SymbolResolveCacheTtlSec  = 3600;  // cache symbol alias resolution
 input int    MaxSymbolResolveCache     = 250;
-input int    MaxQuoteStateCache        = 500;   // cache of last sent tick time per symbol
+input int    MaxQuoteStateCache        = 2000;  // cache of last sent tick time per symbol
 input int    AutoPopulateBatchSize     = 250;   // select at most N symbols per timer tick (prevents MT5 freeze)
 
 // Dashboard-driven lazy-loading
 input bool   EnableActiveSymbolsPolling  = true; // poll server for selected symbols
-input int    ActiveSymbolsPollIntervalSec= 5;
+input int    ActiveSymbolsPollIntervalSec= 3;
 input int    MaxActiveSymbols            = 40;
+
+// Server-scanned symbol hints: lets the EA discover which pairs are currently strong candidates
+// (so you don't need to pre-pick symbols). The EA will auto-subscribe these symbols and keep them hot.
+// Actual execution remains gated by the server: shouldExecute=true.
+input bool   EnableRealtimeSymbolHintsPolling   = true;
+input int    RealtimeSymbolHintsPollIntervalSec = 5;
+input int    MaxRealtimeSymbolHints             = 40;
+input bool   AutoSubscribeRealtimeSymbolHints   = true; // SymbolSelect + add to priority list
 
 // === Market Snapshot (Indicators/Levels) ===
 input bool   EnableMarketSnapshot        = true;
@@ -145,13 +171,24 @@ input int    ReconnectBackoffSec    = 5;
 // Makes the EA more resilient + enforces stronger execution gating.
 input bool   SmartStrongMode               = true;
 input bool   EnforceSmartStrongThresholds  = true;
-input double SmartStrongMinStrengthTrade   = 60.0;
-input double SmartStrongMinConfidenceTrade = 75.0;
+input double SmartStrongMinStrengthTrade   = 25.0;
+input double SmartStrongMinConfidenceTrade = 55.0;
+// Layers readiness override (for faster demo ENTERs)
+input int    LayersReadyMin               = 14; // 18 = strict, lower = more permissive
+// Allow executing strong WAIT_MONITOR signals (demo-only override)
+input bool   AllowStrongWaitMonitorExecution = false;
+input double StrongWaitMinStrength          = 25.0;
+input double StrongWaitMinConfidence        = 55.0;
 input int    ServerPolicyRefreshSec        = 300;
 input int    SmartMaxTickAgeSec            = 6;
 input double SmartMinAtrPips               = 5.0;
 input double SmartMaxAtrPips               = 120.0;
-input double SmartMaxSpreadToAtrPct        = 15.0;
+input double SmartMaxSpreadToAtrPct        = 25.0;
+// Exotic spread override (only when signal is exceptionally strong + layers aligned)
+input bool   ExoticBypassSpreadGuards      = true;
+input double ExoticBypassMinStrength       = 80.0;
+input double ExoticBypassMinConfidence     = 75.0;
+input int    ExoticBypassMinLayers         = 18;
 
 // Smart close: exit open trades when a strong opposite signal appears
 input bool   SmartStrongCloseOnOpposite    = true;
@@ -193,17 +230,18 @@ input int    SymbolFailureCooldownSec = 600; // if symbol persistently fails wit
 // These DO NOT guarantee profit, but they prevent overtrading and protect good days.
 input bool   EnableDailyGuards          = true;
 input double DailyProfitTargetCurrency  = 0.0;  // e.g. 50 = stop new trades after +$50 realized PnL today
-input double DailyProfitTargetPct       = 0.0;  // e.g. 1.0 = stop new trades after +1% of start-of-day equity
+input double DailyProfitTargetPct       = 2.0;  // e.g. 1.0 = stop new trades after +1% of start-of-day equity
 input double DailyMaxLossCurrency       = 0.0;  // e.g. 50 = stop new trades after -$50 realized PnL today
-input double DailyMaxLossPct            = 0.0;  // e.g. 1.0 = stop new trades after -1% of start-of-day equity
+input double DailyMaxLossPct            = 1.0;  // e.g. 1.0 = stop new trades after -1% of start-of-day equity
 input bool   EnforceMaxTradesPerDay     = false; // if true, stop new trades after MaxTradesPerDay
 input int    MaxTradesPerDay            = 0;     // count of entry deals (MagicNumber); 0 = no limit
-input int    MaxSpreadPoints        = 80;
+input int    MaxSpreadPoints        = 120;
 input int    MaxSlippagePoints      = 20;
 input double MaxEntrySlipPips       = 3.0; // reject if price deviates from signal entry by more than N pips (0=off)
 input bool   DropInvalidStops       = true;
 input bool   VerboseTradeLogs       = true;
-input bool   TradeMajorsAndMetalsOnly = true; // safer defaults; avoids exotics/crypto
+input bool   TradeForexAndMetalsOnly = true;  // include all FX pairs + metals (excludes crypto/indices)
+input bool   TradeMajorsAndMetalsOnly = false; // legacy fallback (kept false to allow exotics)
 input bool   RespectServerExecution = true; // requires server to return execution.shouldExecute=true
 
 // === Equity Curve Protection ===
@@ -216,7 +254,7 @@ input bool          EnableVolatilityFilter   = true;      // filter symbols base
 input ENUM_TIMEFRAMES VolatilityFilterTf     = PERIOD_M15;
 input double        MinAtrPips               = 4.0;       // skip very low volatility markets
 input double        MaxAtrPips               = 120.0;     // skip extreme volatility markets
-input double        MaxSpreadToAtrPct        = 25.0;      // spread must be <= this % of ATR (in pips)
+input double        MaxSpreadToAtrPct        = 30.0;      // spread must be <= this % of ATR (in pips)
 
 // === Chart Overlay (Signal Visualization) ===
 input bool   EnableSignalOverlay        = true;
@@ -246,12 +284,14 @@ input double MaxLossPerTradeCurrency = 0.0;
 
 // === EA Smart Management (Server-Guided) ===
 input bool   EnableServerPositionSync = true;   // Send open positions for smart management
-input int    PositionSyncIntervalSec  = 5;
+input int    PositionSyncIntervalSec  = 2;
 input bool   EnableCommandPolling     = true;   // Poll server commands for manage actions
-input int    CommandPollIntervalSec   = 3;
+input int    CommandPollIntervalSec   = 2;
 
 datetime g_lastHeartbeat = 0;
+datetime g_lastBridgeSuccess = 0;
 bool     g_isConnected   = false;
+datetime g_lastKeepAlive = 0;
 
 // Server policy (synced from /agent/config)
 bool     g_serverPolicyLoaded = false;
@@ -260,8 +300,10 @@ double   g_serverMinStrength = 0.0;
 double   g_serverMinConfidence = 0.0;
 bool     g_serverRequireLayers18 = false;
 bool     g_serverRequiresEnterState = true;
+datetime g_lastSessionRefresh = 0;
 
 datetime g_lastMarketFeed = 0;
+datetime g_lastQuoteSentAt = 0;
 datetime g_lastSignalCheck = 0;
 datetime g_lastSignalOverlay = 0;
 bool     g_sentConnectNews = false;
@@ -275,13 +317,18 @@ datetime g_lastSmartCloseCheck = 0;
 
 datetime g_lastActiveSymbolsPoll = 0;
 
+datetime g_lastRealtimeHintsPoll = 0;
+
 datetime g_lastSymbolUniverseRegister = 0;
 
 int      g_symbolUniverseCursor = 0;
 
 bool     g_activeSymbolsEndpointSupported = true;
 
+bool     g_realtimeHintsEndpointSupported = true;
+
 datetime g_lastMarketBars = 0;
+datetime g_lastMarketWatchBars = 0;
 
 datetime g_lastPositionSync = 0;
 datetime g_lastCommandPoll  = 0;
@@ -292,6 +339,7 @@ int      g_consecutiveFailures = 0;
 datetime g_nextReconnectAt = 0;
 
 bool     g_marketWatchPrepared = false;
+bool     g_marketWatchCleaned = false;
 
 // Cooldown a symbol after repeated broker-side execution failures (e.g., 4756).
 string   g_tradeCooldownSymbol = "";
@@ -340,8 +388,10 @@ double ClampStopLevelForPosition(const string sym, const long posType, const dou
    return NormalizeDouble(sl, digits);
 }
 int      g_marketFeedCursor = 0;
+int      g_marketWatchBarsCursor = 0;
 
 int      g_marketWatchPrepareCursor = 0;
+int      g_marketWatchCleanCursor = 0;
 
 int      g_tradeCursor = 0;
 int      g_snapshotCursor = 0;
@@ -713,6 +763,15 @@ bool IsMajorCurrency(const string code)
    return (c == "USD" || c == "EUR" || c == "GBP" || c == "JPY" || c == "CHF" || c == "CAD" || c == "AUD" || c == "NZD");
 }
 
+bool IsFxCurrency(const string code)
+{
+   string c = code;
+   StringToUpper(c);
+   return (c == "USD" || c == "EUR" || c == "GBP" || c == "JPY" || c == "CHF" || c == "CAD" || c == "AUD" || c == "NZD" ||
+           c == "SEK" || c == "NOK" || c == "DKK" || c == "PLN" || c == "CZK" || c == "HUF" || c == "MXN" || c == "ZAR" ||
+           c == "TRY" || c == "CNH" || c == "CNY" || c == "SGD" || c == "HKD");
+}
+
 bool IsMetalSymbol(const string sym)
 {
    string c = CanonicalSymbol(sym);
@@ -735,8 +794,26 @@ bool IsMajorsForexPair(const string sym)
    return IsMajorCurrency(base) && IsMajorCurrency(quote);
 }
 
+bool IsForexPair(const string sym)
+{
+   string c = CanonicalSymbol(sym);
+   if(StringLen(c) < 6)
+      return false;
+   string base = StringSubstr(c, 0, 3);
+   string quote = StringSubstr(c, 3, 3);
+   StringToUpper(base);
+   StringToUpper(quote);
+   return IsFxCurrency(base) && IsFxCurrency(quote);
+}
+
 bool IsTradeSymbolEligible(const string sym)
 {
+   if(TradeForexAndMetalsOnly)
+   {
+      if(IsMetalSymbol(sym))
+         return true;
+      return IsForexPair(sym);
+   }
    if(!TradeMajorsAndMetalsOnly)
       return true;
    if(IsMetalSymbol(sym))
@@ -923,6 +1000,17 @@ void AddPrioritySymbol(string sym)
       if(g_prioritySymbols[i] == sym)
       {
          g_priorityExpires[i] = expiresAt;
+         // Move to the end (most recent) so the trade loop checks it first.
+         int last = n - 1;
+         if(i != last)
+         {
+            string tmpSym = g_prioritySymbols[last];
+            datetime tmpExp = g_priorityExpires[last];
+            g_prioritySymbols[last] = g_prioritySymbols[i];
+            g_priorityExpires[last] = g_priorityExpires[i];
+            g_prioritySymbols[i] = tmpSym;
+            g_priorityExpires[i] = tmpExp;
+         }
          return;
       }
    }
@@ -1012,6 +1100,14 @@ bool PrepareMarketWatchAllSymbols()
    if(!AutoPopulateMarketWatch)
       return true;
 
+   if(AutoPopulateForexOnly && AutoCleanMarketWatchNonForex && !g_marketWatchCleaned)
+   {
+      bool cleaned = CleanMarketWatchNonForex();
+      if(!cleaned)
+         return false;
+      g_marketWatchCleaned = true;
+   }
+
    int totalAll = SymbolsTotal(false);
    if(totalAll <= 0)
       return true;
@@ -1031,6 +1127,16 @@ bool PrepareMarketWatchAllSymbols()
       if((bool)SymbolInfoInteger(name, SYMBOL_SELECT))
          continue;
 
+      if(AutoPopulateForexOnly)
+      {
+         if(!IsForexPair(name))
+            continue;
+      }
+      else if(AutoPopulateForexMetalsOnly && !IsTradeSymbolEligible(name))
+      {
+         continue;
+      }
+
       if(SymbolSelect(name, true))
          selectedNow++;
 
@@ -1044,6 +1150,43 @@ bool PrepareMarketWatchAllSymbols()
    }
 
    // Not finished yet; continue next timer tick.
+   return false;
+}
+
+bool CleanMarketWatchNonForex()
+{
+   int totalSelected = SymbolsTotal(true);
+   if(totalSelected <= 0)
+      return true;
+
+   int batch = MathMax(1, AutoPopulateBatchSize);
+   int processed = 0;
+   int i = g_marketWatchCleanCursor;
+
+   while(i < totalSelected && processed < batch)
+   {
+      string name = SymbolName(i, true);
+      processed++;
+      if(StringLen(name) <= 0)
+      {
+         i++;
+         continue;
+      }
+
+      if(!IsForexPair(name))
+      {
+         SymbolSelect(name, false);
+      }
+      i++;
+   }
+
+   g_marketWatchCleanCursor = i;
+   if(g_marketWatchCleanCursor >= totalSelected)
+   {
+      PrintFormat("MarketWatch cleanup done (kept FX only, total was %d)", totalSelected);
+      return true;
+   }
+
    return false;
 }
 
@@ -1102,21 +1245,101 @@ int JsonFindKeyOutsideString(const string json, const string key, const int star
          }
          continue;
       }
-      else
-      {
-         if(c == '"')
-         {
-            inStr = true;
-            esc = false;
-            continue;
-         }
-      }
 
-      // Outside any string: try to match the key
+      // Outside any string: try to match the key.
+      // Keys are quoted in JSON, so we must check BEFORE switching into inStr.
       if(StringSubstr(json, i, klen) == key)
          return i;
+
+      if(c == '"')
+      {
+         inStr = true;
+         esc = false;
+         continue;
+      }
    }
    return -1;
+}
+
+bool PostSingleQuoteForSymbol(string sym, const bool force)
+{
+   if(!g_isConnected)
+      return false;
+
+   StringTrimLeft(sym);
+   StringTrimRight(sym);
+   if(StringLen(sym) <= 0)
+      return false;
+
+   sym = ResolveBrokerSymbol(sym);
+   StringTrimLeft(sym);
+   StringTrimRight(sym);
+   if(StringLen(sym) <= 0)
+      return false;
+
+   if(!IsTradeSymbolEligible(sym))
+      return false;
+   if(!SymbolSelect(sym, true))
+      return false;
+
+   MqlTick tick;
+   bool hasTick = SymbolInfoTick(sym, tick);
+   long tickKeyMsc = (hasTick && (long)tick.time_msc > 0) ? (long)tick.time_msc : 0;
+   long tsToSend = (hasTick && (long)tick.time_msc > 0) ? (long)tick.time_msc : (long)TimeCurrent() * 1000;
+
+   if(!force)
+   {
+      if(!ShouldSendQuote(sym, tickKeyMsc))
+         return true;
+   }
+
+   double bid = hasTick ? tick.bid : SymbolInfoDouble(sym, SYMBOL_BID);
+   double ask = hasTick ? tick.ask : SymbolInfoDouble(sym, SYMBOL_ASK);
+   double last = hasTick ? tick.last : SymbolInfoDouble(sym, SYMBOL_LAST);
+   NormalizeQuotePrices(sym, bid, ask, last);
+   if(!(bid > 0.0) && !(ask > 0.0) && !(last > 0.0))
+      return false;
+
+   int digits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
+   double point = SymbolInfoDouble(sym, SYMBOL_POINT);
+   double spreadPoints = -1.0;
+   if(point > 0.0 && bid > 0.0 && ask > 0.0 && ask > bid)
+      spreadPoints = (ask - bid) / point;
+   double tickSize = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_SIZE);
+   double tickValue = SymbolInfoDouble(sym, SYMBOL_TRADE_TICK_VALUE);
+   double contractSize = SymbolInfoDouble(sym, SYMBOL_TRADE_CONTRACT_SIZE);
+   long volume = hasTick ? (long)tick.volume : -1;
+   if(volume <= 0)
+   {
+      long m1Vol = (long)iVolume(sym, PERIOD_M1, 0);
+      if(m1Vol > 0)
+         volume = m1Vol;
+   }
+
+   string payload = "{\"quotes\":[";
+   payload += BuildQuoteJson(
+      sym,
+      bid,
+      ask,
+      last,
+      digits,
+      point,
+      spreadPoints,
+      tickSize,
+      tickValue,
+      contractSize,
+      volume,
+      tsToSend
+   );
+   payload += "]}";
+
+   string response = "";
+   if(BridgeRequest("POST", "/market/quotes", payload, response, true))
+   {
+      g_lastQuoteSentAt = TimeCurrent();
+      return true;
+   }
+   return false;
 }
 
 bool JsonReadStringValue(const string json, int pos, string &outValue, int &endPos)
@@ -1285,6 +1508,59 @@ bool ExtractSignalStrengthConfidence(const string json, double &strengthOut, dou
    return true;
 }
 
+bool ExtractLayersStatus(const string json, bool &okOut, bool &okFoundOut, double &countOut, bool &countFoundOut)
+{
+   okOut = false;
+   okFoundOut = false;
+   countOut = 0.0;
+   countFoundOut = false;
+
+   int execPos = StringFind(json, "\"execution\"");
+   int startPos = execPos >= 0 ? execPos : 0;
+   int layersPos = StringFind(json, "\"layersStatus\"", startPos);
+   if(layersPos < 0)
+      return false;
+
+   if(JsonGetBoolFrom(json, layersPos, "\"ok\"", okOut))
+      okFoundOut = true;
+   if(JsonGetNumberFrom(json, layersPos, "\"layersCount\"", countOut))
+      countFoundOut = true;
+   else if(JsonGetNumberFrom(json, layersPos, "\"count\"", countOut))
+      countFoundOut = true;
+
+   return okFoundOut || countFoundOut;
+}
+
+bool IsLayersAlignedMin(const string json, const int minLayers)
+{
+   bool ok = false;
+   bool okFound = false;
+   double count = 0.0;
+   bool countFound = false;
+   if(!ExtractLayersStatus(json, ok, okFound, count, countFound))
+      return false;
+   if(okFound && !ok)
+      return false;
+
+   int minL = minLayers > 0 ? minLayers : 18;
+   if(minL > 18)
+      minL = 18;
+   return (countFound && count >= minL);
+}
+
+bool ShouldBypassExoticSpreadGuards(const string sym, const string json, const double strength, const double confidence)
+{
+   if(!ExoticBypassSpreadGuards)
+      return false;
+   if(!IsForexPair(sym) || IsMajorsForexPair(sym))
+      return false;
+   if(strength < ExoticBypassMinStrength || confidence < ExoticBypassMinConfidence)
+      return false;
+
+   int minLayers = ExoticBypassMinLayers > 0 ? ExoticBypassMinLayers : 18;
+   return IsLayersAlignedMin(json, minLayers);
+}
+
 bool ExtractSignalDedupeKey(const string json, const string direction, const double entry, const double sl, const double tp, const double lots, const double strength, const double confidence, string &outKey)
 {
    outKey = "";
@@ -1352,6 +1628,7 @@ void RecordBridgeSuccess()
 {
    g_consecutiveFailures = 0;
    g_lastWebError = 0;
+   g_lastBridgeSuccess = TimeCurrent();
 }
 
 bool BridgeRequest(const string method,
@@ -1381,6 +1658,9 @@ bool ParseSignalForExecution(const string json,
                              bool &shouldExecuteOut)
 {
    shouldExecuteOut = true;
+   string decisionState = "";
+   bool tradingEnabled = true;
+   bool tradingEnabledFound = false;
    if(RespectServerExecution || SmartStrongMode)
    {
       bool tmp = false;
@@ -1398,6 +1678,16 @@ bool ParseSignalForExecution(const string json,
             shouldExecuteOut = tmp;
       }
 
+      int gatesPos = execPos >= 0 ? StringFind(json, "\"gates\"", execPos) : -1;
+      if(gatesPos < 0)
+         gatesPos = execPos >= 0 ? execPos : 0;
+      if(gatesPos >= 0)
+      {
+         JsonGetStringFrom(json, gatesPos, "\"decisionState\"", decisionState);
+         if(JsonGetBoolFrom(json, gatesPos, "\"tradingEnabled\"", tradingEnabled))
+            tradingEnabledFound = true;
+      }
+
       bool requireLayers = g_serverRequireLayers18;
       bool requireEnter = g_serverRequiresEnterState;
       if(execPos >= 0)
@@ -1409,29 +1699,54 @@ bool ParseSignalForExecution(const string json,
          {
             bool layersOk = false;
             bool layersOkFound = false;
+            double layersCount = 0.0;
+            bool layersCountFound = false;
             int layersPos = StringFind(json, "\"layersStatus\"", execPos);
             if(layersPos >= 0)
             {
                if(JsonGetBoolFrom(json, layersPos, "\"ok\"", layersOk))
                   layersOkFound = true;
+               if(JsonGetNumberFrom(json, layersPos, "\"layersCount\"", layersCount))
+                  layersCountFound = true;
+               else if(JsonGetNumberFrom(json, layersPos, "\"count\"", layersCount))
+                  layersCountFound = true;
             }
             if(layersOkFound && !layersOk)
-               shouldExecuteOut = false;
+            {
+               int minLayers = LayersReadyMin;
+               if(minLayers <= 0)
+                  minLayers = 18;
+               if(minLayers > 18)
+                  minLayers = 18;
+
+               if(!(layersCountFound && layersCount >= minLayers))
+                  shouldExecuteOut = false;
+            }
          }
 
          if(requireEnter)
          {
-            string decision = "";
-            int gatesPos = StringFind(json, "\"gates\"", execPos);
-            if(gatesPos < 0)
-               gatesPos = execPos;
-            if(JsonGetStringFrom(json, gatesPos, "\"decisionState\"", decision) || JsonGetStringFrom(json, gatesPos, "\"layer18State\"", decision))
+            string decision = decisionState;
+            if(StringLen(decision) <= 0)
             {
-               decision = ToUpperStr(decision);
-               if(decision != "ENTER")
-                  shouldExecuteOut = false;
+               int gatePos = StringFind(json, "\"gates\"", execPos);
+               if(gatePos < 0)
+                  gatePos = execPos;
+               JsonGetStringFrom(json, gatePos, "\"decisionState\"", decision);
             }
+            decision = ToUpperStr(decision);
+            decisionState = decision;
+            if(decision != "ENTER")
+               shouldExecuteOut = false;
          }
+      }
+
+      // Global rule: WAIT_MONITOR is visibility only and must never execute.
+      if(AllowStrongWaitMonitorExecution)
+      {
+         string decision = ToUpperStr(decisionState);
+         if(decision == "WAIT_MONITOR")
+            shouldExecuteOut = false;
       }
    }
 
@@ -1468,6 +1783,118 @@ bool ParseSignalForExecution(const string json,
 
    lotsOut = MathMax(MinLotSize, MathMin(MaxLotSize, lotsOut));
    return true;
+}
+
+void LogServerNoSignal(const string sym, const string response)
+{
+   if(!VerboseTradeLogs)
+      return;
+   if(StringLen(response) <= 0)
+   {
+      PrintFormat(
+         "No executable signal for %s (server success=false): empty response (httpStatus=%d webErr=%d)",
+         sym,
+         g_lastHttpStatus,
+         g_lastWebError
+      );
+      return;
+   }
+
+   string msg = "";
+   string alt = "";
+
+   // Common: top-level message
+   JsonGetString(response, "\"message\"", msg);
+
+   // Some responses store message under execution
+   if(StringLen(msg) <= 0)
+   {
+      int execPos = StringFind(response, "\"execution\"");
+      if(execPos >= 0)
+         JsonGetStringFrom(response, execPos, "\"message\"", msg);
+   }
+
+   // Fallback keys used across endpoints
+   if(StringLen(msg) <= 0)
+      JsonGetString(response, "\"error\"", msg);
+   if(StringLen(msg) <= 0)
+      JsonGetString(response, "\"reason\"", msg);
+   if(StringLen(msg) <= 0)
+      JsonGetString(response, "\"detail\"", msg);
+
+   // If message isn't a JSON string (null/object), use a robust extractor.
+   if(StringLen(msg) <= 0)
+      msg = ExtractJsonString(response, "message", 0);
+   if(StringLen(msg) <= 0)
+      msg = ExtractJsonString(response, "error", 0);
+   if(StringLen(msg) <= 0)
+      msg = ExtractJsonString(response, "reason", 0);
+
+   // Last resort: include a short response snippet.
+   if(StringLen(msg) <= 0)
+   {
+      int cap = MathMin(200, StringLen(response));
+      alt = StringSubstr(response, 0, cap);
+      StringReplace(alt, "\r", " ");
+      StringReplace(alt, "\n", " ");
+      msg = StringFormat("(no message) httpStatus=%d webErr=%d resp=%s", g_lastHttpStatus, g_lastWebError, alt);
+   }
+
+   PrintFormat("No executable signal for %s (server success=false): %s", sym, msg);
+}
+
+void LogServerExecutionBlocked(const string sym, const string response)
+{
+   if(!VerboseTradeLogs)
+      return;
+   string msg = "";
+   string decision = "";
+
+   int execPos = StringFind(response, "\"execution\"");
+   if(execPos >= 0)
+      JsonGetStringFrom(response, execPos, "\"message\"", msg);
+   if(StringLen(msg) <= 0)
+      JsonGetString(response, "\"message\"", msg);
+
+   // Fallback keys (sometimes nested under gates)
+   int gatesPos = execPos >= 0 ? StringFind(response, "\"gates\"", execPos) : -1;
+   if(gatesPos < 0)
+      gatesPos = StringFind(response, "\"gates\"");
+   if(StringLen(msg) <= 0 && gatesPos >= 0)
+      JsonGetStringFrom(response, gatesPos, "\"reason\"", msg);
+   if(StringLen(msg) <= 0 && gatesPos >= 0)
+      JsonGetStringFrom(response, gatesPos, "\"message\"", msg);
+   if(StringLen(msg) <= 0)
+      JsonGetString(response, "\"reason\"", msg);
+   if(StringLen(msg) <= 0)
+      JsonGetString(response, "\"error\"", msg);
+
+   if(gatesPos >= 0)
+      JsonGetStringFrom(response, gatesPos, "\"decisionState\"", decision);
+   decision = ToUpperStr(decision);
+
+   if(StringLen(decision) <= 0)
+      decision = "(unknown)";
+
+   if(StringLen(msg) <= 0)
+   {
+      msg = ExtractJsonString(response, "message", 0);
+      if(StringLen(msg) <= 0)
+         msg = ExtractJsonString(response, "reason", 0);
+      if(StringLen(msg) <= 0)
+         msg = ExtractJsonString(response, "error", 0);
+   }
+
+   if(StringLen(msg) <= 0)
+   {
+      int cap = MathMin(200, StringLen(response));
+      string snippet = StringSubstr(response, 0, cap);
+      StringReplace(snippet, "\r", " ");
+      StringReplace(snippet, "\n", " ");
+      msg = StringFormat("(no message) httpStatus=%d webErr=%d resp=%s", g_lastHttpStatus, g_lastWebError, snippet);
+   }
+
+   PrintFormat("Server blocks execution for %s: decision=%s msg=%s", sym, decision, msg);
 }
 
 double PipSize(const string symbol)
@@ -1915,6 +2342,87 @@ bool PostMarketBars()
    return okAny;
 }
 
+bool PostMarketWatchBars()
+{
+   if(!EnableMarketWatchBars)
+      return true;
+   if(!g_isConnected)
+      return false;
+
+   int cap = MaxMarketWatchSymbols;
+   if(cap <= 0)
+      cap = 2000;
+
+   string allSyms[];
+   int total = CollectMarketWatchSymbols(allSyms, cap);
+   if(total <= 0)
+      return true;
+
+   int cycles = MarketWatchBarsSymbolsPerCycle;
+   if(cycles <= 0)
+      cycles = 1;
+   if(cycles > total)
+      cycles = total;
+
+   if(g_marketWatchBarsCursor < 0)
+      g_marketWatchBarsCursor = 0;
+   int start = (int)(g_marketWatchBarsCursor % total);
+
+   bool okAny = false;
+   for(int i = 0; i < cycles; i++)
+   {
+      int idx = (start + i) % total;
+      string sym = allSyms[idx];
+      StringTrimLeft(sym);
+      StringTrimRight(sym);
+      if(StringLen(sym) <= 0)
+         continue;
+      if(!IsTradeSymbolEligible(sym))
+         continue;
+
+      if(MarketWatchBarsIncludeM1)
+      {
+         if(PostMarketBarsForSymbol(sym, PERIOD_M1, "M1"))
+            okAny = true;
+      }
+
+      if(MarketWatchBarsIncludeM15)
+      {
+         if(ShouldSeedTimeframe(sym, "M15"))
+            PostMarketBarsForSymbol(sym, PERIOD_M15, "M15");
+         PostClosedMarketBarForSymbol(sym, PERIOD_M15, "M15");
+         okAny = true;
+      }
+
+      if(MarketWatchBarsIncludeH1)
+      {
+         if(ShouldSeedTimeframe(sym, "H1"))
+            PostMarketBarsForSymbol(sym, PERIOD_H1, "H1");
+         PostClosedMarketBarForSymbol(sym, PERIOD_H1, "H1");
+         okAny = true;
+      }
+
+      if(MarketWatchBarsIncludeH4)
+      {
+         if(ShouldSeedTimeframe(sym, "H4"))
+            PostMarketBarsForSymbol(sym, PERIOD_H4, "H4");
+         PostClosedMarketBarForSymbol(sym, PERIOD_H4, "H4");
+         okAny = true;
+      }
+
+      if(MarketWatchBarsIncludeD1)
+      {
+         if(ShouldSeedTimeframe(sym, "D1"))
+            PostMarketBarsForSymbol(sym, PERIOD_D1, "D1");
+         PostClosedMarketBarForSymbol(sym, PERIOD_D1, "D1");
+         okAny = true;
+      }
+   }
+
+   g_marketWatchBarsCursor = (start + cycles) % MathMax(1, total);
+   return okAny;
+}
+
 bool PostMarketBarsForSymbol(string sym, ENUM_TIMEFRAMES tf, string tfLabel)
 {
    if(!g_isConnected)
@@ -2351,6 +2859,63 @@ bool PollActiveSymbols()
    return true;
 }
 
+bool PollRealtimeSymbolHints()
+{
+   if(!EnableRealtimeSymbolHintsPolling)
+      return true;
+   if(!g_realtimeHintsEndpointSupported)
+      return true;
+   if(!g_isConnected)
+      return false;
+
+   int cap = MaxRealtimeSymbolHints;
+   if(cap <= 0)
+      cap = 40;
+
+   string response = "";
+   string path = StringFormat("/realtime/symbol-hints?max=%d", cap);
+   if(!BridgeRequest("GET", path, "", response, true))
+   {
+      if(g_lastHttpStatus == 404)
+      {
+         g_realtimeHintsEndpointSupported = false;
+         Print("Realtime symbol-hints endpoint not found (404). Disabling polling.");
+         return true;
+      }
+      return false;
+   }
+
+   string symbols[];
+   int count = JsonExtractSymbolsArray(response, "\"symbols\"", symbols);
+   if(count <= 0)
+      return true;
+
+   for(int i = 0; i < count && i < cap; i++)
+   {
+      string sym = symbols[i];
+      StringTrimLeft(sym);
+      StringTrimRight(sym);
+      if(StringLen(sym) <= 0)
+         continue;
+
+      string resolved = ResolveBrokerSymbol(sym);
+      StringTrimLeft(resolved);
+      StringTrimRight(resolved);
+      if(StringLen(resolved) <= 0)
+         continue;
+      if(!IsTradeSymbolEligible(resolved))
+         continue;
+
+      if(AutoSubscribeRealtimeSymbolHints)
+      {
+         SymbolSelect(resolved, true);
+         AddPrioritySymbol(resolved);
+      }
+   }
+
+   return true;
+}
+
 bool PollAndFulfillSnapshotRequests()
 {
    if(!g_isConnected)
@@ -2673,13 +3238,29 @@ bool HttpRequest(const string method,
    else
       url = url + path;
 
-   ResetLastError();
-   int status = WebRequest(method, url, headers, RequestTimeoutMs, body, result, resultHeaders);
-   g_lastHttpStatus = status;
-   int lastErr = GetLastError();
+   int attempts = MathMax(1, RequestRetryCount + 1);
+   int status = -1;
+   int lastErr = 0;
+   for(int attempt = 1; attempt <= attempts; attempt++)
+   {
+      ResetLastError();
+      status = WebRequest(method, url, headers, RequestTimeoutMs, body, result, resultHeaders);
+      g_lastHttpStatus = status;
+      lastErr = GetLastError();
+      g_lastWebError = lastErr;
+
+      bool transportFail = (status == -1) || (status < 100 || status > 599);
+      bool serverFail = (status >= 500);
+      if((transportFail || serverFail) && attempt < attempts)
+      {
+         int delayMs = MathMax(50, RequestRetryDelayMs);
+         Sleep(delayMs);
+         continue;
+      }
+      break;
+   }
    if(status == -1)
    {
-      g_lastWebError = lastErr;
       PrintFormat("WebRequest error: %d url=%s", lastErr, url);
       if(lastErr == 4014)
       {
@@ -2699,7 +3280,6 @@ bool HttpRequest(const string method,
    // codes (e.g., 1001) for transport failures; treat those as connection errors.
    if(status < 100 || status > 599)
    {
-      g_lastWebError = lastErr;
       PrintFormat(
          "WebRequest transport failure: code=%d lastErr=%d url=%s",
          status,
@@ -3177,7 +3757,12 @@ bool PostMarketQuotes()
       }
       return false;
    }
-   return BridgeRequest("POST", "/market/quotes", payload, response, true);
+   if(BridgeRequest("POST", "/market/quotes", payload, response, true))
+   {
+      g_lastQuoteSentAt = TimeCurrent();
+      return true;
+   }
+   return false;
 }
 
 bool PostConnectNewsOnce()
@@ -3636,88 +4221,91 @@ void CheckAndExecuteSignals()
       return;
 
    // Trade across dashboard-driven active symbols (or fallback to chart symbol).
+   // Always check priority symbols first (snapshot requests + server-scanned symbol hints).
    string candidates[];
+   ArrayResize(candidates, 0);
+
+   PrunePrioritySymbols();
+   int prioN = (EnablePrioritySymbols ? ArraySize(g_prioritySymbols) : 0);
    int activeN = ArraySize(g_activeSymbols);
+
+   // Helper: add symbol if not already present, respecting MaxSymbolsToTrade.
+   #define ADD_CAND(symToAdd) \
+      { \
+         string _s = (symToAdd); \
+         if(StringLen(_s) > 0) \
+         { \
+            bool _exists = false; \
+            for(int _j = 0; _j < ArraySize(candidates); _j++) \
+               if(candidates[_j] == _s) { _exists = true; break; } \
+            if(!_exists) \
+            { \
+               if(!(MaxSymbolsToTrade > 0 && ArraySize(candidates) >= MaxSymbolsToTrade)) \
+               { \
+                  int _newN = ArraySize(candidates) + 1; \
+                  ArrayResize(candidates, _newN); \
+                  candidates[_newN - 1] = _s; \
+               } \
+            } \
+         } \
+      }
+
+   // 1) Priority symbols (most recent first: end -> start)
+   for(int p = prioN - 1; p >= 0; p--)
+   {
+      if(MaxSymbolsToTrade > 0 && ArraySize(candidates) >= MaxSymbolsToTrade)
+         break;
+      ADD_CAND(g_prioritySymbols[p]);
+   }
+
+   // 2) Active symbols from dashboard/server
    if(activeN > 0)
    {
       int cap = activeN;
       if(MaxSymbolsToTrade > 0)
          cap = (int)MathMin((double)activeN, (double)MaxSymbolsToTrade);
-      ArrayResize(candidates, cap);
       for(int i = 0; i < cap; i++)
-         candidates[i] = g_activeSymbols[i];
-
-      // Always include a core set of liquid majors/crosses/metals so the EA can still
-      // catch executable signals even if the dashboard symbol list is narrow.
-      string core[];
-      ArrayResize(core, 18);
-      core[0]  = "EURUSD";
-      core[1]  = "GBPUSD";
-      core[2]  = "USDJPY";
-      core[3]  = "USDCHF";
-      core[4]  = "USDCAD";
-      core[5]  = "AUDUSD";
-      core[6]  = "NZDUSD";
-      core[7]  = "EURJPY";
-      core[8]  = "GBPJPY";
-      core[9]  = "AUDJPY";
-      core[10] = "NZDJPY";
-      core[11] = "EURGBP";
-      core[12] = "EURAUD";
-      core[13] = "EURNZD";
-      core[14] = "GBPAUD";
-      core[15] = "GBPNZD";
-      core[16] = "XAUUSD";
-      core[17] = "XAGUSD";
-
-      for(int c = 0; c < ArraySize(core); c++)
       {
-         string s = core[c];
-         bool exists = false;
-         for(int j = 0; j < ArraySize(candidates); j++)
-         {
-            if(candidates[j] == s)
-            {
-               exists = true;
-               break;
-            }
-         }
-         if(exists)
-            continue;
-
          if(MaxSymbolsToTrade > 0 && ArraySize(candidates) >= MaxSymbolsToTrade)
             break;
-
-         int newN = ArraySize(candidates) + 1;
-         ArrayResize(candidates, newN);
-         candidates[newN - 1] = s;
+         ADD_CAND(g_activeSymbols[i]);
       }
    }
-   else
+
+   // 3) Core liquid set (keeps EA effective even if active list is narrow)
+   string core[];
+   ArrayResize(core, 18);
+   core[0]  = "EURUSD";
+   core[1]  = "GBPUSD";
+   core[2]  = "USDJPY";
+   core[3]  = "USDCHF";
+   core[4]  = "USDCAD";
+   core[5]  = "AUDUSD";
+   core[6]  = "NZDUSD";
+   core[7]  = "EURJPY";
+   core[8]  = "GBPJPY";
+   core[9]  = "AUDJPY";
+   core[10] = "NZDJPY";
+   core[11] = "EURGBP";
+   core[12] = "EURAUD";
+   core[13] = "EURNZD";
+   core[14] = "GBPAUD";
+   core[15] = "GBPNZD";
+   core[16] = "XAUUSD";
+   core[17] = "XAGUSD";
+
+   for(int c = 0; c < ArraySize(core); c++)
    {
-      // Fallback set: chart symbol + a few liquid majors/metals.
-      // Prevents "no trades" when the chart is on an exotic/crypto.
-      ArrayResize(candidates, 19);
-      candidates[0]  = Symbol();
-      candidates[1]  = "EURUSD";
-      candidates[2]  = "GBPUSD";
-      candidates[3]  = "USDJPY";
-      candidates[4]  = "USDCHF";
-      candidates[5]  = "USDCAD";
-      candidates[6]  = "AUDUSD";
-      candidates[7]  = "NZDUSD";
-      candidates[8]  = "EURJPY";
-      candidates[9]  = "GBPJPY";
-      candidates[10] = "AUDJPY";
-      candidates[11] = "NZDJPY";
-      candidates[12] = "EURGBP";
-      candidates[13] = "EURAUD";
-      candidates[14] = "EURNZD";
-      candidates[15] = "GBPAUD";
-      candidates[16] = "GBPNZD";
-      candidates[17] = "XAUUSD";
-      candidates[18] = "XAGUSD";
+      if(MaxSymbolsToTrade > 0 && ArraySize(candidates) >= MaxSymbolsToTrade)
+         break;
+      ADD_CAND(core[c]);
    }
+
+   // If we still have nothing, add chart symbol as a last fallback.
+   if(ArraySize(candidates) == 0)
+      ADD_CAND(Symbol());
+
+   #undef ADD_CAND
 
    int n = ArraySize(candidates);
    if(n <= 0)
@@ -3738,13 +4326,31 @@ void CheckAndExecuteSignals()
    double bestStrength = -1.0;
    double bestConfidence = -1.0;
 
+   // Priority-first: always check the most relevant symbols first.
+   int prioCount = MathMin(prioN, n);
+   int restN = n - prioCount;
+
+   bool effectiveRespect = (RespectServerExecution || SmartStrongMode);
+
    for(int iter = 0; iter < checks; iter++)
    {
       int idx = 0;
-      if(g_tradeCursor < 0)
-         g_tradeCursor = 0;
-      idx = (int)(g_tradeCursor % n);
-      g_tradeCursor++;
+      if(iter < prioCount)
+      {
+         idx = iter;
+      }
+      else
+      {
+         if(restN <= 0)
+            idx = iter % n;
+         else
+         {
+            if(g_tradeCursor < 0)
+               g_tradeCursor = 0;
+            idx = prioCount + (int)(g_tradeCursor % restN);
+            g_tradeCursor++;
+         }
+      }
 
       string sym = ResolveBrokerSymbol(candidates[idx]);
       StringTrimLeft(sym);
@@ -3757,52 +4363,77 @@ void CheckAndExecuteSignals()
 
       SymbolSelect(sym, true);
 
+      // Ensure the server has a recent EA tick for this symbol before /signal/get.
+      // Prevents: {"success":false,"message":"No recent EA quote available"}
+      AddPrioritySymbol(sym);
+      PostSingleQuoteForSymbol(sym, false);
+
       if(HasOpenPositionForSymbol(sym))
          continue;
 
       if(MaxPositionsPerSymbol > 0 && CountPositionsForSymbol(sym) >= MaxPositionsPerSymbol)
          continue;
 
-      if(MaxSpreadPoints > 0 && CurrentSpreadPoints(sym) > MaxSpreadPoints)
+      string response = "";
+      string path = StringFormat("/signal/get?symbol=%s&accountMode=%s", sym, AccountMode());
+      if(!BridgeRequest("GET", path, "", response, true))
          continue;
 
-      if(EnableVolatilityFilter)
+      if(StringFind(response, "\"success\":true") < 0 && StringFind(response, "\"success\" : true") < 0)
       {
-         double atrPips = ReadAtrPips(sym, VolatilityFilterTf);
-         if(atrPips <= 0.0)
-            continue;
-         if(MinAtrPips > 0.0 && atrPips < MinAtrPips)
-            continue;
-         if(MaxAtrPips > 0.0 && atrPips > MaxAtrPips)
-            continue;
-
-         if(MaxSpreadToAtrPct > 0.0)
+         // If we're missing an EA quote, force-push one and retry once.
+         if(StringFind(response, "No recent EA quote available") >= 0)
          {
-            double point = SymbolInfoDouble(sym, SYMBOL_POINT);
-            if(!(point > 0.0))
-               point = 0.00001;
-            double pip = PipSize(sym);
-            if(pip > 0.0)
-            {
-               int spreadPts = CurrentSpreadPoints(sym);
-               double spreadPips = (spreadPts * point) / pip;
-               if(spreadPips > (atrPips * (MaxSpreadToAtrPct / 100.0)))
-                  continue;
-            }
+            PostSingleQuoteForSymbol(sym, true);
+            string response2 = "";
+            if(BridgeRequest("GET", path, "", response2, true))
+               response = response2;
+         }
+
+         if(StringFind(response, "\"success\":true") < 0 && StringFind(response, "\"success\" : true") < 0)
+         {
+         if(iter < prioCount)
+            LogServerNoSignal(sym, response);
+         continue;
          }
       }
 
-      if(SmartStrongMode)
+      bool shouldExecute = true;
+      string direction = "";
+      double entry = 0.0, sl = 0.0, tp = 0.0, lots = DefaultLots;
+      if(!ParseSignalForExecution(response, direction, entry, sl, tp, lots, shouldExecute))
+         continue;
+      if(effectiveRespect && !shouldExecute)
       {
-         double atrPipsSmart = ReadAtrPips(sym, VolatilityFilterTf);
-         if(atrPipsSmart > 0.0)
+         if(iter < prioCount)
+            LogServerExecutionBlocked(sym, response);
+         continue;
+      }
+
+      // Local pre-filters (spread/ATR) can cause dashboard-executable signals to be skipped.
+      // When following server execution gates, treat the server's shouldExecute as authoritative.
+      bool trustServerGates = (effectiveRespect && shouldExecute);
+
+      bool isExotic = IsForexPair(sym) && !IsMajorsForexPair(sym);
+      double atrPips = 0.0;
+      double atrPipsSmart = 0.0;
+
+      if(!trustServerGates)
+      {
+         if(!isExotic && MaxSpreadPoints > 0 && CurrentSpreadPoints(sym) > MaxSpreadPoints)
+            continue;
+
+         if(EnableVolatilityFilter)
          {
-            if(SmartMinAtrPips > 0.0 && atrPipsSmart < SmartMinAtrPips)
+            atrPips = ReadAtrPips(sym, VolatilityFilterTf);
+            if(atrPips <= 0.0)
                continue;
-            if(SmartMaxAtrPips > 0.0 && atrPipsSmart > SmartMaxAtrPips)
+            if(MinAtrPips > 0.0 && atrPips < MinAtrPips)
+               continue;
+            if(MaxAtrPips > 0.0 && atrPips > MaxAtrPips)
                continue;
 
-            if(SmartMaxSpreadToAtrPct > 0.0)
+            if(!isExotic && MaxSpreadToAtrPct > 0.0)
             {
                double point = SymbolInfoDouble(sym, SYMBOL_POINT);
                if(!(point > 0.0))
@@ -3812,29 +4443,39 @@ void CheckAndExecuteSignals()
                {
                   int spreadPts = CurrentSpreadPoints(sym);
                   double spreadPips = (spreadPts * point) / pip;
-                  if(spreadPips > (atrPipsSmart * (SmartMaxSpreadToAtrPct / 100.0)))
+                  if(spreadPips > (atrPips * (MaxSpreadToAtrPct / 100.0)))
                      continue;
                }
             }
          }
+
+         if(SmartStrongMode)
+         {
+            atrPipsSmart = ReadAtrPips(sym, VolatilityFilterTf);
+            if(atrPipsSmart > 0.0)
+            {
+               if(SmartMinAtrPips > 0.0 && atrPipsSmart < SmartMinAtrPips)
+                  continue;
+               if(SmartMaxAtrPips > 0.0 && atrPipsSmart > SmartMaxAtrPips)
+                  continue;
+
+               if(!isExotic && SmartMaxSpreadToAtrPct > 0.0)
+               {
+                  double point = SymbolInfoDouble(sym, SYMBOL_POINT);
+                  if(!(point > 0.0))
+                     point = 0.00001;
+                  double pip = PipSize(sym);
+                  if(pip > 0.0)
+                  {
+                     int spreadPts = CurrentSpreadPoints(sym);
+                     double spreadPips = (spreadPts * point) / pip;
+                     if(spreadPips > (atrPipsSmart * (SmartMaxSpreadToAtrPct / 100.0)))
+                        continue;
+                  }
+               }
+            }
+         }
       }
-
-      string response = "";
-      string path = StringFormat("/signal/get?symbol=%s&accountMode=%s", sym, AccountMode());
-      if(!BridgeRequest("GET", path, "", response, true))
-         continue;
-
-      if(StringFind(response, "\"success\":true") < 0 && StringFind(response, "\"success\" : true") < 0)
-         continue;
-
-      bool shouldExecute = true;
-      string direction = "";
-      double entry = 0.0, sl = 0.0, tp = 0.0, lots = DefaultLots;
-      if(!ParseSignalForExecution(response, direction, entry, sl, tp, lots, shouldExecute))
-         continue;
-      bool effectiveRespect = RespectServerExecution || SmartStrongMode;
-      if(effectiveRespect && !shouldExecute)
-         continue;
 
       double strength = 0.0;
       double confidence = 0.0;
@@ -3860,6 +4501,55 @@ void CheckAndExecuteSignals()
          }
          if(strength < minS || confidence < minC)
             continue;
+      }
+
+      bool bypassExoticSpread = ShouldBypassExoticSpreadGuards(sym, response, strength, confidence);
+      if(isExotic && !bypassExoticSpread)
+      {
+         if(MaxSpreadPoints > 0 && CurrentSpreadPoints(sym) > MaxSpreadPoints)
+            continue;
+
+         if(EnableVolatilityFilter && MaxSpreadToAtrPct > 0.0)
+         {
+            double atrCheck = atrPips;
+            if(atrCheck <= 0.0)
+               atrCheck = ReadAtrPips(sym, VolatilityFilterTf);
+            if(atrCheck > 0.0)
+            {
+               double point = SymbolInfoDouble(sym, SYMBOL_POINT);
+               if(!(point > 0.0))
+                  point = 0.00001;
+               double pip = PipSize(sym);
+               if(pip > 0.0)
+               {
+                  int spreadPts = CurrentSpreadPoints(sym);
+                  double spreadPips = (spreadPts * point) / pip;
+                  if(spreadPips > (atrCheck * (MaxSpreadToAtrPct / 100.0)))
+                     continue;
+               }
+            }
+         }
+
+         if(SmartStrongMode && SmartMaxSpreadToAtrPct > 0.0)
+         {
+            double atrSmartCheck = atrPipsSmart;
+            if(atrSmartCheck <= 0.0)
+               atrSmartCheck = ReadAtrPips(sym, VolatilityFilterTf);
+            if(atrSmartCheck > 0.0)
+            {
+               double point = SymbolInfoDouble(sym, SYMBOL_POINT);
+               if(!(point > 0.0))
+                  point = 0.00001;
+               double pip = PipSize(sym);
+               if(pip > 0.0)
+               {
+                  int spreadPts = CurrentSpreadPoints(sym);
+                  double spreadPips = (spreadPts * point) / pip;
+                  if(spreadPips > (atrSmartCheck * (SmartMaxSpreadToAtrPct / 100.0)))
+                     continue;
+               }
+            }
+         }
       }
 
       bool better = false;
@@ -4765,6 +5455,8 @@ bool SendSessionConnect()
    if(BridgeRequest("POST", "/session/connect", BuildSessionPayload(true), response, true))
    {
       g_isConnected = true;
+   g_lastBridgeSuccess = TimeCurrent();
+      g_lastSessionRefresh = TimeCurrent();
       g_sentConnectNews = false;
       g_marketWatchPrepared = false;
       g_marketFeedCursor = 0;
@@ -4813,9 +5505,19 @@ bool SendHeartbeat()
    return false;
 }
 
+bool BridgeIsStale()
+{
+   if(!g_isConnected)
+      return false;
+   if(g_lastBridgeSuccess == 0)
+      return false;
+   int maxStale = MathMax(90, HeartbeatInterval * 3);
+   return (TimeCurrent() - g_lastBridgeSuccess) >= maxStale;
+}
+
 int OnInit()
 {
-   Print("SignalBridge-MT5 v1.04 starting (market quotes + snapshot + bars)");
+   Print("SignalBridge-MT5 v1.11 starting (market quotes + snapshot + bars)");
    // Don't fail init if the bridge is down; keep the EA alive and auto-reconnect.
    if(!SendSessionConnect())
       Print("Bridge not connected yet. EA will keep trying (check URL/token/WebRequest allowlist)." );
@@ -4849,11 +5551,38 @@ void OnTimer()
       return;
    }
 
+   if(BridgeHardResetSec > 0 && g_lastBridgeSuccess > 0 &&
+      (TimeCurrent() - g_lastBridgeSuccess) >= BridgeHardResetSec)
+   {
+      g_isConnected = false;
+      g_nextReconnectAt = TimeCurrent() + MathMax(1, ReconnectBackoffSec);
+      PrintFormat("Bridge hard reset after %d sec without success.", (int)(TimeCurrent() - g_lastBridgeSuccess));
+      return;
+   }
+
+   if(BridgeIsStale())
+   {
+      g_isConnected = false;
+      g_nextReconnectAt = TimeCurrent() + MathMax(1, ReconnectBackoffSec);
+      PrintFormat("Bridge stale (no success for %d sec). Forcing reconnect.", (int)(TimeCurrent() - g_lastBridgeSuccess));
+      return;
+   }
+
    // Periodically refresh server policy (keeps EA aligned with backend config changes).
    if(SmartStrongMode && ServerPolicyRefreshSec > 0)
    {
       if(g_lastServerPolicyFetch == 0 || (TimeCurrent() - g_lastServerPolicyFetch) >= ServerPolicyRefreshSec)
          FetchServerPolicy(false);
+   }
+
+   // Refresh the session periodically to keep the bridge alive on long runs.
+   if(SessionRefreshSec > 0)
+   {
+      if(g_lastSessionRefresh == 0 || (TimeCurrent() - g_lastSessionRefresh) >= SessionRefreshSec)
+      {
+         if(SendSessionConnect())
+            g_lastSessionRefresh = TimeCurrent();
+      }
    }
 
    if(EnableMarketFeed && IncludeMarketWatch && AutoPopulateMarketWatch && !g_marketWatchPrepared)
@@ -4872,6 +5601,35 @@ void OnTimer()
          Print("Heartbeat failed");
    }
 
+   if(KeepAliveIntervalSec > 0 && g_lastBridgeSuccess > 0)
+   {
+      if(g_lastKeepAlive == 0 || (TimeCurrent() - g_lastKeepAlive) >= KeepAliveIntervalSec)
+      {
+         if((TimeCurrent() - g_lastBridgeSuccess) >= KeepAliveIntervalSec)
+         {
+            if(!SendHeartbeat())
+            {
+               g_isConnected = false;
+               g_nextReconnectAt = TimeCurrent() + MathMax(1, ReconnectBackoffSec);
+               Print("Keep-alive failed. Forcing reconnect.");
+               return;
+            }
+            g_lastKeepAlive = TimeCurrent();
+         }
+      }
+   }
+
+   if(QuoteStaleReconnectSec > 0 && g_lastQuoteSentAt > 0)
+   {
+      if((TimeCurrent() - g_lastQuoteSentAt) >= QuoteStaleReconnectSec)
+      {
+         g_isConnected = false;
+         g_nextReconnectAt = TimeCurrent() + MathMax(1, ReconnectBackoffSec);
+         PrintFormat("Quotes stale (%d sec). Forcing reconnect.", (int)(TimeCurrent() - g_lastQuoteSentAt));
+         return;
+      }
+   }
+
    // Fulfill on-demand snapshot requests from the server.
    // This is required for /signal/get to stop returning "EA snapshot pending".
    if(g_lastSnapshotRequestPoll == 0 || (TimeCurrent() - g_lastSnapshotRequestPoll) >= 2)
@@ -4885,6 +5643,14 @@ void OnTimer()
    {
       if(PollActiveSymbols())
          g_lastActiveSymbolsPoll = TimeCurrent();
+   }
+
+   // Poll server-scanned symbol hints (top candidates) so the EA can follow whatever
+   // is currently surfacing in the Signal Dashboard without manual symbol selection.
+   if(EnableRealtimeSymbolHintsPolling && g_realtimeHintsEndpointSupported && (g_lastRealtimeHintsPoll == 0 || (TimeCurrent() - g_lastRealtimeHintsPoll) >= RealtimeSymbolHintsPollIntervalSec))
+   {
+      if(PollRealtimeSymbolHints())
+         g_lastRealtimeHintsPoll = TimeCurrent();
    }
 
    // Register the MarketWatch symbol universe so the server can background-scan it.
@@ -4929,6 +5695,13 @@ void OnTimer()
    {
       if(PostMarketBars())
          g_lastMarketBars = TimeCurrent();
+   }
+
+   // Backfill MarketWatch M15/H1 bars so the server can analyze all forex + metals.
+   if(EnableMarketFeed && EnableMarketWatchBars && (g_lastMarketWatchBars == 0 || (TimeCurrent() - g_lastMarketWatchBars) >= MarketWatchBarsIntervalSec))
+   {
+      if(PostMarketWatchBars())
+         g_lastMarketWatchBars = TimeCurrent();
    }
 
    // Auto-trading polling

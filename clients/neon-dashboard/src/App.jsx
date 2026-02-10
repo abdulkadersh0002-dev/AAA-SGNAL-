@@ -50,7 +50,10 @@ import {
 } from './app/app-constants.js';
 
 const SHOW_AUTOTRADING_UI = false;
-const DASHBOARD_AUTOTRADING_AUTOSTART = true;
+// Auto-starting requires server-side trade execution to be enabled.
+// In EA-only / TRADING_SCOPE=signals modes the backend will (correctly) 403.
+// Keep this tied to the UI flag so hidden controls don't spam the console.
+const DASHBOARD_AUTOTRADING_AUTOSTART = SHOW_AUTOTRADING_UI;
 
 const matchesTickerCategory = (symbolUpper, categoryId) => {
   const allowed = isFxSymbol(symbolUpper) || isMetalSymbol(symbolUpper);
@@ -123,10 +126,24 @@ const normalizeSignal = (payload = {}, fallbackTimestamp) => {
       tradeRef?.pnl ??
       tradeRef?.profit
   );
-  const score = toNumber(
-    payload.finalScore ?? payload.score ?? payload.aggregateScore ?? payload.meta?.score
+  const decisionScore = toNumber(
+    payload?.isValid?.decision?.score ??
+      payload?.components?.layeredDecision?.decision?.score ??
+      payload?.components?.layeredDecision?.score
   );
-  const winRate = toNumber(payload.estimatedWinRate ?? payload.winRate ?? payload.metrics?.winRate);
+  const score = toNumber(
+    payload.finalScore ??
+      decisionScore ??
+      payload.score ??
+      payload.aggregateScore ??
+      payload.meta?.score
+  );
+  const winRate = toNumber(
+    payload.estimatedWinRate ??
+      payload.winRate ??
+      payload.metrics?.winRate ??
+      payload?.components?.advancedFilter?.metrics?.winRate
+  );
   const statusRaw = payload.status || payload.signalStatus || tradeRef?.status || 'pending';
   const expiresAt =
     toTimestamp(payload.expiresAt || payload.validity?.expiresAt || payload.expiryAt) || null;
@@ -161,10 +178,33 @@ const normalizeSignal = (payload = {}, fallbackTimestamp) => {
     strength: toNumber(payload.strength ?? primaryTechnical?.strength),
     confidence: toNumber(payload.confidence ?? primaryTechnical?.confidence),
     timeframe: payload.timeframe || primaryTechnical?.timeframe || payload.meta?.timeframe || null,
+    availableTimeframes: (() => {
+      const list = Array.isArray(payload?.availableTimeframes)
+        ? payload.availableTimeframes
+        : payload?.components?.technical?.candlesByTimeframe &&
+            typeof payload.components.technical.candlesByTimeframe === 'object'
+          ? Object.keys(payload.components.technical.candlesByTimeframe)
+          : payload?.components?.technical?.timeframes &&
+              typeof payload.components.technical.timeframes === 'object'
+            ? Object.keys(payload.components.technical.timeframes)
+            : [];
+
+      return list
+        .map((tf) => String(tf || '').trim().toUpperCase())
+        .filter(Boolean);
+    })(),
     strategy: payload.strategy || payload.source || payload.meta?.strategy || null,
     // Preserve decision metadata so the Signal Dashboard can distinguish ENTER vs WAIT_MONITOR.
-    isValid: payload.isValid || null,
+    isValid:
+      payload.isValid ||
+      (payload.decision
+        ? {
+            isValid: payload.tradeValid ?? null,
+            decision: payload.decision
+          }
+        : null),
     layeredAnalysis: payload?.components?.layeredAnalysis || payload?.layeredAnalysis || null,
+    shouldExecute: payload?.shouldExecute ?? payload?.execution?.shouldExecute ?? payload?.tradeReference?.shouldExecute,
     timestamp,
     expiresAt,
     signalStatus: payload.signalStatus || payload.validity?.state || null,
@@ -440,6 +480,19 @@ function App() {
       ? Math.max(0, Math.min(100, ENTRY_MIN_SCORE))
       : 30;
 
+    // Relaxed fallback for win-rate and decision score.
+    // This keeps the "more trades" preset actionable when strict filters yield 0.
+    const RELAXED_ENTRY_MIN_WIN_RATE = Number(
+      import.meta.env.VITE_ENTRY_READY_RELAXED_MIN_WIN_RATE
+    );
+    const RELAXED_ENTRY_MIN_SCORE = Number(import.meta.env.VITE_ENTRY_READY_RELAXED_MIN_SCORE);
+    const relaxedEntryMinWinRate = Number.isFinite(RELAXED_ENTRY_MIN_WIN_RATE)
+      ? Math.max(0, Math.min(100, RELAXED_ENTRY_MIN_WIN_RATE))
+      : 58;
+    const relaxedEntryMinScore = Number.isFinite(RELAXED_ENTRY_MIN_SCORE)
+      ? Math.max(0, Math.min(100, RELAXED_ENTRY_MIN_SCORE))
+      : 26;
+
     // WATCH mode should stay high-signal: hide weak/noisy WAIT_MONITOR items.
     // Can be tuned at build time via VITE_WATCHLIST_MIN_CONFIDENCE / VITE_WATCHLIST_MIN_STRENGTH.
     const WATCH_MIN_CONFIDENCE = Number(import.meta.env.VITE_WATCHLIST_MIN_CONFIDENCE);
@@ -457,9 +510,9 @@ function App() {
     };
 
     const isTradeable = (signal) => {
-      const entryPrice = signal?.entryPrice;
-      const stopLoss = signal?.stopLoss;
-      const takeProfit = signal?.takeProfit;
+      const entryPrice = signal?.entryPrice ?? signal?.entry?.price;
+      const stopLoss = signal?.stopLoss ?? signal?.entry?.stopLoss;
+      const takeProfit = signal?.takeProfit ?? signal?.entry?.takeProfit;
       if (!Number.isFinite(Number(entryPrice))) {
         return false;
       }
@@ -472,7 +525,7 @@ function App() {
       return true;
     };
 
-    const buildEnterList = ({ minConfidence, minStrength } = {}) =>
+    const buildEnterList = ({ minConfidence, minStrength, minWinRate, minScore } = {}) =>
       pool
         .filter(Boolean)
         .filter((signal) => {
@@ -490,13 +543,21 @@ function App() {
             return false;
           }
 
-          // Strict: only show fully trade-valid signals.
-          if (signal?.isValid?.isValid !== true) {
+          const serverApproved =
+            signal?.execution?.shouldExecute === true || signal?.shouldExecute === true;
+
+          // Entry-ready means executable *now* (same contract as MT4/MT5 EA: /signal/get shouldExecute=true).
+          if (!serverApproved) {
             return false;
           }
 
           // Entry-ready must include usable levels.
           if (!isTradeable(signal)) {
+            return false;
+          }
+
+          // Otherwise, only show fully trade-valid signals.
+          if (signal?.isValid?.isValid !== true) {
             return false;
           }
 
@@ -507,6 +568,10 @@ function App() {
           const score = Number.isFinite(decisionScore)
             ? decisionScore
             : Number(signal?.score) || 0;
+          const effectiveMinWinRate = Number.isFinite(Number(minWinRate))
+            ? Number(minWinRate)
+            : entryMinWinRate;
+          const effectiveMinScore = Number.isFinite(Number(minScore)) ? Number(minScore) : entryMinScore;
           const missing = Array.isArray(signal?.isValid?.decision?.missing)
             ? signal.isValid.decision.missing
             : [];
@@ -514,11 +579,11 @@ function App() {
             return false;
           }
 
-          if (winRate < entryMinWinRate) {
+          if (winRate < effectiveMinWinRate) {
             return false;
           }
 
-          if (score < entryMinScore) {
+          if (score < effectiveMinScore) {
             return false;
           }
 
@@ -574,10 +639,8 @@ function App() {
             return false;
           }
 
-          // For the main table, require usable levels (even in WATCH mode).
-          if (!isTradeable(signal)) {
-            return false;
-          }
+          // WATCH mode is monitoring-only: show high-quality WAIT_MONITOR signals
+          // even if precise entry/SL/TP levels aren't computed yet.
 
           // Filter out weak/noisy candidates.
           const confidence = Number(signal?.confidence) || 0;
@@ -614,6 +677,11 @@ function App() {
         })
         .slice()
         .sort((a, b) => {
+          const aTradeable = isTradeable(a) ? 1 : 0;
+          const bTradeable = isTradeable(b) ? 1 : 0;
+          if (bTradeable !== aTradeable) {
+            return bTradeable - aTradeable;
+          }
           const aStrength = Number(a?.strength) || 0;
           const bStrength = Number(b?.strength) || 0;
           if (bStrength !== aStrength) {
@@ -639,22 +707,24 @@ function App() {
       return {
         signals: strict,
         modeLabel: usingCandidatesFallback
-          ? `ENTER only (strict · candidates · win≥${entryMinWinRate} score≥${entryMinScore})`
-          : `ENTER only (strict · win≥${entryMinWinRate} score≥${entryMinScore})`
+          ? `Executable ENTER (strict · candidates · win≥${entryMinWinRate} score≥${entryMinScore})`
+          : `Executable ENTER (strict · win≥${entryMinWinRate} score≥${entryMinScore})`
       };
     }
 
     const relaxed = buildEnterList({
       minConfidence: relaxedMinConfidence,
-      minStrength: relaxedMinStrength
+      minStrength: relaxedMinStrength,
+      minWinRate: relaxedEntryMinWinRate,
+      minScore: relaxedEntryMinScore
     });
 
     if (relaxed.length > 0) {
       return {
         signals: relaxed,
         modeLabel: usingCandidatesFallback
-          ? `ENTER only (relaxed · candidates ${relaxedMinConfidence}/${relaxedMinStrength} · win≥${entryMinWinRate} score≥${entryMinScore})`
-          : `ENTER only (relaxed ${relaxedMinConfidence}/${relaxedMinStrength} · win≥${entryMinWinRate} score≥${entryMinScore})`
+          ? `Executable ENTER (relaxed · candidates ${relaxedMinConfidence}/${relaxedMinStrength} · win≥${relaxedEntryMinWinRate} score≥${relaxedEntryMinScore})`
+          : `Executable ENTER (relaxed ${relaxedMinConfidence}/${relaxedMinStrength} · win≥${relaxedEntryMinWinRate} score≥${relaxedEntryMinScore})`
       };
     }
 
@@ -669,122 +739,7 @@ function App() {
 
   const entryReadySignals = entryReadySignalsMeta.signals;
 
-  const strongOverrideSignals = useMemo(() => {
-    const primary = Array.isArray(signals) ? signals : [];
-    const fallback = Array.isArray(candidateSignals) ? candidateSignals : [];
-    const merged = [...primary.filter(Boolean), ...fallback.filter(Boolean)];
-    if (merged.length === 0) {
-      return [];
-    }
-
-    const byKey = new Map();
-    for (const item of merged) {
-      const key = item?.mergeKey || item?.id;
-      if (!key) {
-        continue;
-      }
-      const existing = byKey.get(key);
-      if (!existing) {
-        byKey.set(key, item);
-        continue;
-      }
-      const existingTs = toTimestamp(existing?.openedAt || existing?.timestamp) || 0;
-      const itemTs = toTimestamp(item?.openedAt || item?.timestamp) || 0;
-      if (itemTs >= existingTs) {
-        byKey.set(key, item);
-      }
-    }
-
-    const STRONG_MIN_CONFIDENCE = Number(import.meta.env.VITE_STRONG_OVERRIDE_MIN_CONFIDENCE);
-    const STRONG_MIN_STRENGTH = Number(import.meta.env.VITE_STRONG_OVERRIDE_MIN_STRENGTH);
-    const strongConf = Number.isFinite(STRONG_MIN_CONFIDENCE)
-      ? Math.max(0, Math.min(100, STRONG_MIN_CONFIDENCE))
-      : 85;
-    const strongStrength = Number.isFinite(STRONG_MIN_STRENGTH)
-      ? Math.max(0, Math.min(100, STRONG_MIN_STRENGTH))
-      : 70;
-
-    const isTradeable = (signal) => {
-      const entryPrice = signal?.entryPrice;
-      const stopLoss = signal?.stopLoss;
-      const takeProfit = signal?.takeProfit;
-      if (!Number.isFinite(Number(entryPrice))) {
-        return false;
-      }
-      if (!Number.isFinite(Number(stopLoss))) {
-        return false;
-      }
-      if (!Number.isFinite(Number(takeProfit))) {
-        return false;
-      }
-      return true;
-    };
-
-    const resolveLayer18State = (signal) => {
-      const layered = signal?.layeredAnalysis || null;
-      const layers = Array.isArray(layered?.layers) ? layered.layers : null;
-      if (!layers || layers.length < 18) {
-        return null;
-      }
-      const layer18 =
-        layers.find((layer) => String(layer?.key || '') === 'L18') ||
-        layers.find((layer) => Number(layer?.layer) === 18) ||
-        null;
-      const layerState = String(layer18?.metrics?.decision?.state || '').trim();
-      return layerState ? layerState.toUpperCase() : null;
-    };
-
-    return Array.from(byKey.values())
-      .filter((signal) => {
-        const direction = String(signal?.direction || '').toUpperCase();
-        if (direction !== 'BUY' && direction !== 'SELL') {
-          return false;
-        }
-
-        const decisionState = String(signal?.isValid?.decision?.state || '').toUpperCase();
-        if (decisionState === 'ENTER') {
-          return false;
-        }
-
-        if (signal?.isValid?.isValid !== true) {
-          return false;
-        }
-
-        if (!isTradeable(signal)) {
-          return false;
-        }
-
-        const layer18State = resolveLayer18State(signal);
-        if (!layer18State || layer18State === 'ENTER') {
-          return false;
-        }
-
-        const confidence = Number(signal?.confidence) || 0;
-        const strength = Number(signal?.strength) || 0;
-        if (confidence < strongConf || strength < strongStrength) {
-          return false;
-        }
-
-        return true;
-      })
-      .slice()
-      .sort((a, b) => {
-        const aStrength = Number(a?.strength) || 0;
-        const bStrength = Number(b?.strength) || 0;
-        if (bStrength !== aStrength) {
-          return bStrength - aStrength;
-        }
-        const aConf = Number(a?.confidence) || 0;
-        const bConf = Number(b?.confidence) || 0;
-        if (bConf !== aConf) {
-          return bConf - aConf;
-        }
-        const aTs = toTimestamp(a?.openedAt || a?.timestamp) || 0;
-        const bTs = toTimestamp(b?.openedAt || b?.timestamp) || 0;
-        return bTs - aTs;
-      })
-      .slice(0, 50);
-  }, [signals, candidateSignals]);
+  const strongOverrideSignals = useMemo(() => [], [signals, candidateSignals]);
 
   const refreshTradingData = useCallback(async () => {
     try {
@@ -957,6 +912,10 @@ function App() {
 
   const refreshMarketFeed = useCallback(
     async (options = {}) => {
+      if (!effectivePlatformId) {
+        setMarketFeed((prev) => ({ ...prev, loading: false }));
+        return;
+      }
       const includeNews = options.includeNews !== false;
       setMarketFeed((prev) => ({ ...prev, loading: prev.updatedAt == null, error: null }));
       try {
@@ -1109,6 +1068,15 @@ function App() {
     [effectivePlatformId]
   );
 
+  // Bootstrap the market feed as soon as we know which broker to query.
+  // This prevents a false "Quotes 0" state if heartbeat endpoints fail transiently.
+  useEffect(() => {
+    if (!effectivePlatformId) {
+      return;
+    }
+    refreshMarketFeed({ includeNews: true });
+  }, [effectivePlatformId, refreshMarketFeed]);
+
   // Defer search filtering so keystrokes never freeze the UI.
   const tickerSearchDeferred = useDeferredValue(tickerSearch);
   const tickerSearchNormalized = useMemo(
@@ -1152,6 +1120,22 @@ function App() {
     const sessions = selectedEaBridgeSessions;
     const nowMs = Date.now();
 
+    // Prefer the status endpoint if available.
+    // This avoids false "Disconnected" when sessions aren't loaded yet and quotes are idle.
+    if (eaBridgeStatus && typeof eaBridgeStatus === 'object') {
+      if (eaBridgeStatus.connected === true) {
+        return true;
+      }
+      const hbAge = Number(eaBridgeStatus?.sessions?.lastHeartbeatAgeMs);
+      if (Number.isFinite(hbAge) && hbAge >= 0 && hbAge <= 2 * 60 * 1000) {
+        return true;
+      }
+      const hb = Number(eaBridgeStatus?.sessions?.lastHeartbeat || 0);
+      if (hb > 0 && nowMs - hb <= 2 * 60 * 1000) {
+        return true;
+      }
+    }
+
     if (Array.isArray(sessions) && sessions.length > 0) {
       return sessions.some((session) => {
         const heartbeat = Number(session?.lastHeartbeat || 0);
@@ -1168,7 +1152,7 @@ function App() {
     }
 
     return false;
-  }, [selectedEaBridgeSessions, marketFeed?.quotes, marketFeed?.updatedAt]);
+  }, [selectedEaBridgeSessions, marketFeed?.quotes, marketFeed?.updatedAt, eaBridgeStatus]);
 
   const entryReadyPanelMeta = useMemo(() => {
     const quotes = Array.isArray(marketFeed?.quotes) ? marketFeed.quotes : [];
@@ -1204,7 +1188,14 @@ function App() {
     const lastCandidateAt = Number(realtimeSignals?.lastCandidateAt) || null;
     const scanBatch = Number(realtimeSignals?.lastScanSymbols) || 0;
     const scanTotal = Number(realtimeSignals?.lastScanTotal) || 0;
-    const eaStatus = bridgeIsConnected ? 'Connected' : 'Disconnected';
+    const hasBridgeStats =
+      (eaBridgeStatus && typeof eaBridgeStatus === 'object') ||
+      (Array.isArray(selectedEaBridgeSessions) && selectedEaBridgeSessions.length > 0);
+    const eaStatus = bridgeIsConnected
+      ? 'Connected'
+      : !hasBridgeStats && eaBridgeStatsError
+        ? 'Unknown'
+        : 'Disconnected';
     const modeLabel = entryReadySignalsMeta?.modeLabel || 'ENTER only';
 
     const isWatchMode = String(modeLabel || '')
@@ -1221,6 +1212,11 @@ function App() {
 
     const emptyDetails = (() => {
       if (!bridgeIsConnected) {
+        if (eaStatus === 'Unknown') {
+          return candidateCount > 0
+            ? `Bridge status is temporarily unavailable. Showing the last ${candidateCount} analyzed candidates received (may be stale).`
+            : 'Bridge status is temporarily unavailable. Retrying…';
+        }
         return candidateCount > 0
           ? `MetaTrader Bridge is offline (or idle). Showing the last ${candidateCount} analyzed candidates received (may be stale). Connect MT4/MT5 + EA to resume live entry-ready signals.`
           : 'MetaTrader Bridge is offline. Connect MT4/MT5 + EA to start receiving entry-ready signals.';
@@ -1234,10 +1230,10 @@ function App() {
           : '';
 
       if (isWatchMode) {
-        return `EA is connected and streaming quotes for ${uniqueSymbols.size || quoteCount} symbols. Showing WATCH signals (WAIT_MONITOR) — these are not entry-ready yet.${candidatesHint}`;
+        return `EA is connected and streaming quotes for ${uniqueSymbols.size || quoteCount} symbols. Showing WATCH signals (WAIT_MONITOR) — these are monitoring-only and will not auto-trade until they become executable ENTER (fresh ticks required).${candidatesHint}`;
       }
 
-      return `EA is connected and streaming quotes for ${uniqueSymbols.size || quoteCount} symbols. Scanning for strict ENTER setups…${candidatesHint}`;
+      return `EA is connected and streaming quotes for ${uniqueSymbols.size || quoteCount} symbols. Auto-trading starts only when an executable ENTER signal appears (fresh ticks required).${candidatesHint}`;
     })();
 
     return {
@@ -1248,6 +1244,7 @@ function App() {
       retained,
       latestTs,
       modeLabel,
+      isWatchMode,
       emptyDetails,
       candidateCount,
       strongOverrideCount,
@@ -2465,6 +2462,9 @@ function App() {
     if (!DASHBOARD_AUTOTRADING_AUTOSTART) {
       return;
     }
+    if (!SHOW_AUTOTRADING_UI) {
+      return;
+    }
     if (!EA_ONLY_UI_MODE) {
       return;
     }
@@ -2539,7 +2539,13 @@ function App() {
 
   useEffect(() => {
     if (!bridgeIsConnected) {
-      setMarketFeed({ quotes: [], news: [], loading: false, error: null, updatedAt: null });
+      setMarketFeed((prev) => {
+        const prevQuotes = Array.isArray(prev?.quotes) ? prev.quotes : [];
+        if (prevQuotes.length > 0) {
+          return { ...prev, loading: false };
+        }
+        return prev || { quotes: [], news: [], loading: false, error: null, updatedAt: null };
+      });
       setTickerOffset(0);
       return;
     }
@@ -2873,11 +2879,21 @@ function App() {
       return;
     }
 
-    // Always keep the EA focused on the currently visible ticker window.
-    // This is what turns placeholders into real quotes.
+    // Keep the EA focused on the full FX + metals catalog (ensures all pairs are analyzed).
+    // Falls back to the visible ticker window when the catalog is unavailable.
     try {
-      if (Array.isArray(tickerQuotes) && tickerQuotes.length > 0) {
-        scheduleActiveSymbolsSync(tickerQuotes.map((q) => q?.symbol || q?.pair));
+      const fullCatalog = Array.isArray(TICKER_CATALOG_SYMBOLS)
+        ? TICKER_CATALOG_SYMBOLS.filter(Boolean)
+        : [];
+      const desiredSymbols =
+        EA_ONLY_UI_MODE && fullCatalog.length > 0
+          ? fullCatalog
+          : Array.isArray(tickerQuotes)
+            ? tickerQuotes.map((q) => q?.symbol || q?.pair)
+            : [];
+
+      if (desiredSymbols.length > 0) {
+        scheduleActiveSymbolsSync(desiredSymbols);
       }
     } catch (_error) {
       // best-effort
@@ -3356,7 +3372,20 @@ function App() {
         }
         const normalized = normalizeSignal(payload, event.timestamp);
         if (normalized?.id) {
-          mergeSignals([normalized]);
+          const decisionState = String(normalized?.isValid?.decision?.state || '').toUpperCase();
+          const isEnter = decisionState === 'ENTER' || decisionState === 'ENTER_STRONG' || decisionState === 'ENTER_TRADE';
+          const isWatch = decisionState === 'WAIT_MONITOR';
+
+          // Only treat ENTER as "entry-ready" when it is actually executable now.
+          // Otherwise, show it in Candidates so the user can see it with reasons
+          // (common when MT5 ticks are stale/missing for that symbol).
+          if (isEnter && normalized.shouldExecute === true) {
+            mergeSignals([normalized]);
+          } else if (isWatch) {
+            mergeSignals([normalized]);
+          } else {
+            mergeCandidateSignals([normalized]);
+          }
         }
         return;
       }
@@ -4995,7 +5024,7 @@ function App() {
                             if (!layers) {
                               return (
                                 <div className="market-analyzer__muted">
-                                  Waiting for 18-layer explainability payload…
+                                  Waiting for layered explainability payload…
                                 </div>
                               );
                             }
@@ -6403,7 +6432,7 @@ function App() {
                     <div className="signal-dashboard-panel__title">
                       <h2>{entryReadyPanelMeta.headline}</h2>
                       <p className="panel__hint">
-                        EA entry-ready signals ({entryReadyPanelMeta.modeLabel})
+                        EA {entryReadyPanelMeta.isWatchMode ? 'watchlist' : 'entry-ready'} signals ({entryReadyPanelMeta.modeLabel})
                       </p>
                     </div>
                     <div className="signal-dashboard-panel__tags">
@@ -6464,7 +6493,11 @@ function App() {
                       snapshots={featureSnapshots}
                       selectedId={entryReadySelectedId}
                       mode="strong"
-                      emptyTitle="No entry-ready EA signals right now."
+                      emptyTitle={
+                        entryReadyPanelMeta.isWatchMode
+                          ? 'No WATCH (WAIT_MONITOR) signals right now.'
+                          : 'No entry-ready EA signals right now.'
+                      }
                       emptyDetails={entryReadyPanelMeta.emptyDetails}
                       onSelect={(signal, id) => {
                         setEntryReadySelectedId(id || null);
@@ -6501,7 +6534,8 @@ function App() {
                     </div>
                   )}
 
-                  {entryReadySignals.length === 0 && (
+                  {((entryReadyPanelMeta.isWatchMode && candidateSignals.length > 0) ||
+                    (!entryReadyPanelMeta.isWatchMode && entryReadySignals.length === 0)) && (
                     <div className="signal-dashboard-panel__candidates">
                       <CandidateSignalTable
                         signals={candidateSignals}

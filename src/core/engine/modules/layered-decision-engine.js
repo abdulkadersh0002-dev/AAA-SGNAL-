@@ -28,8 +28,8 @@ const resolveLayer = (layers, keys = []) => {
   return null;
 };
 
-const resolveDecisionState = (signal, layer18) => {
-  const fromLayer = layer18?.metrics?.decision?.state;
+const resolveDecisionState = (signal, layer20) => {
+  const fromLayer = layer20?.metrics?.decision?.state;
   const fromSignal = signal?.isValid?.decision?.state || signal?.finalDecision?.state;
   return toUpper(fromLayer || fromSignal || 'WAIT_MONITOR');
 };
@@ -59,7 +59,8 @@ export function evaluateLayeredDecision({ signal, decision, confluence, now = Da
 
   const layer16 = resolveLayer(layers, [16, 'L16', 'Signal Validation', 'signal_validation']);
   const layer17 = resolveLayer(layers, [17, 'L17', 'Statistical Logic', 'statistical']);
-  const layer18 = resolveLayer(layers, [18, 'L18', 'Decision', 'Final Guard']);
+  const layer18 = resolveLayer(layers, [18, 'L18', 'Validation Gate', 'Gate', 'Final Guard']);
+  const layer20 = resolveLayer(layers, [20, 'L20', 'Decision', 'Final Decision']);
 
   const layer16Pass =
     Boolean(layer16?.metrics?.isTradeValid) ||
@@ -76,7 +77,7 @@ export function evaluateLayeredDecision({ signal, decision, confluence, now = Da
     toFinite(layer17?.confidence);
   const layer17Ok = confluenceScore == null ? false : confluenceScore >= minConfluence;
 
-  const decisionState = resolveDecisionState(signal, layer18);
+  const decisionState = resolveDecisionState(signal, layer20);
   const isTradeValid = Boolean(signal?.isValid?.isValid);
 
   const confidence = toFinite(signal?.confidence) ?? 0;
@@ -103,6 +104,16 @@ export function evaluateLayeredDecision({ signal, decision, confluence, now = Da
   const entryState =
     decisionState === 'ENTER' ? 'ENTER' : decisionState === 'WAIT_MONITOR' ? 'WAIT' : 'BLOCK';
 
+  const layer18Verdict = (() => {
+    const verdict = toUpper(layer18?.metrics?.verdict);
+    if (verdict === 'PASS' || verdict === 'BLOCK') {
+      return verdict;
+    }
+    return isTradeValid ? 'PASS' : 'BLOCK';
+  })();
+  const layer18Pass = layer18Verdict === 'PASS';
+  const layersGateOk = layer16Pass && layer17Ok && layer18Pass;
+
   const entry = {
     state: entryState,
     score: toFinite(decision?.score) ?? toFinite(signal?.finalScore) ?? null,
@@ -111,7 +122,7 @@ export function evaluateLayeredDecision({ signal, decision, confluence, now = Da
     riskReward,
     entryStrong,
     meetsConfluence: layer17Ok,
-    meetsLayers18: layer16Pass && layer17Ok && decisionState === 'ENTER',
+    meetsLayers18: layer16Pass && layer17Ok && layer18Pass && decisionState === 'ENTER',
   };
 
   const exit = {
@@ -127,9 +138,15 @@ export function evaluateLayeredDecision({ signal, decision, confluence, now = Da
   return {
     generatedAt: now,
     layers18: {
-      ok: layer16Pass && layer17Ok && decisionState === 'ENTER',
+      ok: layersGateOk && decisionState === 'ENTER',
       layer16Pass,
       layer17Ok,
+      isTradeValid,
+      // L18 is a boolean gate. L20 is the only decision state.
+      layer18Verdict,
+      layer18Pass,
+      layer20State: decisionState,
+      // Back-compat legacy field name (do not use for decisioning).
       layer18State: decisionState,
       confluenceScore,
       minConfluence,

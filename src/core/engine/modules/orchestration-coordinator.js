@@ -1244,54 +1244,17 @@ export const orchestrationCoordinator = {
           signal.components = signal.components || {};
           signal.components.advancedFilter = filterResult;
 
-          if (filterResult && filterResult.passed === false) {
-            const filterReason =
-              Array.isArray(filterResult.reasons) && filterResult.reasons.length
-                ? String(filterResult.reasons[0])
-                : 'Advanced filter rejected signal';
-
-            const existingReasoning = Array.isArray(signal.reasoning) ? signal.reasoning : [];
-            const filterReasons = Array.isArray(filterResult.reasons)
-              ? filterResult.reasons.map((r) => `Filter: ${String(r)}`)
-              : [`Filter: ${filterReason}`];
-            signal.reasoning = [...existingReasoning, ...filterReasons].slice(0, 20);
-
-            // Downgrade to non-tradeable (but keep direction for explainability).
-            const currentDecision =
-              signal.isValid?.decision && typeof signal.isValid.decision === 'object'
-                ? signal.isValid.decision
-                : {};
-            const currentState = currentDecision.state || null;
-            const nextState = currentState === 'NO_TRADE_BLOCKED' ? currentState : 'WAIT_MONITOR';
-
-            signal.isValid = {
-              ...(signal.isValid || {}),
-              isValid: false,
-              reason: `Filtered: ${filterReason}`,
-              checks: {
-                ...(signal.isValid && typeof signal.isValid.checks === 'object'
-                  ? signal.isValid.checks
-                  : {}),
-                advancedFilter: false,
-              },
-              decision: {
-                ...currentDecision,
-                state: nextState,
-                blocked: false,
-                blockers: Array.isArray(currentDecision.blockers)
-                  ? [...currentDecision.blockers, 'advanced_filter']
-                  : ['advanced_filter'],
-              },
+          // IMPORTANT (GLOBAL RULES): This filter is reporting-only.
+          // It MUST NOT mutate execution decisioning (no state downgrades, no overrides).
+          // Only L18 validates; only L20 decides.
+          if (signal?.isValid && typeof signal.isValid === 'object') {
+            const passed = filterResult?.passed === true;
+            signal.isValid.checks = {
+              ...(signal.isValid.checks && typeof signal.isValid.checks === 'object'
+                ? signal.isValid.checks
+                : {}),
+              advancedFilter: passed,
             };
-          } else if (filterResult && filterResult.passed === true) {
-            if (signal?.isValid && typeof signal.isValid === 'object') {
-              signal.isValid.checks = {
-                ...(signal.isValid.checks && typeof signal.isValid.checks === 'object'
-                  ? signal.isValid.checks
-                  : {}),
-                advancedFilter: true,
-              };
-            }
           }
         } catch (error) {
           this.logger?.warn?.(

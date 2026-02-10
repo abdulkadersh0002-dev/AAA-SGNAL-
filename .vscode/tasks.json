@@ -8,8 +8,11 @@
       "args": ["scripts/ci/check-node-npm.mjs"],
       "group": "test",
       "presentation": {
-        "reveal": "always",
-        "panel": "new"
+        "reveal": "silent",
+        "panel": "shared",
+        "showReuseMessage": false,
+        "focus": false,
+        "clear": true
       }
     },
     {
@@ -22,14 +25,16 @@
       "group": "build",
       "presentation": {
         "reveal": "always",
-        "panel": "new"
+        "panel": "new",
+        "focus": false,
+        "clear": true
       }
     },
     {
       "label": "🚀 Start Server + Dashboard",
       "type": "process",
       "command": "npm.cmd",
-      "args": ["run", "start:all"],
+      "args": ["run", "start:all", "--", "--detached", "--free-ports"],
       "dependsOn": ["🧰 Check Node.js + npm"],
       "dependsOrder": "sequence",
       "group": {
@@ -37,10 +42,13 @@
         "isDefault": true
       },
       "presentation": {
-        "reveal": "always",
-        "panel": "dedicated"
+        "reveal": "silent",
+        "panel": "dedicated",
+        "showReuseMessage": false,
+        "focus": false,
+        "clear": true
       },
-      "isBackground": true
+      "isBackground": false
     },
     {
       "label": "🛰️ Watch Auto-Trading Events (ws)",
@@ -50,7 +58,9 @@
       "isBackground": true,
       "presentation": {
         "reveal": "always",
-        "panel": "dedicated"
+        "panel": "dedicated",
+        "focus": false,
+        "clear": true
       },
       "group": "test"
     },
@@ -58,49 +68,63 @@
       "label": "🚀 Start Server + Dashboard (NO DB/NO KEYS - synthetic dev)",
       "type": "process",
       "command": "npm.cmd",
-      "args": ["run", "start:all", "--", "--preset", "synthetic"],
+      "args": ["run", "start:all", "--", "--preset", "synthetic", "--detached", "--free-ports"],
       "dependsOn": ["🧰 Check Node.js + npm"],
       "dependsOrder": "sequence",
       "group": "build",
       "presentation": {
         "reveal": "always",
-        "panel": "dedicated"
+        "panel": "dedicated",
+        "focus": false,
+        "clear": true
       },
-      "isBackground": true
+      "isBackground": false
     },
     {
       "label": "🚀 Start Server + Dashboard (REALTIME + DB required)",
       "type": "process",
       "command": "npm.cmd",
-      "args": ["run", "start:all", "--", "--preset", "realtime_db"],
+      "args": ["run", "start:all", "--", "--preset", "realtime_db", "--detached", "--free-ports"],
       "dependsOn": ["🧰 Check Node.js + npm"],
       "dependsOrder": "sequence",
       "group": "build",
       "presentation": {
         "reveal": "always",
-        "panel": "dedicated"
+        "panel": "dedicated",
+        "focus": false,
+        "clear": true
       },
-      "isBackground": true
+      "isBackground": false
     },
     {
       "label": "🚀 Start Server + Dashboard (ALL symbols)",
       "type": "process",
       "command": "npm.cmd",
-      "args": ["run", "start:all", "--", "--preset", "all_symbols"],
+      "args": ["run", "start:all", "--", "--preset", "all_symbols", "--detached", "--free-ports"],
       "dependsOn": ["🧰 Check Node.js + npm"],
       "dependsOrder": "sequence",
       "group": "build",
       "presentation": {
         "reveal": "always",
-        "panel": "dedicated"
+        "panel": "dedicated",
+        "focus": false,
+        "clear": true
       },
-      "isBackground": true
+      "isBackground": false
     },
     {
       "label": "🚀 Start Server + Dashboard (ALL symbols + Full Scan)",
       "type": "process",
       "command": "npm.cmd",
-      "args": ["run", "start:all", "--", "--preset", "all_symbols_full_scan"],
+      "args": [
+        "run",
+        "start:all",
+        "--",
+        "--preset",
+        "all_symbols_full_scan",
+        "--detached",
+        "--free-ports"
+      ],
       "dependsOn": ["🧰 Check Node.js + npm"],
       "dependsOrder": "sequence",
       "group": "build",
@@ -108,13 +132,21 @@
         "reveal": "always",
         "panel": "dedicated"
       },
-      "isBackground": true
+      "isBackground": false
     },
     {
       "label": "🚀 Start Server + Dashboard (ALL symbols + AUTO trading)",
       "type": "process",
       "command": "npm.cmd",
-      "args": ["run", "start:all", "--", "--preset", "all_symbols_auto_trading"],
+      "args": [
+        "run",
+        "start:all",
+        "--",
+        "--preset",
+        "all_symbols_auto_trading",
+        "--detached",
+        "--free-ports"
+      ],
       "dependsOn": ["🧰 Check Node.js + npm", "🛰️ Watch Auto-Trading Events (ws)"],
       "dependsOrder": "parallel",
       "group": "build",
@@ -122,13 +154,21 @@
         "reveal": "always",
         "panel": "dedicated"
       },
-      "isBackground": true
+      "isBackground": false
     },
     {
       "label": "🚀 Start Server + Dashboard (SMART STRONG MT5 auto)",
       "type": "process",
       "command": "npm.cmd",
-      "args": ["run", "start:all", "--", "--preset", "smart_strong_mt5_auto"],
+      "args": [
+        "run",
+        "start:all",
+        "--",
+        "--preset",
+        "smart_strong_mt5_auto",
+        "--detached",
+        "--free-ports"
+      ],
       "dependsOn": ["🧰 Check Node.js + npm"],
       "dependsOrder": "sequence",
       "group": "build",
@@ -136,13 +176,21 @@
         "reveal": "always",
         "panel": "dedicated"
       },
-      "isBackground": true
+      "isBackground": false
     },
     {
       "label": "🚀 Start Server + Dashboard (SMART STRONG MT5 auto + more entries)",
       "type": "process",
       "command": "npm.cmd",
-      "args": ["run", "start:all", "--", "--preset", "smart_strong_mt5_more_entries"],
+      "args": [
+        "run",
+        "start:all",
+        "--",
+        "--preset",
+        "smart_strong_mt5_more_entries",
+        "--detached",
+        "--free-ports"
+      ],
       "dependsOn": ["🧰 Check Node.js + npm"],
       "dependsOrder": "sequence",
       "group": "build",
@@ -150,13 +198,21 @@
         "reveal": "always",
         "panel": "dedicated"
       },
-      "isBackground": true
+      "isBackground": false
     },
     {
       "label": "🚀 Start Server + Dashboard (FX+Metals STRONG AUTO v2)",
       "type": "process",
       "command": "npm.cmd",
-      "args": ["run", "start:all", "--", "--preset", "fx_metals_strong_auto_v2"],
+      "args": [
+        "run",
+        "start:all",
+        "--",
+        "--preset",
+        "fx_metals_strong_auto_v2",
+        "--detached",
+        "--free-ports"
+      ],
       "dependsOn": ["🧰 Check Node.js + npm"],
       "dependsOrder": "sequence",
       "group": "build",
@@ -164,27 +220,67 @@
         "reveal": "always",
         "panel": "dedicated"
       },
-      "isBackground": true
+      "isBackground": false
     },
     {
       "label": "🚀 Start Server + Dashboard (FX+Metals ACTIVE AUTO - more trades)",
       "type": "process",
       "command": "npm.cmd",
-      "args": ["run", "start:all", "--", "--preset", "fx_metals_active_auto_more_trades"],
-      "dependsOn": ["🧰 Check Node.js + npm"],
-      "dependsOrder": "sequence",
+      "args": [
+        "run",
+        "start:all",
+        "--",
+        "--preset",
+        "fx_metals_active_auto_more_trades",
+        "--detached",
+        "--free-ports"
+      ],
+      "dependsOn": ["🧰 Check Node.js + npm", "🛰️ Watch Auto-Trading Events (ws)"],
+      "dependsOrder": "parallel",
       "group": "build",
       "presentation": {
         "reveal": "always",
-        "panel": "dedicated"
+        "panel": "dedicated",
+        "showReuseMessage": false
       },
-      "isBackground": true
+      "isBackground": false
+    },
+    {
+      "label": "🚀 Start Server + Dashboard (FX+Metals MORE AUTO trading)",
+      "type": "process",
+      "command": "npm.cmd",
+      "args": [
+        "run",
+        "start:all",
+        "--",
+        "--preset",
+        "fx_metals_active_auto_more_trades",
+        "--detached",
+        "--free-ports"
+      ],
+      "dependsOn": ["🧰 Check Node.js + npm", "🛰️ Watch Auto-Trading Events (ws)"],
+      "dependsOrder": "parallel",
+      "group": "build",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "showReuseMessage": false
+      },
+      "isBackground": false
     },
     {
       "label": "🚀 Start Server + Dashboard (FX+Metals SMART AUTO - strong trades)",
       "type": "process",
       "command": "npm.cmd",
-      "args": ["run", "start:all", "--", "--preset", "fx_metals_smart_auto_strong_trades"],
+      "args": [
+        "run",
+        "start:all",
+        "--",
+        "--preset",
+        "fx_metals_smart_auto_strong_trades",
+        "--detached",
+        "--free-ports"
+      ],
       "dependsOn": ["🧰 Check Node.js + npm"],
       "dependsOrder": "sequence",
       "group": "build",
@@ -192,13 +288,26 @@
         "reveal": "always",
         "panel": "dedicated"
       },
-      "isBackground": true
+      "isBackground": false
     },
     {
       "label": "🧪 Run Tests",
       "type": "process",
       "command": "npm.cmd",
       "args": ["test"],
+      "dependsOn": ["🧰 Check Node.js + npm"],
+      "dependsOrder": "sequence",
+      "group": "test",
+      "presentation": {
+        "reveal": "always",
+        "panel": "new"
+      }
+    },
+    {
+      "label": "🧪 Run Tests (node runner, no npm.cmd)",
+      "type": "process",
+      "command": "node",
+      "args": ["scripts/ci/run-node-tests.mjs", "tests"],
       "dependsOn": ["🧰 Check Node.js + npm"],
       "dependsOrder": "sequence",
       "group": "test",
@@ -256,6 +365,64 @@
       "presentation": {
         "reveal": "silent",
         "panel": "new"
+      }
+    },
+    {
+      "label": "🛑 Stop Server + Dashboard (free 4101+4173)",
+      "type": "shell",
+      "command": "powershell",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/stop-all.ps1"],
+      "isBackground": false,
+      "problemMatcher": [],
+      "group": "build",
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared",
+        "showReuseMessage": false
+      }
+    },
+    {
+      "label": "🛑 Stop Backend (free 4101)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/stop-all.ps1",
+        "-Ports",
+        "4101"
+      ],
+      "isBackground": false,
+      "problemMatcher": [],
+      "group": "build",
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared",
+        "showReuseMessage": false
+      }
+    },
+    {
+      "label": "🛑 Stop Dashboard (free 4173)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/stop-all.ps1",
+        "-Ports",
+        "4173"
+      ],
+      "isBackground": false,
+      "problemMatcher": [],
+      "group": "build",
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared",
+        "showReuseMessage": false
       }
     },
     {
@@ -431,7 +598,7 @@
       "command": "cmd",
       "args": [
         "/c",
-        "set PORT=4101&& set REQUIRE_REALTIME_DATA=true&& set ALLOW_SYNTHETIC_DATA=false&& npm start"
+        "set PORT=4101&& set EA_ONLY_MODE=true&& set TRADING_SCOPE=signals&& set REQUIRE_REALTIME_DATA=true&& set ALLOW_SYNTHETIC_DATA=false&& npm start"
       ],
       "isBackground": true,
       "presentation": {
@@ -447,7 +614,7 @@
       "command": "cmd",
       "args": [
         "/c",
-        "set PORT=4101&& set REQUIRE_REALTIME_DATA=true&& set ALLOW_SYNTHETIC_DATA=false&& set ALLOW_ALL_SYMBOLS=true&& npm start"
+        "set PORT=4101&& set EA_ONLY_MODE=true&& set TRADING_SCOPE=signals&& set REQUIRE_REALTIME_DATA=true&& set ALLOW_SYNTHETIC_DATA=false&& set ALLOW_ALL_SYMBOLS=true&& npm start"
       ],
       "isBackground": true,
       "presentation": {
@@ -479,6 +646,28 @@
         "reveal": "always",
         "panel": "dedicated"
       },
+      "group": "build"
+    },
+    {
+      "label": "🚀 Start Backend (4101, DETACHED + wait ready)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        "scripts/start-backend-detached.ps1",
+        "-Port",
+        "4101",
+        "-FreePort"
+      ],
+      "isBackground": false,
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "problemMatcher": [],
       "group": "build"
     },
     {
@@ -550,7 +739,7 @@
       "label": "🧪 Temp 4101 LISTEN",
       "type": "shell",
       "command": "cmd",
-      "args": ["/c", "netstat -ano | findstr \":4101\" | findstr LISTEN"],
+      "args": ["/c", "netstat -ano | findstr \":4101\" | findstr /i /c:\"LISTENING\" /c:\"ABH\""],
       "isBackground": false,
       "problemMatcher": [],
       "group": "test"
@@ -912,6 +1101,121 @@
         "Bypass",
         "-Command",
         "(Invoke-WebRequest -Method Post -Uri \"http://127.0.0.1:4102/api/broker/bridge/mt5/market/bars\" -ContentType \"application/json\" -InFile \"c:\\Users\\wesam\\yy\\.tmp-ea-bars.json\").Content"
+      ],
+      "isBackground": false,
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "🧪 Trigger EURUSD /signal/get (demo)",
+      "type": "shell",
+      "command": "powershell",
+      "args": [
+        "-NoProfile",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-Command",
+        "(Invoke-WebRequest -UseBasicParsing -Uri \"http://127.0.0.1:4101/api/broker/bridge/mt5/signal/get?symbol=EURUSD&accountMode=demo\" -TimeoutSec 10).Content"
+      ],
+      "isBackground": false,
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "🧪 Trigger EURUSD /signal/get via node-fetch",
+      "type": "shell",
+      "command": "node",
+      "args": [
+        "-e",
+        "fetch('http://127.0.0.1:4101/api/broker/bridge/mt5/signal/get?symbol=EURUSD&accountMode=demo').then(r=>r.text()).then(t=>{console.log(t.slice(0,400));}).catch(e=>{console.error(e);process.exit(1);});"
+      ],
+      "isBackground": false,
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "🧪 Check backend healthz (4101)",
+      "type": "shell",
+      "command": "cmd.exe",
+      "args": ["/d", "/s", "/c", "curl.exe -s \"http://127.0.0.1:4101/api/healthz\""],
+      "isBackground": false,
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "🧪 Who uses port 4101",
+      "type": "shell",
+      "command": "cmd.exe",
+      "args": ["/d", "/s", "/c", "netstat -ano | findstr :4101"],
+      "isBackground": false,
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "🧪 Trigger EURUSD /signal/get (curl, demo)",
+      "type": "shell",
+      "command": "cmd.exe",
+      "args": [
+        "/d",
+        "/s",
+        "/c",
+        "curl -s \"http://127.0.0.1:4101/api/broker/bridge/mt5/signal/get?symbol=EURUSD&accountMode=demo\""
+      ],
+      "isBackground": false,
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "🧪 Trigger EURUSD /signal/get (curl escaped)",
+      "type": "shell",
+      "command": "cmd.exe",
+      "args": [
+        "/d",
+        "/s",
+        "/c",
+        "curl -s \"http://127.0.0.1:4101/api/broker/bridge/mt5/signal/get?symbol=EURUSD^&accountMode=demo\""
+      ],
+      "isBackground": false,
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "🧪 Trigger EURUSD /signal/get (curl escaped, demo)",
+      "type": "shell",
+      "command": "cmd.exe",
+      "args": [
+        "/d",
+        "/s",
+        "/c",
+        "curl -s \"http://127.0.0.1:4101/api/broker/bridge/mt5/signal/get?symbol=EURUSD^&accountMode=demo\""
+      ],
+      "isBackground": false,
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "🧪 Check MT5 quotes cache (GET /market/quotes)",
+      "type": "shell",
+      "command": "cmd.exe",
+      "args": [
+        "/d",
+        "/s",
+        "/c",
+        "curl -s \"http://127.0.0.1:4101/api/broker/bridge/mt5/market/quotes?limit=5^&maxAgeMs=600000\""
+      ],
+      "isBackground": false,
+      "problemMatcher": [],
+      "group": "test"
+    },
+    {
+      "label": "🧪 Trigger EURUSD /signal/get (curl escaped, demo)",
+      "type": "shell",
+      "command": "cmd.exe",
+      "args": [
+        "/d",
+        "/s",
+        "/c",
+        "curl -s \"http://127.0.0.1:4101/api/broker/bridge/mt5/signal/get?symbol=EURUSD^&accountMode=demo\""
       ],
       "isBackground": false,
       "problemMatcher": [],

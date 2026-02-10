@@ -36,7 +36,6 @@ const formatDirection = (direction) => {
 };
 
 const safeObj = (value) => (value && typeof value === 'object' ? value : null);
-
 const safeArray = (value) => (Array.isArray(value) ? value : []);
 
 const confluenceIndex = (confluence) => {
@@ -493,8 +492,8 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
       number: 1,
       nameEn: 'Raw Market Data',
       nameAr: 'بيانات السوق الخام',
-      direction: finalDirection,
-      confidence: finalConfidence,
+      direction: 'NEUTRAL',
+      confidence: 0,
       score: null,
       summaryEn: `Quote ${quoteLast != null ? `last=${quoteLast}` : 'unavailable'} · spread=${spreadPoints ?? '—'} pts · age=${quoteAgeMs ?? '—'}ms · v=${quoteMidVelocityPerSec ?? '—'}/s · a=${quoteMidAccelerationPerSec2 ?? '—'}/s² · gap=${gapToMid ?? '—'} · vol=${quoteVolume ?? '—'} · source=${String(quote?.source || scn?.sources?.quote?.broker || '—')}`,
       summaryAr: `سعر ${quoteLast != null ? `آخر=${quoteLast}` : 'غير متوفر'} · السبريد=${spreadPoints ?? '—'} نقطة · عمر السعر=${quoteAgeMs ?? '—'}ms · السرعة=${quoteMidVelocityPerSec ?? '—'}/ث · التسارع=${quoteMidAccelerationPerSec2 ?? '—'}/ث² · الفجوة=${gapToMid ?? '—'} · الحجم=${quoteVolume ?? '—'} · المصدر=${String(quote?.source || scn?.sources?.quote?.broker || '—')}`,
@@ -539,6 +538,13 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
 
   // 2) Digital candlestick analysis
   const candleDir = normalizeDirection(candlesSummary?.direction || pickAnalysis?.direction);
+  const candleConfRaw = toFiniteNumber(candlesSummary?.confidence ?? pickAnalysis?.confidence);
+  const candleDirectional = candleDir === 'BUY' || candleDir === 'SELL';
+  const candleConfidence =
+    candleDirectional && candleConfRaw != null ? clamp(candleConfRaw, 0, 100) : 0;
+  const candleProbability = candleDirectional ? Number((candleConfidence / 100).toFixed(3)) : null;
+  // L2 is informational: downstream should cap this layer's influence when aggregating.
+  const candleInfluenceCap = 0.15;
   const phase = inferMarketPhase({
     regime,
     volatility,
@@ -553,8 +559,8 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
       number: 2,
       nameEn: 'Digital Candlestick (Numeric) Analysis',
       nameAr: 'تحليل الشموع الرقمي (أرقام)',
-      direction: candleDir,
-      confidence: toFiniteNumber(candlesSummary?.confidence ?? pickAnalysis?.confidence),
+      direction: candleConfidence > 0 ? candleDir : 'NEUTRAL',
+      confidence: candleConfidence,
       score: toFiniteNumber(candlesSummary?.scoreDelta ?? pickAnalysis?.scoreDelta),
       summaryEn: candlesSummary
         ? `Bias ${candleDir} · strength=${candlesSummary.strength ?? '—'} · Δ=${candlesSummary.scoreDelta ?? '—'}`
@@ -564,6 +570,9 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
         : 'لا يوجد تحليل شموع متاح.',
       metrics: {
         timeframeFocus: pickTf,
+        bias: candleDir,
+        probability: candleProbability,
+        influenceCap: candleInfluenceCap,
         marketPhase: phaseLabel.phase,
         trendPct,
         rsi,
@@ -598,8 +607,22 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
       number: 3,
       nameEn: 'Market Structure',
       nameAr: 'الهيكل السعري (Structure)',
-      direction: normalizeDirection(structure?.bias || candleDir),
-      confidence: toFiniteNumber(structure?.confidence),
+      direction: (() => {
+        const conf = toFiniteNumber(structure?.confidence);
+        const threshold = 55;
+        if (conf == null || conf < threshold) {
+          return 'NEUTRAL';
+        }
+        return normalizeDirection(structure?.bias || candleDir);
+      })(),
+      confidence: (() => {
+        const conf = toFiniteNumber(structure?.confidence);
+        const threshold = 55;
+        if (conf == null || conf < threshold) {
+          return 0;
+        }
+        return conf;
+      })(),
       score: null,
       summaryEn: structure
         ? `Structure=${structure.state || '—'} · bias=${structure.bias || '—'} · conf=${structure.confidence ?? '—'}% · phase=${phaseLabel.en}`
@@ -635,17 +658,89 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
     })
   );
 
+  // Precompute volume/order-flow confirmation signals (used by L4 and L6).
+  const volume = safeObj(pickAnalysis?.volume || candlesSummary?.volume) || null;
+  const volumeAvail =
+    volume && (toFiniteNumber(volume.newest) != null || toFiniteNumber(volume.average) != null);
+
+  const volumeDir = (() => {
+    if (smcVolumeImbalance?.state === 'buying') {
+      return 'BUY';
+    }
+    if (smcVolumeImbalance?.state === 'selling') {
+      return 'SELL';
+    }
+    return candleDir;
+  })();
+
+  const volumeConfidence = pct(
+    (smcVolumeSpike?.isSpike ? 55 : 0) +
+      (smcVolumeImbalance?.pressurePct != null
+        ? Math.min(35, Math.abs(smcVolumeImbalance.pressurePct))
+        : 0) +
+      (volumeAvail ? 10 : 0)
+  );
+
+  const volumeAvailability =
+    smcVolumeSpike || smcVolumeImbalance || volumeAvail
+      ? volumeAvail
+        ? 'partial'
+        : 'partial'
+      : 'missing';
+
   // 4) Trend & momentum
   const momentumDir = normalizeDirection(
     trendPct != null && Math.abs(trendPct) > 0.03 ? (trendPct > 0 ? 'BUY' : 'SELL') : candleDir
   );
 
-  const rsiExtreme =
-    (finalDirection === 'BUY' && rsi != null && rsi >= 78) ||
-    (finalDirection === 'SELL' && rsi != null && rsi <= 22);
+  // L4 must NOT be sufficient by itself. It needs confirmation from higher-order layers (L5–L9):
+  // - Liquidity/SMC (L5) confirmation
+  // - Volume/order-flow (L6) confirmation
+  // - Time permission (L8) must be OK
+  // - Market memory (L9) confirmation
   const timeIntelLayer = confluenceById.get('smart_time_intelligence') || null;
   const spreadLayer = confluenceById.get('spread_ok') || null;
   const momentumRsiLayer = confluenceById.get('momentum_rsi') || null;
+
+  const timeOk = !(
+    timeIntelLayer?.status === 'FAIL' ||
+    confluenceById.get('session_window')?.status === 'FAIL' ||
+    confluenceById.get('trading_window_hard')?.status === 'FAIL'
+  );
+
+  const smcLiquidityDirForConfirm = normalizeDirection(
+    smcSweep?.bias || smcOrderBlock?.direction || structure?.bias || candleDir
+  );
+  const smcLiquidityConfidenceForConfirm = pct(
+    (smcSweep?.confidence ?? 0) * 0.65 +
+      (smcOrderBlock?.confidence ?? 0) * 0.35 +
+      (patterns.some((p) => String(p?.name || '').includes('PINBAR')) ? 10 : 0) +
+      (patterns.some((p) => String(p?.name || '').includes('ENGULF')) ? 8 : 0)
+  );
+  const liquidityConfirms =
+    smcLiquidityConfidenceForConfirm >= 35 &&
+    (smcLiquidityDirForConfirm === 'BUY' || smcLiquidityDirForConfirm === 'SELL') &&
+    smcLiquidityDirForConfirm === momentumDir;
+
+  const volumeConfirms =
+    volumeConfidence >= 60 &&
+    (volumeDir === 'BUY' || volumeDir === 'SELL') &&
+    volumeDir === momentumDir;
+
+  const memoryConfirms =
+    memoryScore >= 65 && (finalDirection === 'BUY' || finalDirection === 'SELL')
+      ? finalDirection === momentumDir
+      : false;
+
+  const momentumConfirmed = timeOk && (liquidityConfirms || volumeConfirms || memoryConfirms);
+  const momentumDirSafe = momentumConfirmed ? momentumDir : 'NEUTRAL';
+  const momentumConfidence = momentumConfirmed
+    ? toFiniteNumber(regime?.confidence ?? candlesSummary?.confidence)
+    : 0;
+
+  const rsiExtreme =
+    (finalDirection === 'BUY' && rsi != null && rsi >= 78) ||
+    (finalDirection === 'SELL' && rsi != null && rsi <= 22);
   const isLateSession =
     timeIntelLayer?.status === 'FAIL' &&
     /close|late|last minutes/i.test(String(timeIntelLayer?.reason || ''))
@@ -676,19 +771,32 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
       number: 4,
       nameEn: 'Trend & Momentum',
       nameAr: 'الاتجاه والزخم',
-      direction: momentumDir,
-      confidence: toFiniteNumber(regime?.confidence ?? candlesSummary?.confidence),
+      direction: momentumDirSafe,
+      confidence: momentumConfidence,
       score: null,
       summaryEn:
         trendPct != null
-          ? `Trend=${trendPct.toFixed(3)}% · RSI=${rsi ?? '—'} · Regime=${regime?.state || '—'} · momentumQ=${momentumQualityScore}/100${fomoRisk ? ' · FOMO-risk' : ''}`
+          ? `Trend=${trendPct.toFixed(3)}% · RSI=${rsi ?? '—'} · Regime=${regime?.state || '—'} · momentumQ=${momentumQualityScore}/100${fomoRisk ? ' · FOMO-risk' : ''}${
+              momentumConfirmed ? '' : ' · unconfirmed (needs structure)'
+            }`
           : 'Trend unavailable.',
       summaryAr:
         trendPct != null
-          ? `الاتجاه=${trendPct.toFixed(3)}% · RSI=${rsi ?? '—'} · النظام=${regime?.state || '—'} · جودة الزخم=${momentumQualityScore}/100${fomoRisk ? ' · خطر FOMO' : ''}`
+          ? `الاتجاه=${trendPct.toFixed(3)}% · RSI=${rsi ?? '—'} · النظام=${regime?.state || '—'} · جودة الزخم=${momentumQualityScore}/100${fomoRisk ? ' · خطر FOMO' : ''}${
+              momentumConfirmed ? '' : ' · غير مؤكد (يتطلب هيكل)'
+            }`
           : 'الاتجاه غير متوفر.',
       metrics: {
         timeframeFocus: pickTf,
+        confirmation: {
+          requiresHigherOrder: true,
+          timeOk,
+          liquidityConfirms,
+          volumeConfirms,
+          memoryConfirms,
+          confirmed: momentumConfirmed,
+          rawMomentumDir: momentumDir,
+        },
         trendPct,
         rsi,
         regime,
@@ -704,6 +812,10 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
       warnings: [
         ...(trendPct == null ? ['Missing trend features (no candles).'] : []),
         ...(rsiExtreme ? ['RSI extreme: auto-confidence should be reduced.'] : []),
+        ...(!timeOk ? ['Time window failed: do not trade now.'] : []),
+        ...(!momentumConfirmed
+          ? ['Momentum is unconfirmed (needs L5/L6/L9); treat as context only.']
+          : []),
         ...(falseStrengthFlags.length
           ? ['Possible false strength (thin liquidity/low volume/late expansion).']
           : []),
@@ -726,6 +838,8 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
       (hasPinbar ? 10 : 0) +
       (hasEngulf ? 8 : 0)
   );
+
+  const liquidityDirSafe = liquidityConfidence > 0 ? liquidityDir : 'NEUTRAL';
 
   const liquiditySummaryEn = (() => {
     const parts = [];
@@ -805,7 +919,7 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
       number: 5,
       nameEn: 'Liquidity Logic (Sweeps / Order Blocks)',
       nameAr: 'سيولة السوق (Sweeps / Order Blocks)',
-      direction: liquidityDir,
+      direction: liquidityDirSafe,
       confidence: liquidityConfidence,
       score: null,
       summaryEn: `${liquiditySummaryEn} · quality=${liquidityQuality.quality} (${liquidityQuality.score}/100)`,
@@ -842,41 +956,12 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
   );
 
   // 6) Volume & order flow (best-effort)
-  const volume = safeObj(pickAnalysis?.volume || candlesSummary?.volume) || null;
-  const volumeAvail =
-    volume && (toFiniteNumber(volume.newest) != null || toFiniteNumber(volume.average) != null);
-
-  const volumeDir = (() => {
-    if (smcVolumeImbalance?.state === 'buying') {
-      return 'BUY';
-    }
-    if (smcVolumeImbalance?.state === 'selling') {
-      return 'SELL';
-    }
-    return candleDir;
-  })();
-
-  const volumeConfidence = pct(
-    (smcVolumeSpike?.isSpike ? 55 : 0) +
-      (smcVolumeImbalance?.pressurePct != null
-        ? Math.min(35, Math.abs(smcVolumeImbalance.pressurePct))
-        : 0) +
-      (volumeAvail ? 10 : 0)
-  );
-
-  const volumeAvailability =
-    smcVolumeSpike || smcVolumeImbalance || volumeAvail
-      ? volumeAvail
-        ? 'partial'
-        : 'partial'
-      : 'missing';
-
   layers.push(
     buildLayer({
       number: 6,
       nameEn: 'Volume & Order Flow (Spike/Imbalance)',
       nameAr: 'الحجم وتدفق الأوامر (Spike/Imbalance)',
-      direction: volumeDir,
+      direction: 'NEUTRAL',
       confidence: volumeConfidence,
       score: null,
       summaryEn: (() => {
@@ -923,6 +1008,8 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
       })(),
       metrics: {
         timeframeFocus: pickTf,
+        confirmationOnly: true,
+        directionalBias: volumeDir,
         volume,
         volumeSpike: smcVolumeSpike,
         volumeImbalance: smcVolumeImbalance,
@@ -944,8 +1031,8 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
       number: 7,
       nameEn: 'Volatility Regime',
       nameAr: 'نظام التذبذب (Volatility)',
-      direction: candleDir,
-      confidence: toFiniteNumber(regime?.confidence ?? candlesSummary?.confidence),
+      direction: 'NEUTRAL',
+      confidence: 0,
       score: null,
       summaryEn: volatility
         ? `ATR%=${atrPct ?? '—'} · state=${volatility.state || '—'}`
@@ -986,8 +1073,8 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
       number: 8,
       nameEn: 'Time Intelligence (Sessions/Cycles)',
       nameAr: 'ذكاء الوقت (جلسات/دورات)',
-      direction: finalDirection,
-      confidence: 40,
+      direction: 'NEUTRAL',
+      confidence: 0,
       score: null,
       summaryEn: `UTC hour=${utcHour} · session=${session.labelEn} · day=${utcDow} · authority=${timeAuthority.smart?.status || timeAuthority.session?.status || '—'}`,
       summaryAr: `الوقت UTC=${utcHour} · الجلسة=${session.labelAr} · اليوم=${utcDow} · الصلاحية=${timeAuthority.smart?.status || timeAuthority.session?.status || '—'}`,
@@ -995,6 +1082,9 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
         utcHour,
         utcDayOfWeek: utcDow,
         session: session.session,
+        canTrade: !(
+          timeAuthority.smart?.status === 'FAIL' || timeAuthority.session?.status === 'FAIL'
+        ),
         timeWindowAuthority: timeAuthority,
       },
       evidence: ['Session is heuristic (UTC-based).'],
@@ -1014,8 +1104,9 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
       number: 9,
       nameEn: 'Market Memory Zones',
       nameAr: 'ذاكرة السوق',
-      direction: finalDirection,
-      confidence: toFiniteNumber(structure?.confidence ?? candlesSummary?.confidence),
+      direction: memoryScore >= 65 ? finalDirection : 'NEUTRAL',
+      confidence:
+        memoryScore >= 65 ? toFiniteNumber(structure?.confidence ?? candlesSummary?.confidence) : 0,
       score: memoryScore,
       summaryEn: memoryFlags.length
         ? `Memory flags: ${memoryFlags.slice(0, 4).join(', ')} · score=${memoryScore}`
@@ -1031,7 +1122,10 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
         volatilityState: volatility?.state || null,
       },
       evidence: memoryFlags.slice(0, 6).map((f) => `Memory flag: ${f}`),
-      warnings: memoryScore >= 70 ? [] : ['Memory zone not confirmed (weak).'],
+      warnings:
+        memoryScore >= 65
+          ? []
+          : ['Memory zone not confirmed (no clear reaction); treat as neutral.'],
       availability: memoryFlags.length ? 'available' : 'partial',
     })
   );
@@ -1041,8 +1135,11 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
       number: 10,
       nameEn: 'Silent Liquidity Map',
       nameAr: 'خريطة السيولة الصامتة',
-      direction: finalDirection,
-      confidence: toFiniteNumber(structure?.confidence ?? candlesSummary?.confidence),
+      direction: liquidityDefenseScore > 0 ? finalDirection : 'NEUTRAL',
+      confidence:
+        liquidityDefenseScore > 0
+          ? toFiniteNumber(structure?.confidence ?? candlesSummary?.confidence)
+          : 0,
       score: liquidityDefenseScore,
       summaryEn:
         liquidityDefenseScore > 0
@@ -1093,11 +1190,14 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
       nameEn: 'Relative Strength (Base vs Quote)',
       nameAr: 'القوة النسبية (العملة الأساسية مقابل المقابلة)',
       direction: relBias,
-      confidence: clamp(
-        (pct(macroRelative?.confidence) ?? 0) * 0.55 + (pct(econ?.confidence) ?? 0) * 0.45,
-        0,
-        100
-      ),
+      confidence:
+        relBias === 'NEUTRAL'
+          ? 0
+          : clamp(
+              (pct(macroRelative?.confidence) ?? 0) * 0.55 + (pct(econ?.confidence) ?? 0) * 0.45,
+              0,
+              100
+            ),
       score: macroDiff,
       summaryEn: `Econ dir=${econ?.direction || '—'} · macroΔ=${macroDiff ?? '—'} · relSent=${relSent ?? '—'}`,
       summaryAr: `اقتصاد=${econ?.direction || '—'} · فرق الماكرو=${macroDiff ?? '—'} · شعور نسبي=${relSent ?? '—'}`,
@@ -1153,8 +1253,8 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
         nameEn: 'Intermarket Correlation (Live)',
         nameAr: 'ترابط الأسواق (Intermarket)',
         direction: 'NEUTRAL',
-        confidence: toFiniteNumber(intermarketCorrelation.confidence) ?? 0,
-        score: breaks.length ? -breaks.length : null,
+        confidence: 0,
+        score: null,
         summaryEn:
           topSummary ||
           `Live correlation computed from EA bars (${tf}${windowN != null ? `, window=${windowN}` : ''})${
@@ -1167,6 +1267,9 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
         summaryAr: null,
         metrics: {
           available: true,
+          contextOnly: true,
+          rawConfidence: toFiniteNumber(intermarketCorrelation.confidence) ?? null,
+          breaksPenalty: breaks.length ? -breaks.length : null,
           source: intermarketCorrelation.source || 'ea-bars',
           target: intermarketCorrelation.target || pair,
           timeframe: tf,
@@ -1197,7 +1300,7 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
           intermarketCorrelation?.warnings?.[0] ||
           'Intermarket correlation is unavailable (requires EA bars for multiple symbols).',
         summaryAr: null,
-        metrics: { available: false },
+        metrics: { available: false, contextOnly: true },
         evidence: [],
         warnings: ['Make sure MT4/MT5 is connected and EA is publishing bars for peer symbols.'],
         availability: 'missing',
@@ -1206,21 +1309,26 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
   }
 
   // 13) Macroeconomics
+  const macroTfFocus = String(pickTf || '').toUpperCase();
+  const macroActive = macroTfFocus === 'D1';
   layers.push(
     buildLayer({
       number: 13,
       nameEn: 'Macroeconomics',
       nameAr: 'الاقتصاد الكلي (Macro)',
-      direction: normalizeDirection(macroRelative?.direction),
-      confidence: toFiniteNumber(macroRelative?.confidence),
+      direction: macroActive ? normalizeDirection(macroRelative?.direction) : 'NEUTRAL',
+      confidence: macroActive ? toFiniteNumber(macroRelative?.confidence) : 0,
       score: macroDiff,
-      summaryEn: macroRelative?.note || 'Macro fundamentals unavailable.',
+      summaryEn: macroActive
+        ? macroRelative?.note || 'Macro fundamentals unavailable.'
+        : 'Macro is D1+ context only (ignored for intraday execution).',
       summaryAr: macroRelative?.direction
         ? `اتجاه الماكرو: ${macroRelative.direction} · فرق=${macroDiff ?? '—'}`
         : 'بيانات الماكرو غير متوفرة.',
       metrics: {
         fundamentals: fundamentals || null,
         macroRelative: macroRelative || null,
+        activeTimeframe: macroActive ? 'D1+' : 'disabled_intraday',
       },
       evidence: [macroDiff != null ? `Δ macro: ${macroDiff}` : null].filter(Boolean),
       warnings: macroDiff == null ? ['Macro layer depends on fundamentals coverage.'] : [],
@@ -1230,18 +1338,89 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
 
   // 14) News impact
   const newsDir = normalizeDirection(news?.direction);
+  const newsCalendar =
+    safeArray(news?.calendarEvents).length > 0
+      ? safeArray(news?.calendarEvents)
+      : safeArray(news?.details?.calendarEvents);
+  const nowMs = Date.now();
+  const nextHighImpactMinutes = (() => {
+    const toTimeMs = (event) => {
+      const t =
+        toFiniteNumber(event?.time) ??
+        toFiniteNumber(event?.timestamp) ??
+        toFiniteNumber(event?.t) ??
+        null;
+      if (t == null) {
+        return null;
+      }
+      return t < 10_000_000_000 ? t * 1000 : t;
+    };
+    const isHigh = (event) => {
+      const impactNum = toFiniteNumber(event?.impact);
+      const impactText = String(event?.impact || event?.impactText || event?.importance || '')
+        .trim()
+        .toLowerCase();
+      if (impactNum != null) {
+        return impactNum >= 4;
+      }
+      return impactText.includes('high');
+    };
+    const mins = [];
+    for (const ev of newsCalendar) {
+      if (!isHigh(ev)) {
+        continue;
+      }
+      const timeMs = toTimeMs(ev);
+      if (timeMs == null) {
+        continue;
+      }
+      const delta = timeMs - nowMs;
+      if (delta <= 0) {
+        continue;
+      }
+      mins.push(Math.round(delta / 60000));
+    }
+    return mins.length ? Math.min(...mins) : null;
+  })();
+
+  const newsImpact = toFiniteNumber(news?.impact ?? newsImpactScore);
+  const newsGateWindowMin = 120;
+  const newsGateAction = (() => {
+    if (newsImpact != null && newsImpact >= 4) {
+      if (nextHighImpactMinutes != null && nextHighImpactMinutes <= newsGateWindowMin) {
+        return 'BLOCK';
+      }
+      if (newsUpcoming != null && newsUpcoming > 0) {
+        return 'REDUCE';
+      }
+    }
+    return 'ALLOW';
+  })();
+
   layers.push(
     buildLayer({
       number: 14,
       nameEn: 'News Impact',
       nameAr: 'تأثير الأخبار',
-      direction: newsDir,
-      confidence: toFiniteNumber(news?.confidence),
-      score: toFiniteNumber(news?.impact ?? newsImpactScore),
-      summaryEn: `News dir=${news?.direction || '—'} · impact=${news?.impact ?? newsImpactScore ?? '—'} · upcoming=${newsUpcoming ?? '—'}`,
-      summaryAr: `الأخبار=${news?.direction || '—'} · التأثير=${news?.impact ?? newsImpactScore ?? '—'} · أحداث قادمة=${newsUpcoming ?? '—'}`,
+      direction: 'NEUTRAL',
+      confidence: 0,
+      score: null,
+      summaryEn: `News impact=${newsImpact ?? '—'} · nextHighImpactMin=${nextHighImpactMinutes ?? '—'} · action=${newsGateAction}`,
+      summaryAr: `تأثير الأخبار=${newsImpact ?? '—'} · أقرب خبر قوي (دقائق)=${nextHighImpactMinutes ?? '—'} · الإجراء=${newsGateAction}`,
       metrics: {
+        contextOnly: true,
         news,
+        newsDir,
+        newsImpactScore,
+        impact: newsImpact,
+        upcomingEvents: newsUpcoming,
+        nextHighImpactMinutes,
+        gate: {
+          action: newsGateAction,
+          block: newsGateAction === 'BLOCK',
+          reduce: newsGateAction === 'REDUCE',
+          windowMinutes: newsGateWindowMin,
+        },
         realtime: market?.news || null,
       },
       evidence: [
@@ -1249,23 +1428,25 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
         newsUpcoming != null ? `Upcoming events: ${newsUpcoming}` : null,
       ].filter(Boolean),
       warnings:
-        newsImpactScore != null && newsImpactScore >= 4
-          ? ['High event risk. Consider no-trade.']
-          : [],
+        newsGateAction === 'BLOCK'
+          ? ['NEWS GATE: block execution until after high-impact window.']
+          : newsGateAction === 'REDUCE'
+            ? ['NEWS GATE: reduce size / tighten rules.']
+            : [],
       availability: news?.direction || newsImpactScore != null ? 'partial' : 'missing',
     })
   );
 
   // 15) Market psychology
   const doji = patterns.some((p) => String(p?.name || '').includes('DOJI'));
-  const psychDir = doji ? 'NEUTRAL' : candleDir;
+  const psychState = doji ? 'balance' : atrPct != null && atrPct >= 0.75 ? 'fear' : 'balance';
   layers.push(
     buildLayer({
       number: 15,
       nameEn: 'Market Psychology',
       nameAr: 'سيكولوجية السوق',
-      direction: psychDir,
-      confidence: doji ? 55 : 35,
+      direction: 'NEUTRAL',
+      confidence: 0,
       score: null,
       summaryEn: doji
         ? 'Indecision detected (doji).'
@@ -1277,7 +1458,12 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
         : atrPct != null && atrPct >= 0.75
           ? 'تذبذب عالي يشير إلى خوف/استعجال.'
           : 'لا توجد علامة نفسية قوية.',
-      metrics: { doji, atrPct, patterns: patterns.map((p) => p?.name).filter(Boolean) },
+      metrics: {
+        state: psychState,
+        doji,
+        atrPct,
+        patterns: patterns.map((p) => p?.name).filter(Boolean),
+      },
       evidence: patterns.map((p) => p?.name).filter(Boolean),
       warnings: [],
       availability: patterns.length ? 'partial' : 'best_effort',
@@ -1316,7 +1502,7 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
       number: 16,
       nameEn: 'Risk Environment (Risk-on/off + Execution)',
       nameAr: 'بيئة المخاطر (Risk-on/off + تنفيذ)',
-      direction: finalDirection,
+      direction: 'NEUTRAL',
       confidence: 60,
       score: Number(riskScore.toFixed(0)),
       summaryEn: `Risk score=${Math.round(riskScore)}/100 · execQ=${executionQualityScore}/100`,
@@ -1355,7 +1541,7 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
       number: 17,
       nameEn: 'Statistical Logic',
       nameAr: 'المنطق الإحصائي',
-      direction: candleDir,
+      direction: 'NEUTRAL',
       confidence: r2 != null ? clamp(r2, 0, 100) : 20,
       score: r2,
       summaryEn:
@@ -1376,13 +1562,30 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
 
   // 18) Signal validation
   const failedChecks = Object.entries(checks).filter(([, ok]) => ok === false);
+  const l18Pass = Boolean(isTradeValid);
+  const l20EffectiveState = (() => {
+    const raw = String(decisionState || '')
+      .trim()
+      .toUpperCase();
+    if (!raw) {
+      return l18Pass ? null : 'WAIT_MONITOR';
+    }
+    if (isBlocked) {
+      return raw;
+    }
+    if (!l18Pass) {
+      // Contract: if L18 != PASS => L20 must WAIT (not decide ENTER).
+      return 'WAIT_MONITOR';
+    }
+    return raw;
+  })();
   layers.push(
     buildLayer({
       number: 18,
       nameEn: 'Signal Validation (Final Guard)',
       nameAr: 'تحقق الإشارة (الحارس الأخير)',
-      direction: isTradeValid ? finalDirection : 'NEUTRAL',
-      confidence: isTradeValid ? 85 : 95,
+      direction: 'NEUTRAL',
+      confidence: 0,
       score: null,
       summaryEn: isTradeValid
         ? 'Signal passed validity checks.'
@@ -1391,7 +1594,7 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
         ? 'الإشارة اجتازت التحقق.'
         : `تم رفض الإشارة: ${scn?.decision?.reason || sig?.isValid?.reason || 'غير صالح'}`,
       metrics: {
-        verdict: isTradeValid ? 'PASS' : 'FAIL',
+        verdict: isTradeValid ? 'PASS' : 'BLOCK',
         isTradeValid,
         failedChecks: failedChecks.map(([key]) => key),
       },
@@ -1413,11 +1616,10 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
   const buyVotes = votes.filter((v) => v === 'BUY').length;
   const sellVotes = votes.filter((v) => v === 'SELL').length;
   const neutralVotes = votes.filter((v) => v === 'NEUTRAL').length;
-  const alignedDir = buyVotes > sellVotes ? 'BUY' : sellVotes > buyVotes ? 'SELL' : 'NEUTRAL';
+  const decisiveVotes = buyVotes + sellVotes;
+  // NEUTRAL = silence (no support): compute alignment only from directional votes.
   const alignmentScore = clamp(
-    Math.round(
-      ((Math.max(buyVotes, sellVotes) + neutralVotes * 0.25) / Math.max(1, votes.length)) * 100
-    ),
+    decisiveVotes > 0 ? Math.round((Math.max(buyVotes, sellVotes) / decisiveVotes) * 100) : 0,
     0,
     100
   );
@@ -1427,8 +1629,8 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
       number: 19,
       nameEn: 'Context Awareness (Confluence)',
       nameAr: 'وعي السياق (توافق/Confluence)',
-      direction: alignedDir,
-      confidence: alignmentScore,
+      direction: 'NEUTRAL',
+      confidence: 0,
       score: alignmentScore,
       summaryEn: `Alignment=${alignmentScore}% · votes: BUY=${buyVotes} SELL=${sellVotes} NEUTRAL=${neutralVotes} · confluenceW=${toFiniteNumber(confluence?.score) ?? '—'}/${toFiniteNumber(confluence?.minScore) ?? '—'}`,
       summaryAr: `التوافق=${alignmentScore}% · الأصوات: شراء=${buyVotes} بيع=${sellVotes} حياد=${neutralVotes} · وزن التوافق=${toFiniteNumber(confluence?.score) ?? '—'}/${toFiniteNumber(confluence?.minScore) ?? '—'}`,
@@ -1737,17 +1939,13 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
       number: 20,
       nameEn: 'Decision Engine (ENTER / WAIT / BLOCKED)',
       nameAr: 'محرك القرار (دخول / انتظار / محجوب)',
-      direction: isBlocked ? 'NEUTRAL' : finalDirection,
-      confidence: isTradeValid
-        ? finalConfidence
-        : isBlocked
-          ? 95
-          : Math.max(55, Math.min(95, finalConfidence ?? 70)),
-      score: finalScore,
+      direction: l20EffectiveState === 'ENTER' ? finalDirection : 'NEUTRAL',
+      confidence: l20EffectiveState === 'ENTER' ? finalConfidence : 0,
+      score: null,
       summaryEn:
-        decisionState === 'ENTER'
+        l20EffectiveState === 'ENTER'
           ? `Decision=ENTER ${finalDirection} · score=${decisionScore ?? '—'}/100 · sizeHint=${sizingHint}/10`
-          : decisionState === 'WAIT_MONITOR'
+          : l20EffectiveState === 'WAIT_MONITOR'
             ? `Decision=WAIT/MONITOR · score=${decisionScore ?? '—'}/100 · missing=${missing.join(',') || '—'}`
             : killSwitchIds.length
               ? `Decision=BLOCKED (kill-switch) · ${
@@ -1764,9 +1962,9 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
                     .join(',') || '—'
                 }`,
       summaryAr:
-        decisionState === 'ENTER'
+        l20EffectiveState === 'ENTER'
           ? `القرار=دخول ${finalDirection} · الدرجة=${decisionScore ?? '—'}/100 · حجم=${sizingHint}/10`
-          : decisionState === 'WAIT_MONITOR'
+          : l20EffectiveState === 'WAIT_MONITOR'
             ? `القرار=انتظار/مراقبة · الدرجة=${decisionScore ?? '—'}/100 · الناقص=${missing.join(',') || '—'}`
             : `القرار=محجوب · العوائق=${
                 Object.entries(checks)
@@ -1780,9 +1978,11 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
         adaptiveConfidence,
         finalScore,
         decision: {
-          state: decisionState,
+          state: l20EffectiveState,
           score: decisionScore,
           blocked: isBlocked,
+          blockedByL18: !l18Pass && !isBlocked,
+          l18Verdict: l18Pass ? 'PASS' : 'BLOCK',
           missing,
           whatWouldChange,
           missingInputs,

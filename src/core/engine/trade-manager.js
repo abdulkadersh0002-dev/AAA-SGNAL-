@@ -96,17 +96,16 @@ const getLayers18Status = (signal) =>
     layeredAnalysis: signal?.components?.layeredAnalysis,
     minConfluence: layers18MinConfluence,
     decisionStateFallback: signal?.isValid?.decision?.state,
-    allowStrongOverride: true,
     signal,
   });
 
 const resolveDecisionState = (signal) => {
-  const layer18 = signal?.components?.layeredAnalysis?.layers
+  const layer20 = signal?.components?.layeredAnalysis?.layers
     ? signal.components.layeredAnalysis.layers.find(
-        (layer) => String(layer?.key || '').toUpperCase() === 'L18' || Number(layer?.layer) === 18
+        (layer) => String(layer?.key || '').toUpperCase() === 'L20' || Number(layer?.layer) === 20
       )
     : null;
-  const fromLayer = layer18?.metrics?.decision?.state || null;
+  const fromLayer = layer20?.metrics?.decision?.state || null;
   const fromSignal = signal?.isValid?.decision?.state || signal?.finalDecision?.state || null;
   const state = String(fromLayer || fromSignal || '')
     .trim()
@@ -115,46 +114,14 @@ const resolveDecisionState = (signal) => {
 };
 
 const resolveDecisionScore = (signal) => {
-  const layer18 = signal?.components?.layeredAnalysis?.layers
+  const layer20 = signal?.components?.layeredAnalysis?.layers
     ? signal.components.layeredAnalysis.layers.find(
-        (layer) => String(layer?.key || '').toUpperCase() === 'L18' || Number(layer?.layer) === 18
+        (layer) => String(layer?.key || '').toUpperCase() === 'L20' || Number(layer?.layer) === 20
       )
     : null;
-  const fromLayer = layer18?.metrics?.decision?.score ?? layer18?.metrics?.decisionScore;
+  const fromLayer = layer20?.metrics?.decision?.score ?? layer20?.metrics?.decisionScore;
   const fromSignal = signal?.isValid?.decision?.score ?? signal?.finalDecision?.score;
   const score = Number(fromLayer ?? fromSignal);
-  return Number.isFinite(score) ? score : null;
-};
-
-const resolveLiquidityScore = (signal) => {
-  const fromDecision = Number(signal?.components?.layeredDecision?.liquidity?.score);
-  if (Number.isFinite(fromDecision)) {
-    return fromDecision;
-  }
-  const layers = signal?.components?.layeredAnalysis?.layers;
-  if (!Array.isArray(layers)) {
-    return null;
-  }
-  const layer5 = layers.find(
-    (layer) => String(layer?.key || '').toUpperCase() === 'L5' || Number(layer?.layer) === 5
-  );
-  const score = Number(layer5?.metrics?.liquidityQuality?.score ?? layer5?.score);
-  return Number.isFinite(score) ? score : null;
-};
-
-const resolveConfluenceScore = (signal) => {
-  const fromDecision = Number(signal?.components?.layeredDecision?.layers18?.confluenceScore);
-  if (Number.isFinite(fromDecision)) {
-    return fromDecision;
-  }
-  const layers = signal?.components?.layeredAnalysis?.layers;
-  if (!Array.isArray(layers)) {
-    return null;
-  }
-  const layer17 = layers.find(
-    (layer) => String(layer?.key || '').toUpperCase() === 'L17' || Number(layer?.layer) === 17
-  );
-  const score = Number(layer17?.metrics?.confluenceWeighting?.weightedScore ?? layer17?.confidence);
   return Number.isFinite(score) ? score : null;
 };
 
@@ -174,6 +141,14 @@ class TradeManager {
     this.configuredPairs = [...this.tradingPairs];
 
     this.lastSignalCheck = new Map();
+
+    // In EA-driven mode, the MT4/MT5 EA only checks symbols returned by
+    // GET /api/broker/bridge/:broker/market/active-symbols.
+    // If the dashboard isn't connected yet, that list can be empty and the EA will fall back
+    // to a small majors-only set. That can cause "server approved ENTER" on symbols the EA
+    // never polls (no trades). We proactively keep the EA active-symbol list aligned with the
+    // auto-trading scan universe.
+    this.lastEaActiveSymbolsRefreshAt = new Map(); // broker -> epoch ms
 
     // Realtime strong-signal execution (event-driven).
     this.realtimeCandidatesByBroker = new Map(); // broker -> Map(pair -> signal)
@@ -366,30 +341,10 @@ class TradeManager {
       return reject('Trade already open for pair');
     }
 
-    const allowLiquidityOverride = readEnvBool('AUTO_TRADING_LIQUIDITY_OVERRIDE', false) === true;
-    const liquidityMin = Number.isFinite(readEnvNumber('AUTO_TRADING_LIQUIDITY_MIN_SCORE'))
-      ? readEnvNumber('AUTO_TRADING_LIQUIDITY_MIN_SCORE')
-      : 80;
-    const confluenceMin = Number.isFinite(readEnvNumber('AUTO_TRADING_LIQUIDITY_MIN_CONFLUENCE'))
-      ? readEnvNumber('AUTO_TRADING_LIQUIDITY_MIN_CONFLUENCE')
-      : layers18MinConfluence;
-
-    const liquidityScore = resolveLiquidityScore(signal);
-    const confluenceScore = resolveConfluenceScore(signal);
     const layersStatus = this.realtimeRequireLayers18 ? getLayers18Status(signal) : null;
 
-    const liquidityOverrideOk =
-      allowLiquidityOverride &&
-      decisionState === 'WAIT_MONITOR' &&
-      signal?.isValid?.isValid === true &&
-      layersStatus?.strongOverride?.ok === true &&
-      Number.isFinite(liquidityScore) &&
-      liquidityScore >= liquidityMin &&
-      Number.isFinite(confluenceScore) &&
-      confluenceScore >= confluenceMin;
-
-    // Safety: never execute blocked/non-enter signals unless the strict liquidity override applies.
-    if ((decisionState !== 'ENTER' || signal?.isValid?.isValid !== true) && !liquidityOverrideOk) {
+    // Safety: never execute blocked/non-enter signals.
+    if (decisionState !== 'ENTER' || signal?.isValid?.isValid !== true) {
       return reject(`Signal not executable (state=${decisionState || 'unknown'})`);
     }
 
@@ -423,8 +378,8 @@ class TradeManager {
 
     if (this.realtimeRequireLayers18) {
       const status = layersStatus || getLayers18Status(signal);
-      if (!status.ok && !liquidityOverrideOk) {
-        return reject(`Missing/failed 18-layer readiness (layers=${layersStatus.layersCount})`, {
+      if (!status.ok) {
+        return reject(`Missing/failed 18-layer readiness (layers=${status.layersCount})`, {
           layersStatus: status,
         });
       }
@@ -536,6 +491,22 @@ class TradeManager {
       return;
     }
 
+    // Realtime auto-trading should only ever consider true entry-ready signals.
+    // Candidates/WATCH (WAIT_MONITOR) are for visibility and must never trigger execution.
+    const layers = Array.isArray(signal?.components?.layeredAnalysis?.layers)
+      ? signal.components.layeredAnalysis.layers
+      : [];
+    const layer20 =
+      layers.find(
+        (layer) => String(layer?.key || '').toUpperCase() === 'L20' || Number(layer?.layer) === 20
+      ) || null;
+    const decisionState = String(
+      layer20?.metrics?.decision?.state || signal?.isValid?.decision?.state || ''
+    ).toUpperCase();
+    if (decisionState !== 'ENTER') {
+      return;
+    }
+
     const pair = String(signal.pair || '').trim();
     if (!pair) {
       return;
@@ -596,6 +567,11 @@ class TradeManager {
     }
 
     const config = this.tradingEngine?.config || {};
+    const executionEnabled = config?.tradingScope?.allowExecution === true;
+    const eaOnlyEnabled =
+      String(config?.env?.EA_ONLY_MODE || '')
+        .trim()
+        .toLowerCase() === 'true';
     const autoTradingConfig = config.autoTrading || {};
     const maxNewTradesPerCycle = Number.isFinite(Number(autoTradingConfig.maxNewTradesPerCycle))
       ? Math.max(1, Number(autoTradingConfig.maxNewTradesPerCycle))
@@ -670,6 +646,38 @@ class TradeManager {
         ...signal,
         brokerPreference: id,
       };
+
+      // In EA-only mode, MT4/MT5 execution is performed inside the terminal EA.
+      // Emit the attempt for visibility, but do not attempt server-side broker execution.
+      const isEaBroker = id === 'mt4' || id === 'mt5';
+      if (eaOnlyEnabled && isEaBroker) {
+        this.emitEvent('auto_trade_attempt', {
+          broker: id,
+          pair,
+          source: 'realtime',
+          decisionScore: signal?.isValid?.decision?.score,
+          confidence: signal?.confidence,
+          strength: signal?.strength,
+          executionMode: 'ea',
+          note: 'EA-only mode: signal published for EA execution',
+          signal: signalForBroker,
+        });
+        continue;
+      }
+
+      if (!executionEnabled) {
+        this.emitEvent('auto_trade_rejected', {
+          broker: id,
+          pair,
+          source: 'realtime',
+          reason: 'Trade execution is disabled (TRADING_SCOPE=signals)',
+          decisionScore: signal?.isValid?.decision?.score,
+          confidence: signal?.confidence,
+          strength: signal?.strength,
+          signal: signalForBroker,
+        });
+        continue;
+      }
 
       this.emitEvent('auto_trade_attempt', {
         broker: id,
@@ -785,6 +793,51 @@ class TradeManager {
       merged.push(pair);
     }
     return merged;
+  }
+
+  maybeRefreshEaActiveSymbols(brokerId) {
+    const normalized = this.normalizeBrokerId(brokerId);
+    if (!normalized) {
+      return;
+    }
+
+    const isEaBroker = normalized === 'mt4' || normalized === 'mt5';
+    if (!isEaBroker) {
+      return;
+    }
+
+    if (typeof this.eaBridgeService?.setActiveSymbols !== 'function') {
+      return;
+    }
+
+    const now = Date.now();
+    const refreshMs = Number.isFinite(readEnvNumber('AUTO_TRADING_EA_ACTIVE_SYMBOLS_REFRESH_MS'))
+      ? Math.max(5_000, readEnvNumber('AUTO_TRADING_EA_ACTIVE_SYMBOLS_REFRESH_MS'))
+      : 5 * 60 * 1000;
+
+    const last = Number(this.lastEaActiveSymbolsRefreshAt.get(normalized) || 0);
+    if (last > 0 && now - last < refreshMs) {
+      return;
+    }
+
+    const ttlMs = Number.isFinite(readEnvNumber('AUTO_TRADING_EA_ACTIVE_SYMBOLS_TTL_MS'))
+      ? Math.max(30_000, readEnvNumber('AUTO_TRADING_EA_ACTIVE_SYMBOLS_TTL_MS'))
+      : 60 * 60 * 1000;
+
+    const max = Number.isFinite(readEnvNumber('AUTO_TRADING_EA_ACTIVE_SYMBOLS_MAX'))
+      ? Math.max(10, Math.trunc(readEnvNumber('AUTO_TRADING_EA_ACTIVE_SYMBOLS_MAX')))
+      : 250;
+
+    const pairs = this.getPairsToScanForBroker(normalized)
+      .filter((pair) => this.isAutoTradingSymbolAllowed(pair))
+      .slice(0, max);
+
+    try {
+      this.eaBridgeService.setActiveSymbols({ broker: normalized, symbols: pairs, ttlMs });
+      this.lastEaActiveSymbolsRefreshAt.set(normalized, now);
+    } catch (_error) {
+      // best-effort
+    }
   }
 
   async isBrokerConnected(brokerId) {
@@ -940,6 +993,9 @@ class TradeManager {
 
     this.autoTradingEnabledByBroker.set(brokerId, true);
 
+    // Ensure the EA has a non-empty symbol universe to poll for execution.
+    this.maybeRefreshEaActiveSymbols(brokerId);
+
     this.ensureIntervalsRunning();
 
     // Initial signal check
@@ -1032,6 +1088,11 @@ class TradeManager {
     logger.debug({ module: 'TradeManager' }, 'Checking for new trading signals...');
 
     const config = this.tradingEngine?.config || {};
+    const executionEnabled = config?.tradingScope?.allowExecution === true;
+    const eaOnlyEnabled =
+      String(config?.env?.EA_ONLY_MODE || '')
+        .trim()
+        .toLowerCase() === 'true';
     const autoTradingConfig = config.autoTrading || {};
     const maxNewTradesPerCycle = Number.isFinite(Number(autoTradingConfig.maxNewTradesPerCycle))
       ? Math.max(1, Number(autoTradingConfig.maxNewTradesPerCycle))
@@ -1041,6 +1102,9 @@ class TradeManager {
       if (!this.isAutoTradingEnabled(brokerId)) {
         continue;
       }
+
+      // Keep EA-side polling universe warm while auto-trading is running.
+      this.maybeRefreshEaActiveSymbols(brokerId);
 
       const connected = await this.isBrokerConnected(brokerId);
       if (!connected) {
@@ -1165,6 +1229,36 @@ class TradeManager {
           ...signal,
           brokerPreference: brokerId,
         };
+
+        const isEaBroker = brokerId === 'mt4' || brokerId === 'mt5';
+        if (eaOnlyEnabled && isEaBroker) {
+          this.emitEvent('auto_trade_attempt', {
+            broker: brokerId,
+            pair: signal?.pair,
+            source: 'scheduled',
+            decisionScore: signal?.isValid?.decision?.score,
+            confidence: signal?.confidence,
+            strength: signal?.strength,
+            executionMode: 'ea',
+            note: 'EA-only mode: signal published for EA execution',
+            signal: signalForBroker,
+          });
+          continue;
+        }
+
+        if (!executionEnabled) {
+          this.emitEvent('auto_trade_rejected', {
+            broker: brokerId,
+            pair: signal?.pair,
+            source: 'scheduled',
+            reason: 'Trade execution is disabled (TRADING_SCOPE=signals)',
+            decisionScore: signal?.isValid?.decision?.score,
+            confidence: signal?.confidence,
+            strength: signal?.strength,
+            signal: signalForBroker,
+          });
+          continue;
+        }
 
         this.emitEvent('auto_trade_attempt', {
           broker: brokerId,

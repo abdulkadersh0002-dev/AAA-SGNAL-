@@ -403,7 +403,7 @@ function SignalDashboardTable({
                   <td colSpan={isStrongMode ? 11 : 22} style={{ padding: '10px 12px' }}>
                     <details open>
                       <summary style={{ cursor: 'pointer', fontWeight: 600 }}>
-                        18 Layers — Full Analysis
+                        {row.layeredAnalysis.layers.length} Layers — Full Analysis
                       </summary>
                       <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
                         {row.layeredAnalysis.layers.map((layer) => {

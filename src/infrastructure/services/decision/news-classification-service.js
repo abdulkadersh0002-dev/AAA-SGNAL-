@@ -79,7 +79,7 @@ class NewsClassificationService {
 
     // Timing windows (milliseconds)
     this.timingWindows = {
-      imminent: 15 * 60 * 1000, // 15 minutes before
+      imminent: 30 * 60 * 1000, // 30 minutes before
       during: 30 * 60 * 1000, // 30 minutes after
       aftermath: 60 * 60 * 1000, // 1 hour after
     };

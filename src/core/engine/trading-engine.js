@@ -928,7 +928,12 @@ class TradingEngine {
         return 25;
       }
       if (assetClass === 'metals') {
-        return 6;
+        const envMaxMetals = Number(
+          process.env.AUTO_TRADING_MAX_SPREAD_PIPS_METALS ||
+            process.env.ADVANCED_SIGNAL_MAX_SPREAD_PIPS_METALS ||
+            process.env.SIGNAL_FILTER_MAX_SPREAD_PIPS_METALS
+        );
+        return Number.isFinite(envMaxMetals) ? Math.max(0, envMaxMetals) : 60;
       }
       if (assetClass === 'forex') {
         const category = normalizePairCategory(pair);
@@ -945,9 +950,21 @@ class TradingEngine {
       }
       return 6.0;
     })();
-    const maxSpreadPips = Number.isFinite(this.config.maxSpreadPips)
-      ? this.config.maxSpreadPips
-      : defaultMaxSpreadPips;
+
+    const configMaxSpreadPips = Number.isFinite(this.config.maxSpreadPips)
+      ? Number(this.config.maxSpreadPips)
+      : null;
+
+    const maxSpreadPips = (() => {
+      // If a global maxSpreadPips is configured (often for FX), don't let it accidentally
+      // make metals permanently untradeable. Apply the metals default as a floor.
+      if (assetClass === 'metals') {
+        return configMaxSpreadPips != null
+          ? Math.max(configMaxSpreadPips, defaultMaxSpreadPips)
+          : defaultMaxSpreadPips;
+      }
+      return configMaxSpreadPips != null ? configMaxSpreadPips : defaultMaxSpreadPips;
+    })();
 
     // Expose the resolved spread gate for dashboards/audits.
     if (marketData && typeof marketData === 'object') {
@@ -1403,6 +1420,10 @@ class TradingEngine {
       if (!isDirectional) {
         return true;
       }
+      const relaxedRaw = String(process.env.AUTO_TRADING_HTF_RELAXED || '')
+        .trim()
+        .toLowerCase();
+      const relaxed = relaxedRaw === '1' || relaxedRaw === 'true' || relaxedRaw === 'yes';
       const h4 = tfDir('H4');
       const d1 = tfDir('D1');
       const w1 = tfDir('W1');
@@ -1410,7 +1431,7 @@ class TradingEngine {
       if (dirs.length === 0) {
         return this.config?.requireHtfDirection ? false : true;
       }
-      return dirs.every((d) => d === dir);
+      return relaxed ? dirs.includes(dir) : dirs.every((d) => d === dir);
     })();
 
     const barsCoverageOk = (() => {
@@ -1595,8 +1616,48 @@ class TradingEngine {
       if (fxAtrRangeOk === false) {
         hardChecks.fxAtrRangeOk = true;
       }
-      blocked = Object.values(hardChecks).some((v) => v !== true);
     }
+
+    const execCostSoftenEnabled = (() => {
+      const env = String(process.env.AUTO_TRADING_EXECUTION_COST_SOFTEN || '')
+        .trim()
+        .toLowerCase();
+      if (env) {
+        return env === '1' || env === 'true' || env === 'yes' || env === 'on';
+      }
+      return smartStrongEnabled;
+    })();
+    const execCostOverrideMinScore = Number.isFinite(
+      Number(process.env.AUTO_TRADING_EXECUTION_COST_OVERRIDE_MIN_SCORE)
+    )
+      ? Number(process.env.AUTO_TRADING_EXECUTION_COST_OVERRIDE_MIN_SCORE)
+      : 70;
+    const execCostMaxSpreadToAtr = Number.isFinite(
+      Number(process.env.AUTO_TRADING_EXECUTION_COST_OVERRIDE_MAX_SPREAD_TO_ATR)
+    )
+      ? Number(process.env.AUTO_TRADING_EXECUTION_COST_OVERRIDE_MAX_SPREAD_TO_ATR)
+      : maxSpreadToAtrHard * 1.25;
+    const execCostMaxSpreadToTp = Number.isFinite(
+      Number(process.env.AUTO_TRADING_EXECUTION_COST_OVERRIDE_MAX_SPREAD_TO_TP)
+    )
+      ? Number(process.env.AUTO_TRADING_EXECUTION_COST_OVERRIDE_MAX_SPREAD_TO_TP)
+      : maxSpreadToTpHard * 1.25;
+    const execCostSpreadToAtrOk =
+      spreadToAtr == null || !Number.isFinite(spreadToAtr) || spreadToAtr <= execCostMaxSpreadToAtr;
+    const execCostSpreadToTpOk =
+      spreadToTp == null || !Number.isFinite(spreadToTp) || spreadToTp <= execCostMaxSpreadToTp;
+    const smartExecutionCostOverride =
+      execCostSoftenEnabled &&
+      executionCostOk === false &&
+      score >= execCostOverrideMinScore &&
+      execCostSpreadToAtrOk &&
+      execCostSpreadToTpOk;
+
+    if (smartExecutionCostOverride) {
+      hardChecks.executionCostOk = true;
+    }
+
+    blocked = Object.values(hardChecks).some((v) => v !== true);
 
     // 18-layer confluence gate (real checks; SKIP when data isn't available).
     const confluenceEnabled = (() => {
@@ -5473,6 +5534,11 @@ class TradingEngine {
       ? Number(this.config.minEstimatedWinRate)
       : 70;
 
+    const envSpreadEffMin = Number(process.env.SIGNAL_SPREAD_EFFICIENCY_MIN);
+    const spreadEfficiencyMin = Number.isFinite(envSpreadEffMin)
+      ? Math.max(0.05, Math.min(1, envSpreadEffMin))
+      : 0.55;
+
     const missing = [];
     const whatWouldChange = [];
     const smoothingGateActive = state === 'ENTER' && !blocked && !scoreSmoothingOk;
@@ -5489,15 +5555,19 @@ class TradingEngine {
         missing.push('direction_confirmation');
         whatWouldChange.push('A clear directional bias (technical/structure alignment).');
       }
-      if (strengthScore < 0.65) {
-        missing.push('strength');
+      const rawStrength = Number.isFinite(Number(signal?.strength)) ? Number(signal.strength) : 0;
+      const rawWinRate = Number.isFinite(Number(signal?.estimatedWinRate))
+        ? Number(signal.estimatedWinRate)
+        : 0;
+      const strengthLow = rawStrength < cfgMinStrength;
+      const probabilityLow = rawWinRate < cfgMinWinRate;
+
+      if (strengthLow && probabilityLow) {
+        missing.push('strength', 'probability');
         whatWouldChange.push(`Strength rising above ${Math.min(95, cfgMinStrength)}.`);
-      }
-      if (probabilityScore < 0.6) {
-        missing.push('probability');
         whatWouldChange.push(`Estimated win-rate above ${Math.min(95, cfgMinWinRate)}%.`);
       }
-      if (spreadEfficiencyScore < 0.65) {
+      if (spreadEfficiencyScore < spreadEfficiencyMin) {
         missing.push('execution_cost');
         whatWouldChange.push('Tighter spread or larger expected move (ATR/TP).');
       }
@@ -5695,6 +5765,7 @@ class TradingEngine {
         atrPips,
         spreadToAtr,
         spreadToTp,
+        spreadEfficiencyMinForEnter: spreadEfficiencyMin,
         stopLossPips,
         takeProfitPips,
         riskReward,
@@ -5907,6 +5978,22 @@ class TradingEngine {
       };
     };
 
+    const momentumFactorEnv = Number(process.env.AUTO_TRADING_MOMENTUM_ENTER_FACTOR);
+    const momentumFactor = Number.isFinite(momentumFactorEnv)
+      ? Math.max(0.5, Math.min(1, momentumFactorEnv))
+      : 1;
+    const applyMomentumFactor = (profile) => {
+      if (!Number.isFinite(profile?.minMomentumForEnter)) {
+        return profile;
+      }
+      return {
+        ...profile,
+        minMomentumForEnter: Number(
+          (Number(profile.minMomentumForEnter) * momentumFactor).toFixed(4)
+        ),
+      };
+    };
+
     const normalizeSmartStrongMode = (value) =>
       value === 'smart_strong' || value === 'smart-strong' || value === 'smartstrong';
 
@@ -5952,37 +6039,41 @@ class TradingEngine {
     };
 
     if (assetClass === 'metals') {
-      return applyAggressiveTuning(
-        applySmartStrongTuning({
-          ...base,
-          enterScore: 75,
-          minStrength: 58,
-          minWinRate: 57,
-          minConfidence: 56,
-          targetRiskReward: 2.6,
-          maxSpreadToAtrWarn: 0.26,
-          weights: { ...base.weights, spreadEfficiency: 0.16, probability: 0.24 },
-        })
+      return applyMomentumFactor(
+        applyAggressiveTuning(
+          applySmartStrongTuning({
+            ...base,
+            enterScore: 75,
+            minStrength: 58,
+            minWinRate: 57,
+            minConfidence: 56,
+            targetRiskReward: 2.6,
+            maxSpreadToAtrWarn: 0.26,
+            weights: { ...base.weights, spreadEfficiency: 0.16, probability: 0.24 },
+          })
+        )
       );
     }
 
     if (assetClass === 'crypto') {
-      return applyAggressiveTuning(
-        applySmartStrongTuning({
-          ...base,
-          enterScore: 78,
-          minStrength: 60,
-          minWinRate: 58,
-          minConfidence: 56,
-          targetRiskReward: 2.9,
-          maxSpreadToAtrWarn: 0.3,
-          maxSpreadToTpWarn: 0.14,
-          weights: { ...base.weights, strength: 0.26, probability: 0.24 },
-        })
+      return applyMomentumFactor(
+        applyAggressiveTuning(
+          applySmartStrongTuning({
+            ...base,
+            enterScore: 78,
+            minStrength: 60,
+            minWinRate: 58,
+            minConfidence: 56,
+            targetRiskReward: 2.9,
+            maxSpreadToAtrWarn: 0.3,
+            maxSpreadToTpWarn: 0.14,
+            weights: { ...base.weights, strength: 0.26, probability: 0.24 },
+          })
+        )
       );
     }
 
-    return applyAggressiveTuning(applySmartStrongTuning(base));
+    return applyMomentumFactor(applyAggressiveTuning(applySmartStrongTuning(base)));
   }
 
   getSessionModifier(assetClass, now = Date.now()) {

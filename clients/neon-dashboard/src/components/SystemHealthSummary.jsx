@@ -424,9 +424,15 @@ const describeDataFeeds = (featureSnapshots = [], options = {}) => {
     'ts',
     'updatedAt'
   ]);
+  const now = Date.now();
+  const futureToleranceMs = 2 * 60 * 1000;
+  const quoteTsIsFuture = latestQuoteTs != null && latestQuoteTs > now + futureToleranceMs;
+  const safeQuoteTs = quoteTsIsFuture ? now : latestQuoteTs;
   const quoteCount = eaQuotes.length;
-  const quoteDetail = latestQuoteTs
-    ? `EA quotes ${quoteCount} · Latest quote ${formatRelativeTime(latestQuoteTs)}`
+  const quoteDetail = safeQuoteTs
+    ? `EA quotes ${quoteCount} · Latest quote ${formatRelativeTime(safeQuoteTs)}${
+        quoteTsIsFuture ? ' (clock skew)' : ''
+      }`
     : quoteCount
       ? `EA quotes ${quoteCount}`
       : eaBridgeConnected

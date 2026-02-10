@@ -61,6 +61,7 @@ export function buildEaConnectionDiagnostics({ eaBridgeService, broker, symbol, 
   const statsSummary = stats
     ? {
         activeSessions: Number(stats.activeSessions || 0),
+        polls: stats?.polls || null,
         marketFeed: {
           quotesTotal: Number(stats?.marketFeed?.quotes?.total || 0),
           quotesByBroker: stats?.marketFeed?.quotes?.byBroker || {},
@@ -70,6 +71,19 @@ export function buildEaConnectionDiagnostics({ eaBridgeService, broker, symbol, 
         },
       }
     : null;
+
+  const hints = [];
+  if (isConnected && brokerSessions.length > 0 && quoteCount === 0) {
+    hints.push(
+      'EA is connected (heartbeats seen) but no quotes ingested yet. Ensure the EA inputs have EnableMarketFeed=true and the terminal has live prices.'
+    );
+    hints.push(
+      'If the market is closed or the chart symbol has no bid/ask, MT5 may report 0 prices; the EA will not POST quotes until it can read a usable tick.'
+    );
+    hints.push(
+      'Open Market Watch, make sure symbols are visible, and attach the EA to an active symbol chart; check MT5 Experts log for WebRequest/price warnings.'
+    );
+  }
 
   return {
     broker: normalizedBroker,
@@ -86,6 +100,7 @@ export function buildEaConnectionDiagnostics({ eaBridgeService, broker, symbol, 
       latestQuoteAgeMs,
     },
     statistics: statsSummary,
+    hints: hints.length ? hints : undefined,
   };
 }
 

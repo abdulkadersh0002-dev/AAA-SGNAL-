@@ -185,7 +185,7 @@ function buildTradingEngineConfig(env, priceDataConfig) {
     presetRaw === 'smart_strong' || presetRaw === 'smart-strong' || presetRaw === 'smartstrong';
 
   const config = {
-    minSignalStrength: 35,
+    minSignalStrength: parseFloatSafe(env.AUTO_TRADING_MIN_SIGNAL_STRENGTH) ?? 35,
     riskPerTrade: 0.02,
     maxDailyRisk: 0.06,
     maxRiskPerSymbol: parseFloatSafe(env.MAX_RISK_PER_SYMBOL),
@@ -494,10 +494,18 @@ export function buildAppConfig(environment = process.env) {
     breakerCooldownMs: parseIntSafe(env.BROKER_BREAKER_COOLDOWN_MS),
   };
 
-  const eaOnlyModeEnabled = parseBoolSafe(env.EA_ONLY_MODE, true);
-  let tradingScope = normalizeTradingScope(env.TRADING_SCOPE, 'signals');
-  if (eaOnlyModeEnabled && tradingScope === 'signals') {
-    tradingScope = 'execution';
+  // Default: non-EA-only unless the real server enables it.
+  // `src/server.js` forces EA_ONLY_MODE=true by default (except NODE_ENV=test),
+  // while tests/embedded apps should behave like a regular execution-capable server.
+  const eaOnlyModeEnabled = parseBoolSafe(env.EA_ONLY_MODE, false);
+  // EA-only mode implies execution happens inside the terminal EA (MT4/MT5).
+  // To avoid accidental server-side execution attempts, force signals-only scope.
+  let tradingScope = normalizeTradingScope(
+    env.TRADING_SCOPE,
+    eaOnlyModeEnabled ? 'signals' : 'execution'
+  );
+  if (eaOnlyModeEnabled && (tradingScope === 'execution' || tradingScope === 'autonomous')) {
+    tradingScope = 'signals';
   }
   const governanceTargets = {
     uptimePct: parseFloatSafe(env.TARGET_UPTIME_PCT),
@@ -539,6 +547,7 @@ export function buildAppConfig(environment = process.env) {
     enabled: env.ENABLE_PREFETCH_SCHEDULER !== 'false',
     tickIntervalMs: parseIntSafe(env.PREFETCH_TICK_MS),
     maxPairsPerTick: parseIntSafe(env.PREFETCH_MAX_PER_TICK),
+    timeframes: parseListSafe(env.PREFETCH_TIMEFRAMES),
   };
 
   const jobQueue = {

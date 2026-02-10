@@ -975,7 +975,7 @@ bool ParseSignalForExecution(const string json,
             int gatesPos = JsonFindKeyOutsideString(json, "\"gates\"", execPos);
             if(gatesPos < 0)
                gatesPos = execPos;
-            if(JsonGetStringFromPos(json, gatesPos, "\"decisionState\"", decision) || JsonGetStringFromPos(json, gatesPos, "\"layer18State\"", decision))
+            if(JsonGetStringFromPos(json, gatesPos, "\"decisionState\"", decision))
             {
                StringToUpper(decision);
                if(decision != "ENTER")
@@ -2637,8 +2637,7 @@ void CheckAndExecuteSignals()
 
          if(g_serverRequiresEnterState)
          {
-            bool enterOk = (StringFind(response, "\"decisionState\":\"ENTER\"") >= 0 ||
-                            StringFind(response, "\"layer18State\":\"ENTER\"") >= 0);
+            bool enterOk = (StringFind(response, "\"decisionState\":\"ENTER\"") >= 0);
             if(!enterOk)
                continue;
          }

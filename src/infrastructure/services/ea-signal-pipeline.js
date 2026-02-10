@@ -44,9 +44,67 @@ const getBarsCoverage = ({ eaBridgeService, broker, symbol, now } = {}) => {
   return Object.keys(coverage).length ? coverage : null;
 };
 
-export const normalizeLayeredAnalysis = (layers) => ({
-  layers: Array.isArray(layers) ? layers : [],
-});
+const isRealBidAskQuote = (quote) => {
+  if (!quote || typeof quote !== 'object') {
+    return false;
+  }
+  const bid = Number(quote.bid);
+  const ask = Number(quote.ask);
+  return Number.isFinite(bid) && Number.isFinite(ask) && bid > 0 && ask > 0;
+};
+
+export const normalizeLayeredAnalysis = (layers) => {
+  const list = Array.isArray(layers) ? layers.filter(Boolean) : [];
+
+  const byKey = new Map();
+  for (const layer of list) {
+    if (!layer || typeof layer !== 'object') {
+      continue;
+    }
+    const keyRaw = layer.key ?? layer.id ?? layer.layer;
+    const key =
+      typeof keyRaw === 'number'
+        ? `L${keyRaw}`
+        : String(keyRaw || '')
+            .trim()
+            .toUpperCase();
+    if (!key) {
+      continue;
+    }
+    byKey.set(key, layer);
+  }
+
+  // Ensure the UI (and readiness gates) always see a complete 20-layer shape.
+  // Missing layers are represented as PENDING placeholders with no metrics.
+  const normalized = [];
+  for (let i = 1; i <= 20; i += 1) {
+    const key = `L${i}`;
+    const existing = byKey.get(key) || null;
+    if (existing) {
+      normalized.push(existing);
+      continue;
+    }
+    normalized.push({
+      key,
+      id: key,
+      layer: i,
+      status: 'PENDING',
+      score: null,
+      confidence: null,
+      metrics: { pending: true },
+    });
+  }
+
+  // Preserve any extra, non-standard layers beyond L1..L20.
+  for (const [key, layer] of byKey.entries()) {
+    if (/^L\d+$/i.test(String(key))) {
+      continue;
+    }
+    normalized.push(layer);
+  }
+
+  return { layers: normalized };
+};
 
 export const getBestEffortQuote = ({
   eaBridgeService,
@@ -58,24 +116,85 @@ export const getBestEffortQuote = ({
 } = {}) => {
   const nowMs = toNumberOrNull(now) ?? Date.now();
 
+  const mappedSymbol =
+    eaBridgeService?.mapSymbolAlias && typeof eaBridgeService.mapSymbolAlias === 'function'
+      ? eaBridgeService.mapSymbolAlias(symbol)
+      : null;
+  const requestedSymbol = mappedSymbol || symbol;
+
+  const isFreshEnough = (quote) => {
+    const maxAgeMs = toNumberOrNull(quoteMaxAgeMs);
+    if (maxAgeMs == null) {
+      return true;
+    }
+    const receivedAt = toNumberOrNull(quote?.receivedAt ?? quote?.timestamp);
+    if (receivedAt == null) {
+      return false;
+    }
+    return nowMs - receivedAt <= maxAgeMs;
+  };
+
   try {
-    const quotes = eaBridgeService?.getQuotes
-      ? eaBridgeService.getQuotes({
-          broker,
-          symbols: [symbol],
-          maxAgeMs: quoteMaxAgeMs,
-        })
-      : [];
-    const quote = Array.isArray(quotes) && quotes.length ? quotes[0] : null;
+    let quote = null;
+
+    if (typeof eaBridgeService?.getLatestQuoteForSymbolMatch === 'function') {
+      const best = eaBridgeService.getLatestQuoteForSymbolMatch(broker, requestedSymbol);
+      if (best && typeof best === 'object' && isFreshEnough(best)) {
+        quote = best;
+      }
+    }
+
+    if (!quote) {
+      const quotes = eaBridgeService?.getQuotes
+        ? eaBridgeService.getQuotes({
+            broker,
+            symbols: [requestedSymbol],
+            maxAgeMs: quoteMaxAgeMs,
+          })
+        : [];
+      quote = Array.isArray(quotes) && quotes.length ? quotes[0] : null;
+    }
 
     if (quote && typeof quote === 'object') {
+      // Prefer true bid/ask quotes. If we only have bars-derived last/mid,
+      // try to hydrate from the latest snapshot quote.
+      if (isRealBidAskQuote(quote)) {
+        return { quote, source: 'quotes' };
+      }
+
+      try {
+        if (eaBridgeService?.getMarketSnapshot) {
+          const snapshot = eaBridgeService.getMarketSnapshot({
+            broker,
+            symbol: requestedSymbol,
+            maxAgeMs: quoteMaxAgeMs,
+          });
+          const sq = snapshot?.quote && typeof snapshot.quote === 'object' ? snapshot.quote : null;
+          if (sq) {
+            const normalized = {
+              ...sq,
+              broker: sq.broker ?? broker,
+              symbol: sq.symbol ?? requestedSymbol,
+              source: sq.source ?? snapshot?.source ?? 'ea_snapshot',
+              receivedAt: sq.receivedAt ?? snapshot?.receivedAt ?? null,
+              timestamp: sq.timestamp ?? snapshot?.timestamp ?? null,
+            };
+            if (isRealBidAskQuote(normalized)) {
+              return { quote: normalized, source: 'snapshot' };
+            }
+          }
+        }
+      } catch (_error) {
+        // best-effort
+      }
+
       return { quote, source: 'quotes' };
     }
 
     if (barFallback && typeof barFallback === 'object') {
       return {
         quote: {
-          symbol,
+          symbol: requestedSymbol,
           last: barFallback.price,
           source: `ea.bars.${barFallback.timeframe}`,
           receivedAt: barFallback.timeMs || nowMs,
@@ -225,6 +344,70 @@ export const attachLayeredAnalysisToSignal = ({
     return rawSignal;
   }
 
+  rawSignal.components =
+    rawSignal.components && typeof rawSignal.components === 'object' ? rawSignal.components : {};
+
+  const pair = rawSignal?.pair || symbol || null;
+  const metadata = pair ? getPairMetadata(pair) : null;
+  const cleanedPair = String(pair || '').toUpperCase();
+  const fallbackBase = cleanedPair.length >= 6 ? cleanedPair.slice(0, 3) : null;
+  const fallbackQuote = cleanedPair.length >= 6 ? cleanedPair.slice(3, 6) : null;
+
+  rawSignal.components.pairContext = {
+    pair: metadata?.pair || pair || null,
+    base: metadata?.base || fallbackBase,
+    quote: metadata?.quote || fallbackQuote,
+    assetClass: metadata?.assetClass || null,
+    displayName: metadata?.displayName || null,
+    pipSize: metadata?.pipSize ?? null,
+    pricePrecision: metadata?.pricePrecision ?? null,
+    contractSize: metadata?.contractSize ?? null,
+    sessions: metadata?.sessions ?? null,
+    liquidityNotes: metadata?.liquidityNotes ?? null,
+  };
+
+  const generatedAt = toNumberOrNull(rawSignal?.generatedAt ?? now) ?? Date.now();
+  const fallbackDecisionState =
+    rawSignal?.finalDecision?.state || rawSignal?.isValid?.decision?.state || null;
+
+  const baseEntryContext = {
+    generatedAt,
+    direction: rawSignal?.direction || null,
+    timeframe: rawSignal?.components?.technical?.timeframe || null,
+    marketPhase: null,
+    volatilityState: null,
+    session: null,
+    confluenceScore: null,
+    decisionState: fallbackDecisionState,
+    spreadPoints: null,
+    newsImpact: null,
+  };
+
+  rawSignal.components.entryContext =
+    rawSignal.components.entryContext && typeof rawSignal.components.entryContext === 'object'
+      ? { ...baseEntryContext, ...rawSignal.components.entryContext }
+      : baseEntryContext;
+
+  rawSignal.components.expectedMarketBehavior = {
+    summary: 'Monitor confluence, spreads, and news impact before entry.',
+    expectations: {
+      marketPhase: null,
+      volatilityState: null,
+      confluenceScore: null,
+      spreadPoints: null,
+      newsImpact: null,
+    },
+  };
+
+  rawSignal.components.invalidationRules = Array.isArray(rawSignal.components.invalidationRules)
+    ? rawSignal.components.invalidationRules
+    : [
+        'Confluence drops below threshold',
+        'Volatility shock or regime change',
+        'Spread spike beyond acceptable range',
+        'High-impact news event detected',
+      ];
+
   try {
     const { quote: effectiveQuote } = getBestEffortQuote({
       eaBridgeService,
@@ -247,10 +430,6 @@ export const attachLayeredAnalysisToSignal = ({
     });
     const layers = buildLayeredAnalysis({ scenario, signal: rawSignal });
     const normalizedLayers = normalizeLayeredAnalysis(layers);
-
-    rawSignal.components =
-      rawSignal.components && typeof rawSignal.components === 'object' ? rawSignal.components : {};
-
     rawSignal.components.layeredAnalysis = normalizedLayers;
 
     const layerList = Array.isArray(normalizedLayers?.layers) ? normalizedLayers.layers : [];
@@ -260,41 +439,22 @@ export const attachLayeredAnalysisToSignal = ({
     const layer2 = getLayer('L2');
     const layer7 = getLayer('L7');
     const layer8 = getLayer('L8');
-    const layer12 = getLayer('L12');
+    const layer14 = getLayer('L14');
     const layer17 = getLayer('L17');
-    const layer18 = getLayer('L18');
-
-    const pair = rawSignal?.pair || symbol || null;
-    const metadata = pair ? getPairMetadata(pair) : null;
-    const cleanedPair = String(pair || '').toUpperCase();
-    const fallbackBase = cleanedPair.length >= 6 ? cleanedPair.slice(0, 3) : null;
-    const fallbackQuote = cleanedPair.length >= 6 ? cleanedPair.slice(3, 6) : null;
-
-    rawSignal.components.pairContext = {
-      pair: metadata?.pair || pair || null,
-      base: metadata?.base || fallbackBase,
-      quote: metadata?.quote || fallbackQuote,
-      assetClass: metadata?.assetClass || null,
-      displayName: metadata?.displayName || null,
-      pipSize: metadata?.pipSize ?? null,
-      pricePrecision: metadata?.pricePrecision ?? null,
-      contractSize: metadata?.contractSize ?? null,
-      sessions: metadata?.sessions ?? null,
-      liquidityNotes: metadata?.liquidityNotes ?? null,
-    };
-
-    const generatedAt = toNumberOrNull(rawSignal?.generatedAt ?? now) ?? Date.now();
+    const layer20 = getLayer('L20');
     const confluenceScore =
       Number(layer17?.metrics?.confluenceWeighting?.weightedScore ?? layer17?.confidence) || null;
     const decisionState =
-      layer18?.metrics?.decision?.state || rawSignal?.isValid?.decision?.state || null;
+      layer20?.metrics?.decision?.state ||
+      rawSignal?.finalDecision?.state ||
+      rawSignal?.isValid?.decision?.state ||
+      null;
     const spreadPoints = toNumberOrNull(layer1?.metrics?.spreadPoints);
     const newsImpact =
-      toNumberOrNull(layer12?.metrics?.news?.impact ?? layer12?.metrics?.newsImpactScore) ??
-      toNumberOrNull(layer12?.score);
+      toNumberOrNull(layer14?.metrics?.news?.impact ?? layer14?.metrics?.newsImpactScore) ??
+      toNumberOrNull(layer14?.score);
     const entryContext = {
-      generatedAt,
-      direction: rawSignal?.direction || null,
+      ...rawSignal.components.entryContext,
       timeframe:
         layer2?.metrics?.timeframeFocus ||
         layer1?.metrics?.timeframeFocus ||
@@ -339,86 +499,33 @@ export const attachLayeredAnalysisToSignal = ({
         : 'High-impact news event detected',
     ].filter(Boolean);
     rawSignal.components.invalidationRules = invalidationRules;
-  } catch (_error) {
-    // best-effort
+  } catch (error) {
+    // best-effort; never block trading/analysis, but do surface why layers are missing.
+    rawSignal.components.layeredAnalysis = rawSignal.components.layeredAnalysis || { layers: [] };
+    rawSignal.components.layeredAnalysisError = {
+      message: error?.message || 'layered analysis unavailable',
+      name: error?.name || null,
+      at: 'attachLayeredAnalysisToSignal',
+    };
   }
 
   return rawSignal;
-};
-
-const evaluateStrongOverride = ({
-  allowStrongOverride,
-  signal,
-  decisionStateFallback,
-  gateOk = false,
-} = {}) => {
-  if (!allowStrongOverride || gateOk) {
-    return { ok: false, reason: null };
-  }
-  const direction = String(signal?.direction || '').toUpperCase();
-  if (direction !== 'BUY' && direction !== 'SELL') {
-    return { ok: false, reason: 'direction_neutral' };
-  }
-  const decisionState = String(
-    signal?.isValid?.decision?.state || decisionStateFallback || ''
-  ).toUpperCase();
-  if (decisionState !== 'ENTER') {
-    return { ok: false, reason: 'decision_not_enter' };
-  }
-  if (signal?.isValid?.isValid !== true) {
-    return { ok: false, reason: 'trade_invalid' };
-  }
-  const confidence = Number(signal?.confidence);
-  const strength = Number(signal?.strength);
-  if (!Number.isFinite(confidence) || !Number.isFinite(strength)) {
-    return { ok: false, reason: 'missing_strength' };
-  }
-  const minConfidence = Number(process.env.EA_SIGNAL_STRONG_OVERRIDE_MIN_CONFIDENCE);
-  const minStrength = Number(process.env.EA_SIGNAL_STRONG_OVERRIDE_MIN_STRENGTH);
-  const confFloor = Number.isFinite(minConfidence) ? minConfidence : 85;
-  const strengthFloor = Number.isFinite(minStrength) ? minStrength : 70;
-  if (confidence < confFloor || strength < strengthFloor) {
-    return { ok: false, reason: 'below_strong_floor' };
-  }
-  const entry = signal?.entry || {};
-  const entryPrice = Number(entry?.price ?? signal?.entryPrice);
-  const stopLoss = Number(entry?.stopLoss ?? signal?.stopLoss);
-  const takeProfit = Number(entry?.takeProfit ?? signal?.takeProfit);
-  if (!Number.isFinite(entryPrice) || !Number.isFinite(stopLoss) || !Number.isFinite(takeProfit)) {
-    return { ok: false, reason: 'missing_entry_levels' };
-  }
-  return { ok: true, reason: 'strong_override' };
 };
 
 export const evaluateLayers18Readiness = ({
   layeredAnalysis,
   minConfluence,
   decisionStateFallback,
-  allowStrongOverride = false,
+  allowStrongOverride: _allowStrongOverride = false,
   signal,
 } = {}) => {
   const min = Number.isFinite(Number(minConfluence)) ? Number(minConfluence) : 60;
   const layers = Array.isArray(layeredAnalysis?.layers) ? layeredAnalysis.layers : [];
 
-  if (layers.length !== 18) {
-    const strongOverride = evaluateStrongOverride({
-      allowStrongOverride,
-      signal,
-      decisionStateFallback,
-    });
-    return {
-      ok: strongOverride.ok,
-      layersCount: layers.length,
-      layer16Pass: false,
-      layer17Ok: false,
-      layer18State: decisionStateFallback ? String(decisionStateFallback).toUpperCase() : 'UNKNOWN',
-      strongOverride,
-    };
-  }
-
-  const layer16 = layers.find((l) => String(l?.key || '') === 'L16') || null;
-  const layer17 = layers.find((l) => String(l?.key || '') === 'L17') || null;
-  const layer18 = layers.find((l) => String(l?.key || '') === 'L18') || null;
+  const layer16 = layers.find((l) => String(l?.key || '').toUpperCase() === 'L16') || null;
+  const layer17 = layers.find((l) => String(l?.key || '').toUpperCase() === 'L17') || null;
+  const layer18 = layers.find((l) => String(l?.key || '').toUpperCase() === 'L18') || null;
+  const layer20 = layers.find((l) => String(l?.key || '').toUpperCase() === 'L20') || null;
 
   const layer16Pass =
     Boolean(layer16?.metrics?.isTradeValid) ||
@@ -427,24 +534,31 @@ export const evaluateLayers18Readiness = ({
   const layer17Conf = Number(layer17?.confidence);
   const layer17Ok = Number.isFinite(layer17Conf) ? layer17Conf >= min : false;
 
-  const layer18State = String(
-    layer18?.metrics?.decision?.state || decisionStateFallback || ''
+  const layer18Verdict = String(layer18?.metrics?.verdict || '').toUpperCase();
+  const layer18Pass = layer18Verdict === 'PASS';
+
+  const layer20State = String(
+    layer20?.metrics?.decision?.state ||
+      decisionStateFallback ||
+      signal?.finalDecision?.state ||
+      signal?.isValid?.decision?.state ||
+      ''
   ).toUpperCase();
 
-  const ok = layer16Pass && layer17Ok && layer18State === 'ENTER';
-  const strongOverride = evaluateStrongOverride({
-    allowStrongOverride,
-    signal,
-    decisionStateFallback: layer18State,
-    gateOk: ok,
-  });
+  // Canonical semantics:
+  // - L16: risk/execution feasibility (must PASS)
+  // - L17: confluence threshold (must PASS)
+  // - L18: validation gate (PASS/BLOCK)
+  // - L20: the only decision maker (ENTER/WAIT/BLOCK)
+  const ok = layer16Pass && layer17Ok && layer18Pass && layer20State === 'ENTER';
 
   return {
-    ok: ok || strongOverride.ok,
+    ok,
     layersCount: layers.length,
     layer16Pass,
     layer17Ok,
-    layer18State,
-    strongOverride,
+    layer18Verdict: layer18Verdict || null,
+    layer18Pass,
+    layer20State: layer20State || null,
   };
 };

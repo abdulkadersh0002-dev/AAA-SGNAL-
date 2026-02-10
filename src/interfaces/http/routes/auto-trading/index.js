@@ -12,17 +12,29 @@ export default function autoTradingRoutes({
 }) {
   const router = Router();
 
+  const normalizeMiddleware = (mw) => {
+    if (!mw) {
+      return [];
+    }
+    if (Array.isArray(mw)) {
+      return mw;
+    }
+    if (typeof mw === 'function') {
+      return [mw];
+    }
+    return [];
+  };
+
+  const basicReadMiddleware = normalizeMiddleware(requireBasicRead);
+  const automationControlMiddleware = normalizeMiddleware(requireAutomationControl);
+
   const forcedBroker = tradeManager?.normalizeBrokerId?.(process.env.AUTO_TRADING_FORCE_BROKER);
 
   // Read-only diagnostics for validating EA connectivity and auto-trading gating.
   // Useful to explain why an ENTER did/didn't execute without hunting logs.
   router.get(
     '/auto-trading/readiness',
-    ...(Array.isArray(requireBasicRead)
-      ? requireBasicRead
-      : Array.isArray(requireAutomationControl)
-        ? requireAutomationControl
-        : []),
+    ...(basicReadMiddleware.length > 0 ? basicReadMiddleware : automationControlMiddleware),
     async (req, res) => {
       try {
         const now = Date.now();

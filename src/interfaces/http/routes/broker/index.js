@@ -239,5 +239,44 @@ export default function brokerRoutes({
     }
   });
 
+  const circuitResetSchema = z
+    .object({
+      broker: z.string().min(1).max(20).optional(),
+      all: z.coerce.boolean().optional(),
+    })
+    .strict();
+
+  router.post('/broker/circuit/reset', requireBrokerWrite, (req, res) => {
+    if (!config.brokerRouting?.enabled) {
+      return serviceUnavailable(res, 'Broker routing disabled');
+    }
+
+    try {
+      const parsed = parseRequestBody(circuitResetSchema, req, res, {
+        errorMessage: 'Invalid circuit reset payload',
+      });
+      if (!parsed) {
+        return null;
+      }
+
+      const broker = (parsed.broker || '').trim().toLowerCase();
+      const resetAll = Boolean(parsed.all) || !broker;
+
+      const result = resetAll ? brokerRouter.resetAllBreakers() : brokerRouter.resetBreaker(broker);
+      void auditLogger.record('broker.circuit_reset', {
+        actor: req.identity?.id || 'unknown',
+        broker: resetAll ? 'all' : broker,
+      });
+
+      return ok(res, { result });
+    } catch (error) {
+      if (error.code === 'INVALID_BROKER_ID') {
+        return badRequest(res, error.message);
+      }
+      logger.error({ err: error }, 'Circuit reset failed');
+      return serverError(res, error);
+    }
+  });
+
   return router;
 }

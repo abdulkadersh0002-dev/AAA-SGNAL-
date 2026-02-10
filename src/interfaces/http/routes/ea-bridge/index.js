@@ -33,6 +33,46 @@ export default function eaBridgeRoutes({
 }) {
   const router = Router();
 
+  const isEaBridgePollLoggingEnabled = () => {
+    return readEnvBool('EA_BRIDGE_LOG_POLLING', false) === true;
+  };
+
+  const maskAccount = (accountNumber) => {
+    const raw = accountNumber == null ? '' : String(accountNumber).trim();
+    if (!raw) {
+      return null;
+    }
+    if (raw.length <= 4) {
+      return `***${raw}`;
+    }
+    return `***${raw.slice(-4)}`;
+  };
+
+  let pollLogCounter = 0;
+  const shouldLogPoll = () => {
+    if (!isEaBridgePollLoggingEnabled()) {
+      return false;
+    }
+    const every = readEnvNumber('EA_BRIDGE_LOG_POLLING_EVERY', 1);
+    const n = Number.isFinite(every) ? Math.max(1, Math.trunc(every)) : 1;
+    pollLogCounter = (pollLogCounter + 1) % 1_000_000;
+    return pollLogCounter % n === 0;
+  };
+
+  const writePollConsole = (event, meta) => {
+    if (!isEaBridgePollLoggingEnabled()) {
+      return;
+    }
+    try {
+      const payload = meta && typeof meta === 'object' ? meta : { value: meta };
+      process.stdout.write(
+        `${new Date().toISOString()} [EA_BRIDGE_POLL] ${event} ${JSON.stringify(payload)}\n`
+      );
+    } catch (_error) {
+      // best-effort
+    }
+  };
+
   const buildServerPolicy = (broker) => {
     const engineConfig = _tradingEngine?.config || {};
     const autoTradingConfig = engineConfig.autoTrading || {};
@@ -48,8 +88,6 @@ export default function eaBridgeRoutes({
     const requireLayers18 = tradeManager?.realtimeRequireLayers18 ?? true;
 
     const allowWaitMonitorExecution = readEnvBool('EA_SIGNAL_ALLOW_WAIT_MONITOR', false) === true;
-    const overrideMinConfidence = readEnvNumber('EA_SIGNAL_STRONG_OVERRIDE_MIN_CONFIDENCE', null);
-    const overrideMinStrength = readEnvNumber('EA_SIGNAL_STRONG_OVERRIDE_MIN_STRENGTH', null);
 
     const dynamicTrailingEnabled = readEnvBool('EA_DYNAMIC_TRAILING_ENABLED', false) === true;
     const partialCloseEnabled = readEnvBool('EA_PARTIAL_CLOSE_ENABLED', false) === true;
@@ -112,9 +150,9 @@ export default function eaBridgeRoutes({
         requireLayers18,
         allowWaitMonitorExecution,
         strongOverride: {
-          enabled: overrideMinConfidence != null || overrideMinStrength != null,
-          minConfidence: overrideMinConfidence,
-          minStrength: overrideMinStrength,
+          enabled: false,
+          minConfidence: null,
+          minStrength: null,
         },
         assetClasses: tradeManager?.autoTradingAssetClasses
           ? Array.from(tradeManager.autoTradingAssetClasses)
@@ -298,8 +336,29 @@ export default function eaBridgeRoutes({
           const brokers = ['mt4', 'mt5'];
           for (const broker of brokers) {
             const allSymbols = (() => {
-              // Prefer an explicit symbol listing when available (includes bars/snapshots),
-              // so scanning keeps working even if quotes pause temporarily.
+              // Prefer symbols that actually have fresh quotes first.
+              // This prevents "scan looks active" while the dashboard stays empty
+              // (common when the EA registers a large symbol universe but only streams
+              // quotes for a subset).
+              const quoteList = eaBridgeService?.getQuotes
+                ? eaBridgeService.getQuotes({
+                    broker,
+                    maxAgeMs: 5 * 60 * 1000,
+                    orderBy: 'symbol',
+                  })
+                : [];
+
+              const quoteSymbols = (Array.isArray(quoteList) ? quoteList : [])
+                .map((q) =>
+                  String(q?.symbol || q?.pair || '')
+                    .trim()
+                    .toUpperCase()
+                )
+                .filter(Boolean)
+                .filter((s) => isAllowedScanSymbol(broker, s));
+
+              // Augment/fallback: merge in known symbols (bars/snapshots/universe).
+              // Keep quotes first so the batch always contains symbols we can actually price.
               if (typeof eaBridgeService?.listKnownSymbols === 'function') {
                 const maxAgeMs = Number(process.env.EA_SCAN_SYMBOL_MAX_AGE_MS);
                 const envMaxSymbols = Number(process.env.EA_SCAN_SYMBOLS_MAX);
@@ -309,12 +368,13 @@ export default function eaBridgeRoutes({
                   : fullScanPreferredMax != null
                     ? fullScanPreferredMax
                     : scanBatchSize * 8;
+
                 const symbols = eaBridgeService.listKnownSymbols({
                   broker,
                   maxAgeMs: Number.isFinite(maxAgeMs) ? Math.max(0, maxAgeMs) : 30 * 60 * 1000,
                   max: maxSymbols,
                 });
-                const normalized = (Array.isArray(symbols) ? symbols : [])
+                const knownSymbols = (Array.isArray(symbols) ? symbols : [])
                   .map((s) =>
                     String(s || '')
                       .trim()
@@ -322,26 +382,27 @@ export default function eaBridgeRoutes({
                   )
                   .filter(Boolean)
                   .filter((s) => isAllowedScanSymbol(broker, s));
-                if (normalized.length > 0) {
-                  return normalized;
+
+                if (knownSymbols.length > 0) {
+                  const merged = [];
+                  const seen = new Set();
+                  for (const s of quoteSymbols) {
+                    if (!seen.has(s)) {
+                      seen.add(s);
+                      merged.push(s);
+                    }
+                  }
+                  for (const s of knownSymbols) {
+                    if (!seen.has(s)) {
+                      seen.add(s);
+                      merged.push(s);
+                    }
+                  }
+                  return merged;
                 }
               }
 
-              const quotes = eaBridgeService?.getQuotes
-                ? eaBridgeService.getQuotes({
-                    broker,
-                    maxAgeMs: 5 * 60 * 1000,
-                    orderBy: 'symbol',
-                  })
-                : [];
-              return (Array.isArray(quotes) ? quotes : [])
-                .map((q) =>
-                  String(q?.symbol || q?.pair || '')
-                    .trim()
-                    .toUpperCase()
-                )
-                .filter(Boolean)
-                .filter((s) => isAllowedScanSymbol(broker, s));
+              return quoteSymbols;
             })();
 
             const total = allSymbols.length;
@@ -531,6 +592,13 @@ export default function eaBridgeRoutes({
       };
 
       const result = eaBridgeService.handleHeartbeat(payload);
+      if (shouldLogPoll()) {
+        writePollConsole('/agent/heartbeat', {
+          broker,
+          accountMode: payload?.accountMode || null,
+          accountNumber: maskAccount(payload?.accountNumber),
+        });
+      }
 
       return ok(res, { ...result, serverPolicy: buildServerPolicy(broker) });
     } catch (error) {
@@ -581,6 +649,22 @@ export default function eaBridgeRoutes({
       const broker = req.params.broker;
       const limit = Number.isFinite(Number(req.query.limit)) ? Number(req.query.limit) : 20;
       const result = eaBridgeService.drainManagementCommands({ broker, limit });
+
+      if (shouldLogPoll()) {
+        const drained = Array.isArray(result?.commands) ? result.commands.length : null;
+        writePollConsole('/agent/commands', { broker, limit, drained });
+        logger.info(
+          {
+            broker,
+            limit,
+            drained,
+            ip: req.ip,
+            ua: req.headers['user-agent'],
+          },
+          'EA poll: /agent/commands'
+        );
+      }
+
       return ok(res, { ...result, serverPolicy: buildServerPolicy(broker) });
     } catch (error) {
       logger.error({ err: error }, 'EA commands poll failed');
@@ -601,6 +685,26 @@ export default function eaBridgeRoutes({
       // operators can see the EA-reported settings.
       const sessions = eaBridgeService.getActiveSessions?.() || [];
       const session = sessions.find((s) => s?.broker === broker) || null;
+
+      if (shouldLogPoll()) {
+        writePollConsole('/agent/config', {
+          broker,
+          account: maskAccount(session?.accountNumber),
+          accountMode: session?.accountMode || null,
+          lastHeartbeat: session?.lastHeartbeat || null,
+        });
+        logger.info(
+          {
+            broker,
+            account: maskAccount(session?.accountNumber),
+            accountMode: session?.accountMode || null,
+            lastHeartbeat: session?.lastHeartbeat || null,
+            ip: req.ip,
+            ua: req.headers['user-agent'],
+          },
+          'EA poll: /agent/config'
+        );
+      }
 
       return ok(res, {
         broker,
@@ -638,6 +742,17 @@ export default function eaBridgeRoutes({
       };
 
       const result = await eaBridgeService.handleTransaction(payload);
+
+      if (shouldLogPoll()) {
+        writePollConsole('/agent/transaction', {
+          broker,
+          type: payload?.type || null,
+          symbol: payload?.symbol || payload?.pair || null,
+          ticket: payload?.ticket || null,
+          price: payload?.price || payload?.entryPrice || null,
+          profit: payload?.profit || null,
+        });
+      }
 
       void auditLogger?.record('ea.transaction', {
         broker,
@@ -742,6 +857,20 @@ export default function eaBridgeRoutes({
       const result = eaBridgeService?.recordSymbols
         ? eaBridgeService.recordSymbols({ broker, symbols })
         : { success: false, message: 'Symbol registry not supported' };
+      if (shouldLogPoll()) {
+        const normalizedSymbols = symbols
+          .map((s) =>
+            String(s || '')
+              .trim()
+              .toUpperCase()
+          )
+          .filter(Boolean);
+        writePollConsole('/market/symbols', {
+          broker,
+          count: normalizedSymbols.length,
+          sample: normalizedSymbols.slice(0, 6),
+        });
+      }
 
       void auditLogger?.record('ea.market.symbols.register', {
         broker,
@@ -893,24 +1022,40 @@ export default function eaBridgeRoutes({
     async (req, res) => {
       try {
         const broker = req.params.broker;
-        const symbol =
-          req.body?.symbol || req.body?.pair || req.query.symbol || req.query.pair || null;
-        if (!symbol) {
-          return badRequest(res, { message: 'symbol is required' });
-        }
+        const requestedSymbol =
+          req.body?.symbol || req.body?.pair || req.query?.symbol || req.query?.pair;
+        const ttlMs = req.body?.ttlMs ?? req.query?.ttlMs;
 
         const result = eaBridgeService.requestMarketSnapshot({
           broker,
-          symbol,
-          ttlMs: req.body?.ttlMs,
+          symbol: requestedSymbol,
+          ttlMs,
         });
+
+        // Best-effort: immediately ingest for realtime signal generation.
+        try {
+          const resolved = String(result?.symbol || requestedSymbol || '')
+            .trim()
+            .toUpperCase();
+          if (resolved && isAllowedScanSymbol(broker, resolved)) {
+            realtimeSignalRunner?.ingestSymbols?.({ broker, symbols: [resolved] });
+          }
+        } catch (_error) {
+          // best-effort
+        }
 
         void auditLogger?.record('ea.market.snapshot.request', {
           broker,
-          symbol,
+          symbol: requestedSymbol || null,
+          resolvedSymbol: result?.symbol || null,
+          success: result?.success ?? null,
+          message: result?.message || null,
         });
 
-        return ok(res, result);
+        if (result?.success === false) {
+          return res.status(400).json({ ...result, timestamp: Date.now() });
+        }
+        return ok(res, { ...result, timestamp: Date.now() });
       } catch (error) {
         logger.error({ err: error }, 'EA market snapshot request failed');
         return serverError(res, error);
@@ -919,23 +1064,6 @@ export default function eaBridgeRoutes({
   );
 
   /**
-   * GET /api/broker/bridge/:broker/market/snapshot/requests
-   * EA polls for pending on-demand snapshot requests.
-   */
-  router.get('/broker/bridge/:broker/market/snapshot/requests', async (req, res) => {
-    try {
-      const broker = req.params.broker;
-      const max = req.query.max;
-      const symbols = eaBridgeService.consumeMarketSnapshotRequests({ broker, max });
-      return ok(res, { broker, symbols, count: symbols.length, timestamp: Date.now() });
-    } catch (error) {
-      logger.error({ err: error }, 'EA market snapshot request polling failed');
-      return serverError(res, error);
-    }
-  });
-
-  /**
-   * POST /api/broker/bridge/:broker/market/active-symbols
    * Dashboard tells the server which symbols are currently selected/visible.
    */
   router.post(
@@ -994,6 +1122,112 @@ export default function eaBridgeRoutes({
       return ok(res, { broker, symbols, count: symbols.length, timestamp: Date.now() });
     } catch (error) {
       logger.error({ err: error }, 'EA active symbols retrieval failed');
+      return serverError(res, error);
+    }
+  });
+
+  /**
+   * GET /api/broker/bridge/:broker/realtime/symbol-hints
+   * Returns symbols that the server is currently scanning / ranking (dashboard candidates).
+   * MT4/MT5 EAs can use this to auto-subscribe symbols so ticks/snapshots arrive for the
+   * right pairs without the operator manually selecting them.
+   */
+  router.get('/broker/bridge/:broker/realtime/symbol-hints', async (req, res) => {
+    try {
+      const broker = req.params.broker;
+      const cap = req.query?.max != null ? Number(req.query.max) : 40;
+      const max = Number.isFinite(cap) ? Math.max(0, Math.min(200, Math.trunc(cap))) : 40;
+
+      const stats = realtimeSignalRunner?.getDashboardStats?.() || null;
+      const hotRaw = Array.isArray(stats?.hotSymbols) ? stats.hotSymbols : [];
+      const debugTop = Array.isArray(stats?.debugTop) ? stats.debugTop : [];
+
+      // Prefer truly executable symbols first (server-approved shouldExecute=true), then regular signals,
+      // then candidates. Keep recency within each bucket.
+      const kindPriority = {
+        executable: 0,
+        signal: 1,
+        candidate: 2,
+        other: 3,
+      };
+
+      const hot = [...hotRaw].sort((a, b) => {
+        const pa = kindPriority[String(a?.kind || 'other')] ?? 3;
+        const pb = kindPriority[String(b?.kind || 'other')] ?? 3;
+        if (pa !== pb) {
+          return pa - pb;
+        }
+        const ta = Number(a?.ts || 0);
+        const tb = Number(b?.ts || 0);
+        return tb - ta;
+      });
+
+      const picked = [];
+      const seen = new Set();
+
+      for (const item of hot) {
+        const symbol = String(item?.symbol || '')
+          .trim()
+          .toUpperCase();
+        if (!symbol) {
+          continue;
+        }
+        if (seen.has(symbol)) {
+          continue;
+        }
+        seen.add(symbol);
+        picked.push(symbol);
+        if (max > 0 && picked.length >= max) {
+          break;
+        }
+      }
+
+      if (max <= 0 || picked.length < max) {
+        for (const item of debugTop) {
+          const symbol = String(item?.symbol || item?.pair || '')
+            .trim()
+            .toUpperCase();
+          if (!symbol) {
+            continue;
+          }
+          if (seen.has(symbol)) {
+            continue;
+          }
+          seen.add(symbol);
+          picked.push(symbol);
+          if (max > 0 && picked.length >= max) {
+            break;
+          }
+        }
+      }
+
+      return ok(res, {
+        broker,
+        symbols: picked,
+        count: picked.length,
+        source: 'realtimeSignals.hotSymbols+debugTop',
+        timestamp: Date.now(),
+      });
+    } catch (error) {
+      logger.error({ err: error }, 'EA realtime symbol-hints retrieval failed');
+      return serverError(res, error);
+    }
+  });
+
+  /**
+   * GET /api/broker/bridge/:broker/market/snapshot/requests
+   * EA polls for pending snapshot jobs (requested by the server/dashboard).
+   */
+  router.get('/broker/bridge/:broker/market/snapshot/requests', async (req, res) => {
+    try {
+      const broker = req.params.broker;
+      const max = req.query.max;
+      const symbols = eaBridgeService?.consumeMarketSnapshotRequests
+        ? eaBridgeService.consumeMarketSnapshotRequests({ broker, max })
+        : [];
+      return ok(res, { broker, symbols, count: symbols.length, timestamp: Date.now() });
+    } catch (error) {
+      logger.error({ err: error }, 'EA snapshot requests poll failed');
       return serverError(res, error);
     }
   });
@@ -1272,6 +1506,47 @@ export default function eaBridgeRoutes({
 
       const result = await eaBridgeService.getSignalForExecution(payload);
 
+      if (shouldLogPoll()) {
+        const summary = {
+          broker,
+          symbol: String(payload.symbol || '')
+            .trim()
+            .toUpperCase(),
+          accountMode: payload.accountMode || null,
+          success: result?.success ?? null,
+          state: result?.signal?.state ?? result?.state ?? null,
+          shouldExecute: result?.signal?.shouldExecute ?? result?.shouldExecute ?? null,
+          direction: result?.signal?.direction ?? result?.direction ?? null,
+          confidence: result?.signal?.confidence ?? result?.confidence ?? null,
+          strength: result?.signal?.strength ?? result?.strength ?? null,
+          intelligentConfidence:
+            result?.signal?.intelligentEvaluation?.confidence ??
+            result?.intelligentEvaluation?.confidence ??
+            null,
+          intelligentShouldOpen:
+            result?.signal?.intelligentEvaluation?.shouldOpen ??
+            result?.intelligentEvaluation?.shouldOpen ??
+            null,
+          ip: req.ip,
+          ua: req.headers['user-agent'],
+        };
+
+        const approved = summary.shouldExecute === true;
+        writePollConsole(approved ? '/signal/get APPROVED' : '/signal/get', {
+          broker: summary.broker,
+          symbol: summary.symbol,
+          accountMode: summary.accountMode,
+          success: summary.success,
+          state: summary.state,
+          shouldExecute: summary.shouldExecute,
+          confidence: summary.confidence,
+          strength: summary.strength,
+          intelligentConfidence: summary.intelligentConfidence,
+          intelligentShouldOpen: summary.intelligentShouldOpen,
+        });
+        logger.info(summary, approved ? 'EA poll: /signal/get (APPROVED)' : 'EA poll: /signal/get');
+      }
+
       // Avoid ok() here because ok() always forces success=true; the EA relies on success.
       return res.status(200).json({ ...result, broker, timestamp: Date.now() });
     } catch (error) {
@@ -1297,7 +1572,10 @@ export default function eaBridgeRoutes({
         return badRequest(res, 'Symbol is required');
       }
 
-      const result = await eaBridgeService.getAnalysisSnapshot(payload);
+      const result =
+        typeof eaBridgeService?.getSmartSignalSnapshot === 'function'
+          ? await eaBridgeService.getSmartSignalSnapshot(payload)
+          : await eaBridgeService.getAnalysisSnapshot(payload);
 
       const requestedTimeframe =
         typeof req.query.timeframe === 'string' && req.query.timeframe.trim()

@@ -9,7 +9,7 @@ import { createApiAuthMiddleware } from './middleware/api-auth.js';
 import { createRateLimiter } from './middleware/rate-limit.js';
 import { requestIdMiddleware } from './middleware/request-id.js';
 import { createErrorHandler } from './middleware/error-handler.js';
-import { appConfig } from '../../app/config.js';
+import { buildAppConfig } from '../../app/config.js';
 import healthRoutes from './routes/health/index.js';
 import tradingRoutes from './routes/trading/index.js';
 import autoTradingRoutes from './routes/auto-trading/index.js';
@@ -35,6 +35,7 @@ export function createHttpApp({
   providerAvailabilityState,
   runtimeSummary,
 }) {
+  const appConfig = buildAppConfig(process.env);
   const app = express();
 
   const {

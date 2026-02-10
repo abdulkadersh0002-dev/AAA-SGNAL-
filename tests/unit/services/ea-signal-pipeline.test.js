@@ -23,9 +23,18 @@ describe('EA signal pipeline layered context', () => {
     assert.ok(result.components.expectedMarketBehavior);
     assert.ok(Array.isArray(result.components.invalidationRules));
     assert.ok(result.components.invalidationRules.length > 0);
+
+    assert.ok(result.components.layeredAnalysis);
+    assert.ok(Array.isArray(result.components.layeredAnalysis.layers));
+    assert.equal(result.components.layeredAnalysis.layers.length, 20);
+    assert.ok(
+      result.components.layeredAnalysis.layers.some(
+        (layer) => String(layer?.key || '').toUpperCase() === 'L20'
+      )
+    );
   });
 
-  it('allows strong override when layers are missing but signal is strong', () => {
+  it('blocks execution readiness when layers are missing (no overrides)', () => {
     const result = evaluateLayers18Readiness({
       layeredAnalysis: { layers: [] },
       minConfluence: 60,
@@ -40,13 +49,20 @@ describe('EA signal pipeline layered context', () => {
       },
     });
 
-    assert.equal(result.ok, true);
-    assert.equal(result.strongOverride?.ok, true);
+    assert.equal(result.ok, false);
+    assert.equal(result.strongOverride, undefined);
   });
 
-  it('blocks strong override when validation fails', () => {
+  it('returns ok only when L16 PASS + L17>=min + L18 PASS + L20 ENTER', () => {
     const result = evaluateLayers18Readiness({
-      layeredAnalysis: { layers: [] },
+      layeredAnalysis: {
+        layers: [
+          { key: 'L16', metrics: { verdict: 'PASS' } },
+          { key: 'L17', confidence: 72, metrics: { confluenceWeighting: { weightedScore: 72 } } },
+          { key: 'L18', metrics: { verdict: 'PASS' } },
+          { key: 'L20', metrics: { decision: { state: 'ENTER' } } },
+        ],
+      },
       minConfluence: 60,
       decisionStateFallback: 'ENTER',
       allowStrongOverride: false,
@@ -59,18 +75,23 @@ describe('EA signal pipeline layered context', () => {
       },
     });
 
-    assert.equal(result.ok, false);
-    assert.equal(result.strongOverride?.ok, false);
+    assert.equal(result.ok, true);
+    assert.equal(result.layer16Pass, true);
+    assert.equal(result.layer17Ok, true);
+    assert.equal(result.layer18Pass, true);
+    assert.equal(result.layer20State, 'ENTER');
+    assert.equal(result.strongOverride, undefined);
   });
 
-  it('allows strong override when layers exist but fail readiness', () => {
+  it('blocks execution readiness when L18 is not PASS (gate blocks)', () => {
     const result = evaluateLayers18Readiness({
       layeredAnalysis: {
-        layers: Array.from({ length: 18 }).map((_, index) => ({
-          key: `L${index + 1}`,
-          confidence: index === 16 ? 35 : 0,
-          metrics: index === 15 ? { verdict: 'FAIL' } : {},
-        })),
+        layers: [
+          { key: 'L16', metrics: { verdict: 'PASS' } },
+          { key: 'L17', confidence: 90, metrics: { confluenceWeighting: { weightedScore: 90 } } },
+          { key: 'L18', metrics: { verdict: 'BLOCK' } },
+          { key: 'L20', metrics: { decision: { state: 'ENTER' } } },
+        ],
       },
       minConfluence: 60,
       decisionStateFallback: 'ENTER',
@@ -84,7 +105,9 @@ describe('EA signal pipeline layered context', () => {
       },
     });
 
-    assert.equal(result.ok, true);
-    assert.equal(result.strongOverride?.ok, true);
+    assert.equal(result.ok, false);
+    assert.equal(result.layer18Pass, false);
+    assert.equal(result.layer20State, 'ENTER');
+    assert.equal(result.strongOverride, undefined);
   });
 });

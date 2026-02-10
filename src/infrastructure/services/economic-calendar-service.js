@@ -183,13 +183,8 @@ class EconomicCalendarService {
     // Common FF forms include "All Day" or empty time.
     const timePart = !time || /all\s*day/i.test(time) ? '00:00' : time;
 
-    // Try a few reasonable interpretations. Provider time zone can vary, but ISO is required.
-    const candidates = [
-      `${date} ${timePart} UTC`,
-      `${date} ${timePart} GMT`,
-      `${date} ${timePart}`,
-      date,
-    ];
+    // Enforce UTC-only parsing to avoid local-time drift across machines.
+    const candidates = [`${date} ${timePart} UTC`, `${date} ${timePart} GMT`];
 
     for (const candidate of candidates) {
       const ts = Date.parse(candidate);
@@ -197,6 +192,13 @@ class EconomicCalendarService {
         return new Date(ts).toISOString();
       }
     }
+
+    // If the date is already ISO with timezone, accept it; otherwise reject.
+    const parsedIso = Date.parse(date);
+    if (Number.isFinite(parsedIso) && /Z|[+-]\d{2}:?\d{2}$/i.test(date)) {
+      return new Date(parsedIso).toISOString();
+    }
+
     return null;
   }
 

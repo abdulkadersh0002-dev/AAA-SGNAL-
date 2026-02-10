@@ -64,6 +64,7 @@ export class RealtimeEaSignalRunner {
       lastScanSymbols: 0,
       lastSignalAt: null,
       lastCandidateAt: null,
+      hotSymbols: [],
       publishCounts: {
         signal: 0,
         candidate: 0,
@@ -486,6 +487,31 @@ export class RealtimeEaSignalRunner {
     }
   }
 
+  recordHotSymbol({ broker, symbol, event, kind: kindOverride } = {}) {
+    const sym = String(symbol || '')
+      .trim()
+      .toUpperCase();
+    if (!sym) {
+      return;
+    }
+
+    const kind =
+      kindOverride ||
+      (event === 'signal' ? 'signal' : event === 'signal_candidate' ? 'candidate' : 'other');
+    const list = Array.isArray(this.dashboardStats.hotSymbols)
+      ? [...this.dashboardStats.hotSymbols]
+      : [];
+
+    const now = Date.now();
+    const next = [
+      { ts: now, broker: broker || null, symbol: sym, kind },
+      ...list.filter((x) => x?.symbol !== sym),
+    ];
+
+    // Keep the list compact.
+    this.dashboardStats.hotSymbols = next.slice(0, 60);
+  }
+
   recordReject(reason, context) {
     const key = String(reason || 'unknown');
     const bucket = this.dashboardStats.rejectCounts || {};
@@ -541,6 +567,9 @@ export class RealtimeEaSignalRunner {
         : [],
       debugTop: Array.isArray(this.dashboardStats.debugTop)
         ? [...this.dashboardStats.debugTop]
+        : [],
+      hotSymbols: Array.isArray(this.dashboardStats.hotSymbols)
+        ? [...this.dashboardStats.hotSymbols]
         : [],
     };
   }
@@ -785,7 +814,23 @@ export class RealtimeEaSignalRunner {
         if (!this.isSupportedSymbol(symbol)) {
           continue;
         }
-        await this.maybeGenerateSignal({ broker, symbol, ctx });
+        try {
+          await this.maybeGenerateSignal({ broker, symbol, ctx });
+        } catch (error) {
+          this.recordReject('flush_symbol_error', {
+            broker,
+            symbol,
+            message: error?.message || null,
+          });
+          try {
+            this.logger?.warn?.(
+              { module: 'RealtimeEaSignalRunner', broker, symbol, err: error },
+              'Realtime flush failed for symbol'
+            );
+          } catch (_logError) {
+            // best-effort
+          }
+        }
       }
     }
 
@@ -1068,15 +1113,25 @@ export class RealtimeEaSignalRunner {
 
     // Attach the canonical 18-layer analysis for dashboard visibility.
     // Best-effort: never throw.
-    attachLayeredAnalysisToSignal({
-      rawSignal,
-      broker,
-      symbol,
-      eaBridgeService: this.eaBridgeService,
-      quoteMaxAgeMs: this.quoteMaxAgeMs,
-      barFallback,
-      now,
-    });
+    try {
+      attachLayeredAnalysisToSignal({
+        rawSignal,
+        broker,
+        symbol,
+        eaBridgeService: this.eaBridgeService,
+        quoteMaxAgeMs: this.quoteMaxAgeMs,
+        barFallback,
+        now,
+      });
+    } catch (error) {
+      this.recordReject('attach_layers_error', {
+        broker,
+        symbol,
+        message: error?.message || null,
+      });
+      this.lastGeneratedAt.set(key, now);
+      return;
+    }
 
     if (this.smartStrong && this.smartRequireBarsCoverage && this.dashboardRequireBars) {
       const layers = rawSignal?.components?.layeredAnalysis?.layers;
@@ -1184,6 +1239,11 @@ export class RealtimeEaSignalRunner {
     const actionableState = decisionState === 'ENTER' || allowWaitState;
     const tier = isStrong ? 'strong' : isNearStrong ? 'near' : null;
 
+    // Canonical semantics:
+    // - 'signal' == entry-ready (ENTER) or lifecycle updates for previously ENTER signals
+    // - 'signal_candidate' == watch/candidate visibility (WAIT_MONITOR, diagnostics)
+    const isEnterDecision = decisionState === 'ENTER';
+
     const requiresEnter = this.dashboardRequireEnter;
     const meetsEnter = !requiresEnter || decisionState === 'ENTER';
     const meetsConfluence =
@@ -1193,15 +1253,14 @@ export class RealtimeEaSignalRunner {
       layeredAnalysis: layered,
       minConfluence: this.dashboardLayers18MinConfluence,
       decisionStateFallback: decisionState,
-      allowStrongOverride: true,
       signal: rawSignal,
     });
     const layers18 = Array.isArray(layered?.layers) ? layered.layers : [];
     const layers18Ready = layersStatus.ok === true;
-    const layers18Override = layersStatus?.strongOverride?.ok === true;
-    const layers18State = String(layersStatus?.layer18State || '').toUpperCase();
+    const layersGateVerdict = String(layersStatus?.layer18Verdict || '').toUpperCase() || null;
+    const layersDecisionState = String(layersStatus?.layer20State || '').toUpperCase() || null;
 
-    const meetsLayers18 = !this.dashboardRequireLayers18 || layers18Ready || layers18Override;
+    const meetsLayers18 = !this.dashboardRequireLayers18 || layers18Ready;
     const meetsTradeValidity = tradeValid === true;
 
     // "Analyzed" candidates: any signal that includes the canonical 18-layer payload.
@@ -1209,11 +1268,9 @@ export class RealtimeEaSignalRunner {
     // Keep it best-effort: allow partial layer sets so the UI can still show diagnostics
     // while bars/snapshots catch up.
     const analyzedReady = Boolean(rawSignal?.components?.layeredAnalysis) && layers18.length > 0;
-    const analyzedComplete = layers18.length === 18;
+    const analyzedComplete = layers18.length >= 20;
 
     const publish = (() => {
-      const strongOverrideWaitReady =
-        layers18Override && allowWaitState && tier === 'strong' && meetsConfluence;
       const canPublishEntryReady =
         directional &&
         decisionState === 'ENTER' &&
@@ -1225,28 +1282,15 @@ export class RealtimeEaSignalRunner {
       const canPublishCandidate = this.dashboardAllowCandidates && analyzedReady;
       const canPublishFallbackCandidate =
         this.dashboardAllowCandidates && directional && actionableState && tier === 'strong';
-      const canPublishStrongOverrideCandidate =
-        analyzedReady &&
-        directional &&
-        tradeValid === true &&
-        tier === 'strong' &&
-        decisionState === 'WAIT_MONITOR' &&
-        layers18Ready === false &&
-        layers18State !== 'ENTER';
 
       if (this.dashboardEntryOnly) {
         // Strict dashboard: keep the primary stream focused on tradeable ENTER.
         // Still allow lifecycle updates for previously published signals (accuracy), and
         // publish analyzed candidates on a separate channel so the UI can explain "why 0".
-        // Strong override WAIT_MONITOR signals are allowed through for visibility.
-        if (canPublishEntryReady || strongOverrideWaitReady || isLifecycleUpdate) {
+        if (canPublishEntryReady || (isLifecycleUpdate && prevMeta?.decisionState === 'ENTER')) {
           return { event: 'signal', keySuffix: '' };
         }
-        if (
-          canPublishCandidate ||
-          canPublishStrongOverrideCandidate ||
-          canPublishFallbackCandidate
-        ) {
+        if (canPublishCandidate || canPublishFallbackCandidate) {
           return { event: 'signal_candidate', keySuffix: ':candidate' };
         }
         return null;
@@ -1256,21 +1300,20 @@ export class RealtimeEaSignalRunner {
       // - Standard: strong/near signals in ENTER (or WAIT_MONITOR if allowed).
       // - Candidates: analyzed payloads (optional).
       // - Lifecycle updates: if we previously published, broadcast state transitions.
-      // - Strong override WAIT_MONITOR signals are allowed for visibility even without full layers.
+      // - Candidates may be published for visibility even when not entry-ready.
       if (
         (directional &&
-          actionableState &&
+          isEnterDecision &&
           tier != null &&
           meetsEnter &&
           meetsConfluence &&
           meetsLayers18 &&
           meetsTradeValidity) ||
-        (strongOverrideWaitReady && directional) ||
-        (directional && isLifecycleUpdate)
+        (directional && isLifecycleUpdate && prevMeta?.decisionState === 'ENTER')
       ) {
         return { event: 'signal', keySuffix: '' };
       }
-      if (canPublishCandidate || canPublishStrongOverrideCandidate || canPublishFallbackCandidate) {
+      if (canPublishCandidate || canPublishFallbackCandidate) {
         return { event: 'signal_candidate', keySuffix: ':candidate' };
       }
       return null;
@@ -1298,7 +1341,7 @@ export class RealtimeEaSignalRunner {
             return 'filtered_confluence_failed';
           }
         }
-        if (this.dashboardRequireLayers18 && !(layers18Ready || layers18Override)) {
+        if (this.dashboardRequireLayers18 && !layers18Ready) {
           return 'filtered_layers18';
         }
         if (!meetsTradeValidity) {
@@ -1328,8 +1371,8 @@ export class RealtimeEaSignalRunner {
           count: layers18.length,
           complete: analyzedComplete,
           ready: layers18Ready,
-          override: layers18Override,
-          layer18State: layers18State || null,
+          layer18Verdict: layersGateVerdict,
+          decisionState: layersDecisionState,
         },
       });
 
@@ -1362,8 +1405,8 @@ export class RealtimeEaSignalRunner {
           },
           layers18: {
             ready: layers18Ready,
-            override: layers18Override,
-            layer18State: layers18State || null,
+            layer18Verdict: layersGateVerdict,
+            decisionState: layersDecisionState,
           },
           filteredBy: rejectReason,
         });
@@ -1397,7 +1440,71 @@ export class RealtimeEaSignalRunner {
       return;
     }
 
-    const dto = validateTradingSignalDTO(createTradingSignalDTO(rawSignal));
+    let dto;
+    try {
+      dto = validateTradingSignalDTO(createTradingSignalDTO(rawSignal));
+    } catch (error) {
+      this.recordReject('dto_validation_error', {
+        broker,
+        symbol,
+        message: error?.message || null,
+      });
+      this.lastGeneratedAt.set(broadcastKey, now);
+      return;
+    }
+
+    // Single smart path (no conflicts): seed snapshot cache + compute executability using the same payload.
+    // Only ENTER signals will be evaluated for execution gates.
+    if (
+      (broadcastEvent === 'signal' || broadcastEvent === 'signal_candidate') &&
+      (broker === 'mt4' || broker === 'mt5') &&
+      typeof this.eaBridgeService?.getSmartSignalSnapshot === 'function'
+    ) {
+      try {
+        const snapshot = await this.eaBridgeService.getSmartSignalSnapshot({
+          broker,
+          symbol: dto?.pair || symbol,
+          accountMode: ctx?.accountMode || null,
+          signal: dto,
+        });
+
+        if (snapshot && snapshot.signal) {
+          dto.shouldExecute = snapshot.shouldExecute === true;
+          dto.execution = snapshot.execution || dto.execution || null;
+
+          // Surface EA-bridge blocking as a decision flag to keep UI consistent.
+          if (dto?.isValid?.decision && typeof dto.isValid.decision === 'object') {
+            const blocked =
+              snapshot?.shouldExecute === false &&
+              (snapshot?.executionMessage === 'Signal is blocked' ||
+                snapshot?.execution?.gates?.blockedReason != null);
+            if (blocked) {
+              dto.isValid.decision.blocked = true;
+            }
+          }
+        }
+      } catch (_error) {
+        // best-effort
+      }
+    } else {
+      // Fallback: still seed analysis snapshot cache for dashboard/EA alignment.
+      try {
+        if (typeof this.eaBridgeService?.cacheAnalysisSnapshot === 'function') {
+          this.eaBridgeService.cacheAnalysisSnapshot({
+            broker,
+            symbol: dto?.pair || symbol,
+            signal: dto,
+            tradeValid: Boolean(dto?.isValid?.isValid),
+            message: Boolean(dto?.isValid?.isValid)
+              ? 'OK'
+              : 'Signal not valid for trading (showing analysis only)',
+            computedAt: now,
+          });
+        }
+      } catch (_error) {
+        // best-effort
+      }
+    }
 
     this.lastGeneratedAt.set(broadcastKey, now);
     this.lastFingerprint.set(broadcastKey, fingerprint);
@@ -1406,12 +1513,32 @@ export class RealtimeEaSignalRunner {
     }
     this.lastPublishedMeta.set(broadcastKey, metaNow);
 
-    this.broadcast(broadcastEvent, dto);
-    this.recordPublish(broadcastEvent);
+    try {
+      if (typeof this.broadcast !== 'function') {
+        this.recordReject('broadcast_unavailable', { broker, symbol, event: broadcastEvent });
+        return;
+      }
+      this.broadcast(broadcastEvent, dto);
+      this.recordHotSymbol({
+        broker,
+        symbol: dto?.pair || symbol,
+        event: broadcastEvent,
+        kind: dto?.shouldExecute === true ? 'executable' : null,
+      });
+      this.recordPublish(broadcastEvent);
+    } catch (error) {
+      this.recordReject('broadcast_error', {
+        broker,
+        symbol,
+        event: broadcastEvent,
+        message: error?.message || null,
+      });
+      return;
+    }
 
     // Local hook for auto-trading execution (server-side).
-    // Never trigger execution on candidate/diagnostic streams.
-    if (broadcastEvent === 'signal' && this.onSignal) {
+    // Only ENTER signals are eligible for execution.
+    if (broadcastEvent === 'signal' && dto?.isValid?.decision?.state === 'ENTER' && this.onSignal) {
       try {
         this.onSignal({ broker, signal: dto });
       } catch (_error) {
