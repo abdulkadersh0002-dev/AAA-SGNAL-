@@ -18,6 +18,7 @@ import {
 } from '../../../core/policy/trading-policy.js';
 import IntelligentTradeManager from './intelligent-trade-manager.js';
 import CacheCoordinator from '../cache/cache-coordinator.js';
+import UnifiedSnapshotManager from '../../../core/engine/unified-snapshot-manager.js';
 
 class EaBridgeService {
   constructor(options = {}) {
@@ -78,6 +79,31 @@ class EaBridgeService {
       ttl: 2500, // 2.5 seconds for analysis snapshots
       maxEntries: 1000,
     });
+
+    // Initialize unified snapshot manager
+    this.snapshotManager = new UnifiedSnapshotManager({
+      logger: this.logger,
+      cacheCoordinator: this.cacheCoordinator,
+      eaBridgeService: this,
+      snapshotTTL: 5000, // 5 seconds
+      maxSnapshots: 200,
+      enableVersioning: true,
+    });
+
+    // Subscribe to snapshot updates for broadcasting
+    if (this.broadcast) {
+      this.snapshotManager.subscribe((event, data) => {
+        if (event === 'update') {
+          this.broadcast('snapshot_update', {
+            broker: data.snapshot.broker,
+            symbol: data.snapshot.symbol,
+            version: data.snapshot.version,
+            layer18Ready: data.snapshot.layer18Ready,
+            signalValid: data.snapshot.signalValid,
+          });
+        }
+      });
+    }
 
     // Intelligent Trade Manager for advanced decision-making
     const newsAvoidanceMinutes = readEnvNumber('EA_NEWS_GUARD_BLACKOUT_MINUTES', null);
@@ -1346,6 +1372,17 @@ class EaBridgeService {
       this.updateSyntheticCandlesFromQuote(quote);
     } catch (_error) {
       // best-effort
+    }
+
+    // Update unified snapshot with new quote
+    try {
+      this.snapshotManager.updateQuote({
+        broker,
+        symbol,
+        quote,
+      });
+    } catch (_error) {
+      this.logger?.warn?.({ err: _error, broker, symbol }, 'Failed to update snapshot with quote');
     }
 
     return { success: true, message: 'Quote recorded', quote };
@@ -5236,6 +5273,11 @@ class EaBridgeService {
       this.cacheCoordinator.destroy();
     }
 
+    // Cleanup snapshot manager
+    if (this.snapshotManager) {
+      this.snapshotManager.destroy();
+    }
+
     // Clear all maps
     this.sessions.clear();
     this.latestQuotes.clear();
@@ -5247,6 +5289,13 @@ class EaBridgeService {
     this.entryContextBySymbol.clear();
 
     this.logger?.info?.('EA Bridge Service destroyed');
+  }
+
+  /**
+   * Get the unified snapshot manager
+   */
+  getSnapshotManager() {
+    return this.snapshotManager;
   }
 }
 
