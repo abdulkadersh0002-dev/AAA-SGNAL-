@@ -1227,54 +1227,257 @@ class LayerOrchestrator {
   }
 
   async processLayer18({ previousLayers }) {
-    // Final Validation - check all previous layers
-    const requiredLayers = [1, 2, 3, 4, 5, 6, 7, 10, 11, 12, 13, 14, 16, 17];
+    // Final validation with adaptive thresholds derived from real market state.
+    const findLayer = (id) => previousLayers.find((layer) => layer.layer === id) || null;
+    const toNumber = (value) => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
 
-    for (const layerId of requiredLayers) {
-      const layer = previousLayers.find((l) => l.layer === layerId);
+    const criticalLayers = [1, 2, 3, 4, 6, 11, 12, 14, 16, 17];
+    const supportingLayers = [5, 7, 10, 13];
+
+    for (const layerId of criticalLayers) {
+      const layer = findLayer(layerId);
       if (!layer || layer.status !== 'PASS') {
         return {
           status: 'FAIL',
-          reason: `Required layer L${layerId} did not pass`,
+          score: 0,
+          confidence: 0,
+          reason: `Critical layer L${layerId} did not pass`,
+          metrics: {
+            failedLayer: layerId,
+            failedType: 'critical',
+          },
         };
       }
     }
 
-    // Calculate composite score from all layers
-    const scores = previousLayers.filter((l) => l.score != null).map((l) => l.score);
+    const supportFailures = supportingLayers.filter((id) => {
+      const layer = findLayer(id);
+      return !layer || layer.status !== 'PASS';
+    });
+
+    const l2Spread = toNumber(findLayer(2)?.metrics?.spreadPoints);
+    const l3Volatility = toNumber(findLayer(3)?.metrics?.volatility);
+    const l11Confluence = toNumber(findLayer(11)?.metrics?.confluenceScore ?? findLayer(11)?.score);
+    const l16RiskReward = toNumber(findLayer(16)?.metrics?.riskRewardRatio);
+
+    let minCompositeScore = 60;
+    if (l3Volatility != null && l3Volatility > 140) {
+      minCompositeScore += 3;
+    }
+    if (l2Spread != null && l2Spread > 20) {
+      minCompositeScore += 2;
+    }
+    if (l16RiskReward != null && l16RiskReward < 1.8) {
+      minCompositeScore += 2;
+    }
+
+    const scores = previousLayers
+      .filter((layer) => layer.score != null)
+      .map((layer) => Number(layer.score));
     const avgScore = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
 
-    if (avgScore < 60) {
+    if (supportFailures.length > 2) {
       return {
         status: 'FAIL',
-        reason: `Composite score too low: ${avgScore.toFixed(1)}`,
-        metrics: { compositeScore: avgScore },
+        score: Math.max(20, Math.round(avgScore * 0.7)),
+        confidence: 65,
+        reason: `Too many supporting-layer failures (${supportFailures.length})`,
+        metrics: {
+          supportFailures,
+          compositeScore: avgScore,
+          minCompositeScore,
+        },
       };
     }
 
-    const passedCount = previousLayers.filter((l) => l.status === 'PASS').length;
+    if (l11Confluence != null && l11Confluence < 75) {
+      return {
+        status: 'FAIL',
+        score: Math.max(25, Math.round(avgScore * 0.75)),
+        confidence: 70,
+        reason: `Confluence too low (${l11Confluence.toFixed(1)} < 75)`,
+        metrics: {
+          confluenceScore: l11Confluence,
+          supportFailures,
+        },
+      };
+    }
+
+    if (avgScore < minCompositeScore) {
+      return {
+        status: 'FAIL',
+        score: Math.max(25, Math.round(avgScore)),
+        confidence: 70,
+        reason: `Composite score too low: ${avgScore.toFixed(1)} (min ${minCompositeScore.toFixed(1)})`,
+        metrics: {
+          compositeScore: avgScore,
+          minCompositeScore,
+          supportFailures,
+        },
+      };
+    }
+
+    const passedCount = previousLayers.filter((layer) => layer.status === 'PASS').length;
+    const confidence = Math.max(82, 96 - supportFailures.length * 4);
+
     return {
       status: 'PASS',
-      score: avgScore,
-      confidence: 95,
-      metrics: { compositeScore: avgScore, passedLayers: passedCount },
-      reason: 'All required layers passed',
+      score: Math.round(avgScore * 10) / 10,
+      confidence,
+      metrics: {
+        compositeScore: Math.round(avgScore * 10) / 10,
+        minCompositeScore,
+        passedLayers: passedCount,
+        supportFailures,
+        confluenceScore: l11Confluence,
+        spreadPoints: l2Spread,
+        volatility: l3Volatility,
+        riskRewardRatio: l16RiskReward,
+      },
+      reason:
+        supportFailures.length > 0
+          ? `Final validation passed with caution (${supportFailures.length} support issue)`
+          : 'Final validation passed with strong readiness',
     };
   }
 
-  async processLayer19({ previousLayers: _previousLayers }) {
-    // Execution Clearance - placeholder
-    return { status: 'PASS', score: 95, confidence: 90, reason: 'Cleared for execution' };
-  }
+  async processLayer19({ previousLayers }) {
+    // Execution clearance tied to tradability and slippage/news constraints.
+    const findLayer = (id) => previousLayers.find((layer) => layer.layer === id) || null;
+    const toNumber = (value) => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
 
-  async processLayer20({ signal: _signal }) {
-    // Trade Metadata - placeholder
+    const layer18 = findLayer(18);
+    if (!layer18 || layer18.status !== 'PASS') {
+      return {
+        status: 'FAIL',
+        score: 0,
+        confidence: 0,
+        reason: 'Layer 18 must pass before execution clearance',
+      };
+    }
+
+    const spreadPoints = toNumber(findLayer(2)?.metrics?.spreadPoints);
+    const volatility = toNumber(findLayer(3)?.metrics?.volatility);
+    const confluence = toNumber(findLayer(11)?.metrics?.confluenceScore ?? findLayer(11)?.score);
+    const riskRewardRatio = toNumber(findLayer(16)?.metrics?.riskRewardRatio);
+    const positionSize = toNumber(findLayer(17)?.metrics?.positionSize);
+    const newsIsClear = findLayer(12)?.status === 'PASS';
+
+    if (!newsIsClear) {
+      return {
+        status: 'FAIL',
+        score: 10,
+        confidence: 70,
+        reason: 'Execution blocked by news-risk layer',
+        metrics: { spreadPoints, volatility, confluence, riskRewardRatio, positionSize },
+      };
+    }
+
+    if (spreadPoints != null && spreadPoints > 25) {
+      return {
+        status: 'FAIL',
+        score: 35,
+        confidence: 72,
+        reason: `Execution blocked: spread too wide (${spreadPoints} points)`,
+        metrics: { spreadPoints, volatility, confluence, riskRewardRatio, positionSize },
+      };
+    }
+
+    if (riskRewardRatio != null && riskRewardRatio < 1.6) {
+      return {
+        status: 'FAIL',
+        score: 45,
+        confidence: 75,
+        reason: `Execution blocked: R:R too weak (${riskRewardRatio.toFixed(2)} < 1.60)`,
+        metrics: { spreadPoints, volatility, confluence, riskRewardRatio, positionSize },
+      };
+    }
+
+    let clearanceScore = 92;
+    if (spreadPoints != null) {
+      clearanceScore -= Math.min(20, spreadPoints / 2);
+    }
+    if (volatility != null && volatility > 150) {
+      clearanceScore -= 8;
+    }
+    if (confluence != null && confluence >= 85) {
+      clearanceScore += 4;
+    }
+    if (riskRewardRatio != null && riskRewardRatio >= 2.0) {
+      clearanceScore += 4;
+    }
+
+    const score = Math.max(55, Math.min(99, Math.round(clearanceScore)));
+    const confidence = Math.max(76, Math.min(97, score - 2));
+
     return {
       status: 'PASS',
-      score: 100,
-      confidence: 100,
-      metrics: { metadataPrepared: true },
-      reason: 'Trade metadata prepared',
+      score,
+      confidence,
+      reason: 'Execution clearance passed with live-condition weighting',
+      metrics: {
+        spreadPoints,
+        volatility,
+        confluence,
+        riskRewardRatio,
+        positionSize,
+        clearanceBand: score >= 90 ? 'HIGH' : score >= 75 ? 'MEDIUM' : 'LOW',
+      },
+    };
+  }
+
+  async processLayer20({ signal, previousLayers }) {
+    // Build execution metadata/profile for downstream trade lifecycle management.
+    const findLayer = (id) => previousLayers.find((layer) => layer.layer === id) || null;
+    const toNumber = (value) => {
+      const parsed = Number(value);
+      return Number.isFinite(parsed) ? parsed : null;
+    };
+
+    const direction = String(signal?.direction || '').toUpperCase() || 'UNKNOWN';
+    const baseConfidence = toNumber(signal?.confidence);
+    const confidence = baseConfidence ?? toNumber(findLayer(18)?.confidence) ?? 70;
+    const strength = toNumber(signal?.strength) ?? 0;
+    const confluence = toNumber(findLayer(11)?.metrics?.confluenceScore ?? findLayer(11)?.score);
+    const spreadPoints = toNumber(findLayer(2)?.metrics?.spreadPoints);
+    const riskRewardRatio = toNumber(findLayer(16)?.metrics?.riskRewardRatio);
+    const positionSize = toNumber(findLayer(17)?.metrics?.positionSize);
+    const clearanceScore = toNumber(findLayer(19)?.score) ?? 75;
+
+    const executionProfile = {
+      urgency: clearanceScore >= 92 ? 'immediate' : clearanceScore >= 80 ? 'normal' : 'patient',
+      riskMode: riskRewardRatio != null && riskRewardRatio >= 2.0 ? 'offensive' : 'balanced',
+      protectionBias:
+        spreadPoints != null && spreadPoints >= 18
+          ? 'tight'
+          : confluence != null && confluence >= 85
+            ? 'adaptive'
+            : 'standard',
+      confidenceBand: confidence >= 80 ? 'HIGH' : confidence >= 60 ? 'MEDIUM' : 'LOW',
+    };
+
+    return {
+      status: 'PASS',
+      score: Math.max(70, Math.min(100, Math.round((clearanceScore + confidence) / 2))),
+      confidence: Math.max(70, Math.min(99, Math.round((confidence + clearanceScore) / 2))),
+      metrics: {
+        metadataPrepared: true,
+        direction,
+        strength,
+        confidence,
+        confluence,
+        spreadPoints,
+        riskRewardRatio,
+        positionSize,
+        executionProfile,
+      },
+      reason: 'Trade metadata prepared with smart execution profile',
     };
   }
 

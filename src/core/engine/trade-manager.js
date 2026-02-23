@@ -9,9 +9,12 @@ import {
   attachLayeredAnalysisToSignal,
   evaluateLayers18Readiness,
 } from '../../infrastructure/services/ea-signal-pipeline.js';
+import { resolveEaFreshnessPolicy } from '../policy/ea-freshness-policy.js';
+import { getDecisionScore, getDecisionState } from '../policy/decision-contract.js';
 import { readEnvBool, readEnvCsvSet, readEnvNumber, readEnvString } from '../../utils/env.js';
 
 const debugGateLogsEnabled = () => readEnvBool('AUTO_TRADING_DEBUG_GATES', false) === true;
+const eaFreshnessPolicy = resolveEaFreshnessPolicy();
 
 // NOTE: use readEnvCsvSet() for env-based CSV parsing.
 
@@ -95,35 +98,9 @@ const getLayers18Status = (signal) =>
   evaluateLayers18Readiness({
     layeredAnalysis: signal?.components?.layeredAnalysis,
     minConfluence: layers18MinConfluence,
-    decisionStateFallback: signal?.isValid?.decision?.state,
+    decisionStateFallback: getDecisionState(signal),
     signal,
   });
-
-const resolveDecisionState = (signal) => {
-  const layer20 = signal?.components?.layeredAnalysis?.layers
-    ? signal.components.layeredAnalysis.layers.find(
-        (layer) => String(layer?.key || '').toUpperCase() === 'L20' || Number(layer?.layer) === 20
-      )
-    : null;
-  const fromLayer = layer20?.metrics?.decision?.state || null;
-  const fromSignal = signal?.isValid?.decision?.state || signal?.finalDecision?.state || null;
-  const state = String(fromLayer || fromSignal || '')
-    .trim()
-    .toUpperCase();
-  return state || null;
-};
-
-const resolveDecisionScore = (signal) => {
-  const layer20 = signal?.components?.layeredAnalysis?.layers
-    ? signal.components.layeredAnalysis.layers.find(
-        (layer) => String(layer?.key || '').toUpperCase() === 'L20' || Number(layer?.layer) === 20
-      )
-    : null;
-  const fromLayer = layer20?.metrics?.decision?.score ?? layer20?.metrics?.decisionScore;
-  const fromSignal = signal?.isValid?.decision?.score ?? signal?.finalDecision?.score;
-  const score = Number(fromLayer ?? fromSignal);
-  return Number.isFinite(score) ? score : null;
-};
 
 class TradeManager {
   constructor(tradingEngine) {
@@ -240,6 +217,15 @@ class TradeManager {
     this.lastSmartExitCheck = new Map();
     this.smartExitInFlight = new Set();
 
+    this.liveContextActionCooldownMs = Number.isFinite(
+      Number(autoTradingConfig.liveContextActionCooldownMs)
+    )
+      ? Math.max(2000, Number(autoTradingConfig.liveContextActionCooldownMs))
+      : Number.isFinite(readEnvNumber('AUTO_TRADING_LIVE_CONTEXT_ACTION_COOLDOWN_MS'))
+        ? Math.max(2000, Number(readEnvNumber('AUTO_TRADING_LIVE_CONTEXT_ACTION_COOLDOWN_MS')))
+        : 20 * 1000;
+    this.lastLiveContextActionAt = new Map();
+
     // Dynamic universe: include all symbols recently seen in EA quotes (ticker/price bar).
     this.dynamicUniverseEnabled = autoTradingConfig.dynamicUniverseEnabled !== false;
     this.universeMaxAgeMs = Number.isFinite(Number(autoTradingConfig.universeMaxAgeMs))
@@ -287,8 +273,8 @@ class TradeManager {
   evaluateExecutionGate({ broker, signal, source, shouldExecuteHint } = {}) {
     const brokerId = this.normalizeBrokerId(broker);
     const pair = String(signal?.pair || '').trim();
-    const decisionState = resolveDecisionState(signal);
-    const decisionScore = resolveDecisionScore(signal);
+    const decisionState = getDecisionState(signal);
+    const decisionScore = getDecisionScore(signal);
     const confidence = Number(signal?.confidence) || 0;
     const strength = Number(signal?.strength) || 0;
 
@@ -493,16 +479,7 @@ class TradeManager {
 
     // Realtime auto-trading should only ever consider true entry-ready signals.
     // Candidates/WATCH (WAIT_MONITOR) are for visibility and must never trigger execution.
-    const layers = Array.isArray(signal?.components?.layeredAnalysis?.layers)
-      ? signal.components.layeredAnalysis.layers
-      : [];
-    const layer20 =
-      layers.find(
-        (layer) => String(layer?.key || '').toUpperCase() === 'L20' || Number(layer?.layer) === 20
-      ) || null;
-    const decisionState = String(
-      layer20?.metrics?.decision?.state || signal?.isValid?.decision?.state || ''
-    ).toUpperCase();
+    const decisionState = String(getDecisionState(signal) || '').toUpperCase();
     if (decisionState !== 'ENTER') {
       return;
     }
@@ -527,8 +504,8 @@ class TradeManager {
 
     const map = this.realtimeCandidatesByBroker.get(brokerId) || new Map();
     const existing = map.get(pair);
-    const existingScore = Number(existing?.isValid?.decision?.score ?? -1);
-    const nextScore = Number(signal?.isValid?.decision?.score ?? -1);
+    const existingScore = Number(getDecisionScore(existing) ?? -1);
+    const nextScore = Number(getDecisionScore(signal) ?? -1);
     if (!existing || nextScore >= existingScore) {
       map.set(pair, signal);
     }
@@ -582,8 +559,8 @@ class TradeManager {
     this.realtimeCandidatesByBroker.delete(id);
 
     candidates.sort((a, b) => {
-      const sa = Number(a?.isValid?.decision?.score ?? -1);
-      const sb = Number(b?.isValid?.decision?.score ?? -1);
+      const sa = Number(getDecisionScore(a) ?? -1);
+      const sb = Number(getDecisionScore(b) ?? -1);
       if (sb !== sa) {
         return sb - sa;
       }
@@ -614,7 +591,7 @@ class TradeManager {
           pair,
           source: 'realtime',
           reason: 'Symbol not allowed for auto-trading',
-          decisionScore: signal?.isValid?.decision?.score,
+          decisionScore: getDecisionScore(signal),
           confidence: signal?.confidence,
           strength: signal?.strength,
           signal,
@@ -633,7 +610,7 @@ class TradeManager {
           pair,
           source: 'realtime',
           reason: gate.reason,
-          decisionScore: signal?.isValid?.decision?.score,
+          decisionScore: getDecisionScore(signal),
           confidence: signal?.confidence,
           strength: signal?.strength,
           ...(gate.details?.layersStatus ? { layersStatus: gate.details.layersStatus } : {}),
@@ -655,7 +632,7 @@ class TradeManager {
           broker: id,
           pair,
           source: 'realtime',
-          decisionScore: signal?.isValid?.decision?.score,
+          decisionScore: getDecisionScore(signal),
           confidence: signal?.confidence,
           strength: signal?.strength,
           executionMode: 'ea',
@@ -671,7 +648,7 @@ class TradeManager {
           pair,
           source: 'realtime',
           reason: 'Trade execution is disabled (TRADING_SCOPE=signals)',
-          decisionScore: signal?.isValid?.decision?.score,
+          decisionScore: getDecisionScore(signal),
           confidence: signal?.confidence,
           strength: signal?.strength,
           signal: signalForBroker,
@@ -683,7 +660,7 @@ class TradeManager {
         broker: id,
         pair,
         source: 'realtime',
-        decisionScore: signal?.isValid?.decision?.score,
+        decisionScore: getDecisionScore(signal),
         confidence: signal?.confidence,
         strength: signal?.strength,
         signal: signalForBroker,
@@ -708,7 +685,7 @@ class TradeManager {
             broker: id,
             tradeId: result.trade?.id,
             pair,
-            decisionScore: signal?.isValid?.decision?.score,
+            decisionScore: getDecisionScore(signal),
           },
           'Auto-trading opened trade (realtime strong signal)'
         );
@@ -718,7 +695,7 @@ class TradeManager {
           pair,
           source: 'realtime',
           reason: result?.reason || 'Trade rejected',
-          decisionScore: signal?.isValid?.decision?.score,
+          decisionScore: getDecisionScore(signal),
           confidence: signal?.confidence,
           strength: signal?.strength,
           signal: signalForBroker,
@@ -1150,8 +1127,8 @@ class TradeManager {
               strength: signal.strength,
               confidence: signal.confidence,
               isValid: signal.isValid?.isValid,
-              decisionScore: signal.isValid?.decision?.score,
-              decisionState: resolveDecisionState(signal),
+              decisionScore: getDecisionScore(signal),
+              decisionState: getDecisionState(signal),
               shouldExecute: shouldExecuteHint,
             },
             'Auto-trading signal evaluated'
@@ -1169,7 +1146,7 @@ class TradeManager {
               pair,
               source: 'scheduled',
               reason: gate.reason,
-              decisionScore: signal?.isValid?.decision?.score,
+              decisionScore: getDecisionScore(signal),
               confidence: signal?.confidence,
               strength: signal?.strength,
               ...(gate.details?.layersStatus ? { layersStatus: gate.details.layersStatus } : {}),
@@ -1204,8 +1181,8 @@ class TradeManager {
 
       // Rank by decision score (preferred), then confidence/strength.
       candidates.sort((a, b) => {
-        const sa = Number(a?.isValid?.decision?.score ?? -1);
-        const sb = Number(b?.isValid?.decision?.score ?? -1);
+        const sa = Number(getDecisionScore(a) ?? -1);
+        const sb = Number(getDecisionScore(b) ?? -1);
         if (sb !== sa) {
           return sb - sa;
         }
@@ -1236,7 +1213,7 @@ class TradeManager {
             broker: brokerId,
             pair: signal?.pair,
             source: 'scheduled',
-            decisionScore: signal?.isValid?.decision?.score,
+            decisionScore: getDecisionScore(signal),
             confidence: signal?.confidence,
             strength: signal?.strength,
             executionMode: 'ea',
@@ -1252,7 +1229,7 @@ class TradeManager {
             pair: signal?.pair,
             source: 'scheduled',
             reason: 'Trade execution is disabled (TRADING_SCOPE=signals)',
-            decisionScore: signal?.isValid?.decision?.score,
+            decisionScore: getDecisionScore(signal),
             confidence: signal?.confidence,
             strength: signal?.strength,
             signal: signalForBroker,
@@ -1264,7 +1241,7 @@ class TradeManager {
           broker: brokerId,
           pair: signal?.pair,
           source: 'scheduled',
-          decisionScore: signal?.isValid?.decision?.score,
+          decisionScore: getDecisionScore(signal),
           confidence: signal?.confidence,
           strength: signal?.strength,
           signal: signalForBroker,
@@ -1287,7 +1264,7 @@ class TradeManager {
               broker: brokerId,
               tradeId: result.trade?.id,
               pair: signal?.pair,
-              decisionScore: signal?.isValid?.decision?.score,
+              decisionScore: getDecisionScore(signal),
             },
             'Auto-trading opened trade'
           );
@@ -1297,7 +1274,7 @@ class TradeManager {
             pair: signal?.pair,
             source: 'scheduled',
             reason: result?.reason || 'Trade rejected',
-            decisionScore: signal?.isValid?.decision?.score,
+            decisionScore: getDecisionScore(signal),
             confidence: signal?.confidence,
             strength: signal?.strength,
             signal: signalForBroker,
@@ -1400,8 +1377,8 @@ class TradeManager {
           continue;
         }
 
-        const decisionState = resolveDecisionState(signal);
-        const decisionScore = Number(signal?.isValid?.decision?.score ?? null);
+        const decisionState = getDecisionState(signal);
+        const decisionScore = Number(getDecisionScore(signal) ?? null);
         const confidence = Number(signal?.confidence) || 0;
         const strength = Number(signal?.strength) || 0;
 
@@ -1508,7 +1485,7 @@ class TradeManager {
         broker,
         symbol: trade.pair,
         eaBridgeService: this.eaBridgeService,
-        quoteMaxAgeMs: 30 * 1000,
+        quoteMaxAgeMs: eaFreshnessPolicy.signalExecQuoteMaxAgeMs,
         barFallback,
         now: Date.now(),
       });
@@ -1597,6 +1574,7 @@ class TradeManager {
           continue;
         }
         trade.liveContext = liveContext;
+        await this.applyLiveContextDecision(trade, liveContext);
         this.emitEvent('trade_live_context', {
           tradeId: trade.id,
           pair: trade.pair,
@@ -1607,6 +1585,143 @@ class TradeManager {
         // best-effort
       }
     }
+  }
+
+  shouldApplyLiveContextAction(trade, decision) {
+    if (!trade || !trade.id || !decision || decision === 'HOLD') {
+      return false;
+    }
+    const now = Date.now();
+    const key = `${String(trade.id)}:${String(decision).toUpperCase()}`;
+    const lastAt = Number(this.lastLiveContextActionAt.get(key) || 0);
+    if (now - lastAt < this.liveContextActionCooldownMs) {
+      return false;
+    }
+    this.lastLiveContextActionAt.set(key, now);
+    return true;
+  }
+
+  computeReduceStopLoss(trade, currentPrice, liveContext) {
+    const entryPrice = Number(trade?.entryPrice);
+    const stopLoss = Number(trade?.stopLoss);
+    const marketPrice = Number(currentPrice);
+
+    if (
+      !Number.isFinite(entryPrice) ||
+      !Number.isFinite(stopLoss) ||
+      !Number.isFinite(marketPrice)
+    ) {
+      return null;
+    }
+
+    const direction = String(trade?.direction || '').toUpperCase();
+    if (direction !== 'BUY' && direction !== 'SELL') {
+      return null;
+    }
+
+    const riskDistance = Math.abs(entryPrice - stopLoss);
+    if (!Number.isFinite(riskDistance) || riskDistance <= 0) {
+      return null;
+    }
+
+    const spreadDrift = Number(liveContext?.drift?.spreadPoints);
+    const newsDrift = Number(liveContext?.drift?.newsImpact);
+    const pressure =
+      (Number.isFinite(spreadDrift) && spreadDrift > 20) ||
+      (Number.isFinite(newsDrift) && newsDrift > 1.5);
+
+    const lockRatio = pressure ? 0.12 : 0.06;
+    const minDistanceRatio = pressure ? 0.22 : 0.15;
+
+    if (direction === 'BUY') {
+      const breakEvenLock = entryPrice + riskDistance * lockRatio;
+      const maxAllowed = marketPrice - riskDistance * minDistanceRatio;
+      const candidate = Math.max(stopLoss, Math.min(breakEvenLock, maxAllowed));
+      if (!Number.isFinite(candidate) || candidate <= stopLoss || candidate >= marketPrice) {
+        return null;
+      }
+      return candidate;
+    }
+
+    const breakEvenLock = entryPrice - riskDistance * lockRatio;
+    const minAllowed = marketPrice + riskDistance * minDistanceRatio;
+    const candidate = Math.min(stopLoss, Math.max(breakEvenLock, minAllowed));
+    if (!Number.isFinite(candidate) || candidate >= stopLoss || candidate <= marketPrice) {
+      return null;
+    }
+    return candidate;
+  }
+
+  async applyLiveContextDecision(trade, liveContext) {
+    const decision = String(liveContext?.decision || '').toUpperCase();
+    if (!this.shouldApplyLiveContextAction(trade, decision)) {
+      return;
+    }
+
+    const broker = trade?.broker || trade?.brokerRoute || null;
+    const currentPrice = await this.tradingEngine.getCurrentPriceForPair(trade.pair, { broker });
+
+    if (decision === 'EXIT') {
+      const closed = await this.tradingEngine.closeTrade(
+        trade.id,
+        currentPrice,
+        'live_context_exit'
+      );
+      this.emitEvent('trade_live_management_action', {
+        tradeId: trade.id,
+        pair: trade.pair,
+        action: 'EXIT',
+        decision,
+        reason: 'live_context_exit',
+        result: closed || null,
+      });
+      return;
+    }
+
+    if (decision !== 'REDUCE') {
+      return;
+    }
+
+    const nextStopLoss = this.computeReduceStopLoss(trade, currentPrice, liveContext);
+    if (!Number.isFinite(nextStopLoss)) {
+      return;
+    }
+
+    const previousStopLoss = Number(trade.stopLoss);
+    trade.stopLoss = nextStopLoss;
+    if (!trade.trailingStop || typeof trade.trailingStop !== 'object') {
+      trade.trailingStop = {};
+    }
+    trade.trailingStop.isBreakevenSet =
+      trade.direction === 'BUY'
+        ? nextStopLoss >= trade.entryPrice
+        : nextStopLoss <= trade.entryPrice;
+
+    let syncResult = null;
+    if (typeof this.tradingEngine.syncBrokerProtection === 'function') {
+      try {
+        syncResult = await this.tradingEngine.syncBrokerProtection(trade, {
+          reason: 'live_context_reduce',
+        });
+      } catch (error) {
+        logger.warn(
+          { module: 'TradeManager', err: error, tradeId: trade.id },
+          'Failed to sync broker protection for live context reduction'
+        );
+      }
+    }
+
+    this.emitEvent('trade_live_management_action', {
+      tradeId: trade.id,
+      pair: trade.pair,
+      action: 'REDUCE',
+      decision,
+      previousStopLoss: Number.isFinite(previousStopLoss) ? previousStopLoss : null,
+      nextStopLoss,
+      synced: syncResult?.success === true,
+      syncResult: syncResult || null,
+      reason: 'live_context_reduce',
+    });
   }
 
   /**

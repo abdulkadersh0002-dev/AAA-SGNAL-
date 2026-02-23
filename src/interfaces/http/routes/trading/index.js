@@ -11,8 +11,10 @@ import {
 import { eaOnlyMode } from '../../../../config/runtime-flags.js';
 import { attachLayeredAnalysisToSignal } from '../../../../infrastructure/services/ea-signal-pipeline.js';
 import { buildEaNotConnectedResponse } from '../../../../utils/ea-bridge-diagnostics.js';
+import { resolveEaFreshnessPolicy } from '../../../../core/policy/ea-freshness-policy.js';
 
 const durationSecondsFrom = (start) => Number(process.hrtime.bigint() - start) / 1e9;
+const eaFreshnessPolicy = resolveEaFreshnessPolicy();
 
 export default function tradingRoutes({
   tradingEngine,
@@ -99,7 +101,10 @@ export default function tradingRoutes({
       const shouldRequireEaConnection = wantsEaOnly || Boolean(normalizedBroker && brokerIsEa);
       if (shouldRequireEaConnection && brokerIsEa) {
         const connected = eaBridgeService?.isBrokerConnected
-          ? eaBridgeService.isBrokerConnected({ broker: effectiveBroker, maxAgeMs: 2 * 60 * 1000 })
+          ? eaBridgeService.isBrokerConnected({
+              broker: effectiveBroker,
+              maxAgeMs: eaFreshnessPolicy.heartbeatMaxAgeMs,
+            })
           : false;
         if (!connected) {
           return res.status(409).json(
@@ -107,7 +112,7 @@ export default function tradingRoutes({
               broker: effectiveBroker,
               symbol: pair,
               eaBridgeService,
-              maxAgeMs: 2 * 60 * 1000,
+              maxAgeMs: eaFreshnessPolicy.heartbeatMaxAgeMs,
               now: Date.now(),
             })
           );
@@ -136,7 +141,7 @@ export default function tradingRoutes({
         broker: effectiveBroker,
         symbol: pair,
         eaBridgeService,
-        quoteMaxAgeMs: 2 * 60 * 1000,
+        quoteMaxAgeMs: eaFreshnessPolicy.dashboardAnalysisQuoteMaxAgeMs,
         now: Date.now(),
       });
 
@@ -192,7 +197,10 @@ export default function tradingRoutes({
       const shouldRequireEaConnection = wantsEaOnly || Boolean(normalizedBroker && brokerIsEa);
       if (shouldRequireEaConnection && brokerIsEa) {
         const connected = eaBridgeService?.isBrokerConnected
-          ? eaBridgeService.isBrokerConnected({ broker: effectiveBroker, maxAgeMs: 2 * 60 * 1000 })
+          ? eaBridgeService.isBrokerConnected({
+              broker: effectiveBroker,
+              maxAgeMs: eaFreshnessPolicy.heartbeatMaxAgeMs,
+            })
           : false;
         if (!connected) {
           return res.status(409).json(
@@ -200,7 +208,7 @@ export default function tradingRoutes({
               broker: effectiveBroker,
               symbol: pairs?.[0] || null,
               eaBridgeService,
-              maxAgeMs: 2 * 60 * 1000,
+              maxAgeMs: eaFreshnessPolicy.heartbeatMaxAgeMs,
               now: Date.now(),
             })
           );
@@ -233,7 +241,7 @@ export default function tradingRoutes({
               broker: effectiveBroker,
               symbol: pair,
               eaBridgeService,
-              quoteMaxAgeMs: 2 * 60 * 1000,
+              quoteMaxAgeMs: eaFreshnessPolicy.dashboardAnalysisQuoteMaxAgeMs,
               now: Date.now(),
             });
 
@@ -295,7 +303,10 @@ export default function tradingRoutes({
 
       if (brokerIsEa) {
         const connected = eaBridgeService?.isBrokerConnected
-          ? eaBridgeService.isBrokerConnected({ broker: effectiveBroker, maxAgeMs: 2 * 60 * 1000 })
+          ? eaBridgeService.isBrokerConnected({
+              broker: effectiveBroker,
+              maxAgeMs: eaFreshnessPolicy.heartbeatMaxAgeMs,
+            })
           : false;
         if (!connected) {
           return res.status(409).json(
@@ -303,7 +314,7 @@ export default function tradingRoutes({
               broker: effectiveBroker,
               symbol: pair,
               eaBridgeService,
-              maxAgeMs: 2 * 60 * 1000,
+              maxAgeMs: eaFreshnessPolicy.heartbeatMaxAgeMs,
               now: Date.now(),
             })
           );

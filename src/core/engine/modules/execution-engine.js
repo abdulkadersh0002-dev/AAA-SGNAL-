@@ -114,6 +114,7 @@ export const executionEngine = {
         expectedMarketBehavior: signal?.components?.expectedMarketBehavior || null,
         invalidationRules: signal?.components?.invalidationRules || null,
         layeredAnalysis: signal?.components?.layeredAnalysis || null,
+        executionProfile: signal?.components?.executionProfile || null,
         signal,
       };
 
@@ -237,6 +238,23 @@ export const executionEngine = {
           }
         }
 
+        const protection = this.applySmartProfitProtection(trade, currentPrice);
+        if (protection?.applied === true) {
+          this.logger?.info?.(
+            {
+              module: 'ExecutionEngine',
+              tradeId,
+              pair: trade.pair,
+              reason: protection.reason,
+              rMultiple: protection.rMultiple,
+              newStopLoss: Number.isFinite(Number(trade.stopLoss))
+                ? Number(Number(trade.stopLoss).toFixed(5))
+                : null,
+            },
+            'Applied smart profit protection'
+          );
+        }
+
         const stopLossBefore = Number(trade.stopLoss);
 
         if (!trade.movedToBreakeven && this.shouldMoveToBreakeven(trade, currentPrice)) {
@@ -302,6 +320,234 @@ export const executionEngine = {
     } catch (_error) {
       // best-effort
     }
+  },
+
+  getTradeRiskDistance(trade) {
+    const entry = Number(trade?.entryPrice);
+    const stop = Number(trade?.stopLoss);
+    if (!Number.isFinite(entry) || !Number.isFinite(stop)) {
+      return null;
+    }
+    const distance = Math.abs(entry - stop);
+    return Number.isFinite(distance) && distance > 0 ? distance : null;
+  },
+
+  getCurrentRMultiple(trade, currentPrice) {
+    const riskDistance = this.getTradeRiskDistance(trade);
+    const entry = Number(trade?.entryPrice);
+    const current = Number(currentPrice);
+    const direction = String(trade?.direction || '').toUpperCase();
+
+    if (!Number.isFinite(riskDistance) || !Number.isFinite(entry) || !Number.isFinite(current)) {
+      return null;
+    }
+    if (direction !== 'BUY' && direction !== 'SELL') {
+      return null;
+    }
+
+    const gain = direction === 'BUY' ? current - entry : entry - current;
+    return gain / riskDistance;
+  },
+
+  resolveSmartProtectionModel(trade) {
+    const profile =
+      trade?.executionProfile && typeof trade.executionProfile === 'object'
+        ? trade.executionProfile
+        : trade?.signal?.components?.executionProfile &&
+            typeof trade.signal.components.executionProfile === 'object'
+          ? trade.signal.components.executionProfile
+          : {};
+
+    const entryContext =
+      trade?.entryContext && typeof trade.entryContext === 'object'
+        ? trade.entryContext
+        : trade?.signal?.components?.entryContext &&
+            typeof trade.signal.components.entryContext === 'object'
+          ? trade.signal.components.entryContext
+          : {};
+
+    const urgency = String(profile?.urgency || 'NORMAL')
+      .trim()
+      .toUpperCase();
+    const riskMode = String(profile?.riskMode || 'BALANCED')
+      .trim()
+      .toUpperCase();
+    const protectionBias = String(profile?.protectionBias || 'STANDARD')
+      .trim()
+      .toUpperCase();
+    const volatilityState = String(entryContext?.volatilityState || '')
+      .trim()
+      .toUpperCase();
+    const confluenceScore = Number(
+      entryContext?.confluenceScore ?? trade?.signal?.components?.confluence?.score
+    );
+    const newsImpact = Number(entryContext?.newsImpact);
+
+    const model = {
+      thresholds: { breakevenR: 1.0, lockMidR: 1.5, lockStrongR: 2.2 },
+      locks: { breakeven: 0.0, mid: 0.35, strong: 1.1 },
+      trailing: {
+        tightenFactor: 0.75,
+        minDistanceRiskFraction: 0.22,
+        activationAtFraction: 0.45,
+        breakevenAtFraction: 0.35,
+      },
+      context: {
+        urgency,
+        riskMode,
+        protectionBias,
+        volatilityState,
+        confluenceScore: Number.isFinite(confluenceScore) ? confluenceScore : null,
+        newsImpact: Number.isFinite(newsImpact) ? newsImpact : null,
+      },
+    };
+
+    if (protectionBias === 'TIGHT') {
+      model.thresholds = { breakevenR: 0.9, lockMidR: 1.35, lockStrongR: 2.0 };
+      model.locks = { breakeven: 0.05, mid: 0.45, strong: 1.25 };
+      model.trailing.tightenFactor = 0.68;
+      model.trailing.minDistanceRiskFraction = 0.26;
+      model.trailing.activationAtFraction = 0.4;
+      model.trailing.breakevenAtFraction = 0.3;
+    }
+
+    if (riskMode === 'OFFENSIVE') {
+      model.thresholds.breakevenR += 0.12;
+      model.thresholds.lockMidR += 0.2;
+      model.thresholds.lockStrongR += 0.32;
+      model.locks.mid = Math.max(0.2, model.locks.mid - 0.1);
+      model.locks.strong = Math.max(0.8, model.locks.strong - 0.15);
+      model.trailing.tightenFactor = Math.min(0.9, model.trailing.tightenFactor + 0.08);
+      model.trailing.minDistanceRiskFraction = Math.max(
+        0.16,
+        model.trailing.minDistanceRiskFraction - 0.05
+      );
+    }
+
+    if (volatilityState === 'HIGH' || volatilityState === 'EXTREME') {
+      model.thresholds.breakevenR = Math.max(0.75, model.thresholds.breakevenR - 0.08);
+      model.thresholds.lockMidR = Math.max(1.2, model.thresholds.lockMidR - 0.1);
+      model.locks.mid = Math.min(0.7, model.locks.mid + 0.08);
+      model.locks.strong = Math.min(1.6, model.locks.strong + 0.08);
+      model.trailing.tightenFactor = Math.max(0.62, model.trailing.tightenFactor - 0.06);
+      model.trailing.minDistanceRiskFraction = Math.min(
+        0.34,
+        model.trailing.minDistanceRiskFraction + 0.05
+      );
+    }
+
+    if (Number.isFinite(newsImpact) && newsImpact >= 4) {
+      model.thresholds.breakevenR = Math.max(0.7, model.thresholds.breakevenR - 0.1);
+      model.thresholds.lockMidR = Math.max(1.1, model.thresholds.lockMidR - 0.1);
+      model.locks.mid = Math.min(0.75, model.locks.mid + 0.1);
+      model.locks.strong = Math.min(1.7, model.locks.strong + 0.1);
+      model.trailing.tightenFactor = Math.max(0.6, model.trailing.tightenFactor - 0.08);
+    }
+
+    if (Number.isFinite(confluenceScore) && confluenceScore >= 80 && riskMode === 'OFFENSIVE') {
+      model.thresholds.lockStrongR += 0.12;
+      model.locks.strong = Math.max(0.75, model.locks.strong - 0.08);
+    }
+
+    model.thresholds.breakevenR = Number(model.thresholds.breakevenR.toFixed(2));
+    model.thresholds.lockMidR = Number(
+      Math.max(model.thresholds.breakevenR + 0.2, model.thresholds.lockMidR).toFixed(2)
+    );
+    model.thresholds.lockStrongR = Number(
+      Math.max(model.thresholds.lockMidR + 0.4, model.thresholds.lockStrongR).toFixed(2)
+    );
+    model.locks.breakeven = Number(Math.max(0, model.locks.breakeven).toFixed(2));
+    model.locks.mid = Number(Math.max(model.locks.breakeven, model.locks.mid).toFixed(2));
+    model.locks.strong = Number(Math.max(model.locks.mid, model.locks.strong).toFixed(2));
+    model.trailing.tightenFactor = Number(
+      Math.max(0.58, Math.min(0.95, model.trailing.tightenFactor)).toFixed(2)
+    );
+    model.trailing.minDistanceRiskFraction = Number(
+      Math.max(0.12, Math.min(0.4, model.trailing.minDistanceRiskFraction)).toFixed(2)
+    );
+
+    return model;
+  },
+
+  applySmartProfitProtection(trade, currentPrice) {
+    const rMultiple = this.getCurrentRMultiple(trade, currentPrice);
+    if (!Number.isFinite(rMultiple)) {
+      return { applied: false, reason: 'invalid_r_multiple', rMultiple: null };
+    }
+
+    const direction = String(trade?.direction || '').toUpperCase();
+    const entry = Number(trade?.entryPrice);
+    const riskDistance = this.getTradeRiskDistance(trade);
+    if ((direction !== 'BUY' && direction !== 'SELL') || !Number.isFinite(entry) || !riskDistance) {
+      return { applied: false, reason: 'invalid_trade_context', rMultiple };
+    }
+
+    if (!trade.trailingStop || typeof trade.trailingStop !== 'object') {
+      trade.trailingStop = { enabled: false };
+    }
+
+    let nextStop = Number(trade?.stopLoss);
+    if (!Number.isFinite(nextStop)) {
+      return { applied: false, reason: 'invalid_stop', rMultiple };
+    }
+
+    const model = this.resolveSmartProtectionModel(trade);
+    let reason = null;
+    const lockAt = (rr) => {
+      if (!Number.isFinite(rr)) {
+        return null;
+      }
+      return direction === 'BUY' ? entry + riskDistance * rr : entry - riskDistance * rr;
+    };
+
+    if (rMultiple >= model.thresholds.lockStrongR) {
+      const lock = lockAt(model.locks.strong);
+      if (direction === 'BUY' ? lock > nextStop : lock < nextStop) {
+        nextStop = lock;
+        reason = 'lock_profit_2_2r';
+      }
+      trade.trailingStop.enabled = true;
+      if (Number.isFinite(Number(trade.trailingStop.trailingDistance))) {
+        trade.trailingStop.trailingDistance = Number(
+          Math.max(
+            Number(trade.trailingStop.trailingDistance) * model.trailing.tightenFactor,
+            riskDistance * model.trailing.minDistanceRiskFraction
+          ).toFixed(5)
+        );
+      }
+    } else if (rMultiple >= model.thresholds.lockMidR) {
+      const lock = lockAt(model.locks.mid);
+      if (direction === 'BUY' ? lock > nextStop : lock < nextStop) {
+        nextStop = lock;
+        reason = 'lock_profit_1_5r';
+      }
+      trade.trailingStop.enabled = true;
+      trade.trailingStop.activationAtFraction = model.trailing.activationAtFraction;
+      trade.trailingStop.breakevenAtFraction = model.trailing.breakevenAtFraction;
+    } else if (rMultiple >= model.thresholds.breakevenR) {
+      const lock = lockAt(model.locks.breakeven);
+      if (direction === 'BUY' ? lock > nextStop : lock < nextStop) {
+        nextStop = lock;
+        reason = 'breakeven_1_0r';
+      }
+      trade.trailingStop.enabled = true;
+    }
+
+    if (!Number.isFinite(nextStop) || Math.abs(nextStop - Number(trade.stopLoss)) <= 1e-10) {
+      return { applied: false, reason: reason || 'no_change', rMultiple };
+    }
+
+    trade.stopLoss = Number(nextStop.toFixed(5));
+    if (rMultiple >= model.thresholds.breakevenR) {
+      trade.movedToBreakeven = true;
+    }
+
+    return {
+      applied: true,
+      reason: reason || 'smart_protection',
+      rMultiple: Number(rMultiple.toFixed(3)),
+      model,
+    };
   },
 
   evaluateSmartTradeSupervision(trade, _currentPrice) {

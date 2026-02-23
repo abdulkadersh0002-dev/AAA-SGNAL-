@@ -3,6 +3,11 @@ import {
   aggregateCandleAnalyses,
 } from '../../analyzers/candle-analysis-lite.js';
 import { computeIntermarketCorrelation } from '../../../infrastructure/services/analysis/intermarket-correlation.js';
+import {
+  getDecisionScore,
+  getDecisionState,
+  isDecisionBlocked,
+} from '../../policy/decision-contract.js';
 
 export const orchestrationCoordinator = {
   async generateSignal(pair, options = {}) {
@@ -1144,14 +1149,61 @@ export const orchestrationCoordinator = {
         // best-effort
       }
 
+      // Normalize execution profile for downstream execution sizing/protection.
+      try {
+        if (signal && typeof signal === 'object') {
+          if (!signal.components || typeof signal.components !== 'object') {
+            signal.components = {};
+          }
+
+          if (!signal.components.executionProfile) {
+            const layers = Array.isArray(signal?.components?.layeredAnalysis?.layers)
+              ? signal.components.layeredAnalysis.layers
+              : [];
+            const layer20 =
+              layers.find(
+                (layer) =>
+                  String(layer?.key || '').toUpperCase() === 'L20' || Number(layer?.layer) === 20
+              ) || null;
+            const profileFromLayer20 =
+              layer20?.metrics?.executionProfile &&
+              typeof layer20.metrics.executionProfile === 'object'
+                ? layer20.metrics.executionProfile
+                : null;
+
+            if (profileFromLayer20) {
+              signal.components.executionProfile = profileFromLayer20;
+            } else {
+              const confidence = Number(signal?.confidence);
+              const riskReward = Number(signal?.entry?.riskReward);
+              const qualityBand = String(signal?.components?.intelligence?.qualityBand || '')
+                .trim()
+                .toLowerCase();
+
+              signal.components.executionProfile = {
+                urgency: confidence >= 82 ? 'immediate' : confidence >= 66 ? 'normal' : 'patient',
+                riskMode: Number.isFinite(riskReward) && riskReward >= 2 ? 'offensive' : 'balanced',
+                protectionBias:
+                  qualityBand === 'fragile' || qualityBand === 'weak'
+                    ? 'tight'
+                    : qualityBand === 'elite' || qualityBand === 'strong'
+                      ? 'adaptive'
+                      : 'standard',
+                confidenceBand: confidence >= 80 ? 'HIGH' : confidence >= 60 ? 'MEDIUM' : 'LOW',
+              };
+            }
+          }
+        }
+      } catch (_error) {
+        // best-effort
+      }
+
       signal.riskManagement = this.calculateRiskManagement(signal);
       signal.isValid = this.validateSignal(signal);
 
       // If the signal is hard-blocked (invalid market / risk / blackout), convert into strict NEUTRAL.
       // If it's merely WAIT/MONITOR, keep the directional bias for explainability (but do not auto-execute).
-      const decisionState = signal?.isValid?.decision?.state || null;
-      const isBlocked =
-        decisionState === 'NO_TRADE_BLOCKED' || Boolean(signal?.isValid?.decision?.blocked);
+      const isBlocked = isDecisionBlocked(signal);
       if (signal?.isValid && signal.isValid.isValid === false && isBlocked) {
         signal.direction = 'NEUTRAL';
         signal.finalScore = 0;
@@ -1296,9 +1348,9 @@ export const orchestrationCoordinator = {
             : {}),
           action: signal.direction,
           tradeValid: Boolean(signal.isValid?.isValid),
-          state: signal?.isValid?.decision?.state || null,
-          score: signal?.isValid?.decision?.score ?? null,
-          blocked: Boolean(signal?.isValid?.decision?.blocked),
+          state: getDecisionState(signal),
+          score: getDecisionScore(signal),
+          blocked: isDecisionBlocked(signal),
           reason: reasons.length ? reasons[0] : signal.isValid?.reason || null,
           reasons: reasons.slice(0, 4),
         };
@@ -1362,9 +1414,8 @@ export const orchestrationCoordinator = {
         const maxTtlMs =
           Number.isFinite(maxTtlMsEnv) && maxTtlMsEnv > 0 ? maxTtlMsEnv : 24 * 60 * 60 * 1000;
 
-        const decisionState = signal?.isValid?.decision?.state || null;
-        const isBlocked =
-          decisionState === 'NO_TRADE_BLOCKED' || Boolean(signal?.isValid?.decision?.blocked);
+        const decisionState = getDecisionState(signal);
+        const isBlocked = isDecisionBlocked(signal);
         const tradeValid = Boolean(signal?.isValid?.isValid);
         const direction = normalizeTf(signal.direction);
 

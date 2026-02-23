@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { ok, serverError } from '../../../../utils/http-response.js';
+import { getDecisionScore, getDecisionState } from '../../../../core/policy/decision-contract.js';
 
 export default function autoTradingRoutes({
   tradeManager,
@@ -149,8 +150,8 @@ export default function autoTradingRoutes({
                   ? {
                       pair: signal.pair || symbol,
                       broker: signal.broker ?? broker,
-                      decisionState: signal?.isValid?.decision?.state || null,
-                      decisionScore: signal?.isValid?.decision?.score ?? null,
+                      decisionState: getDecisionState(signal),
+                      decisionScore: getDecisionScore(signal),
                       direction: signal.direction || null,
                       confidence: signal.confidence ?? null,
                       strength: signal.strength ?? null,

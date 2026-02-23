@@ -1,5 +1,7 @@
 import { getPairMetadata } from '../../../config/pair-catalog.js';
 
+const clampValue = (value, min, max) => Math.max(min, Math.min(max, value));
+
 export const analysisCore = {
   async analyzeEconomics(pair) {
     const metadata = this.getInstrumentMetadata?.(pair) || getPairMetadata(pair);
@@ -238,7 +240,38 @@ export const analysisCore = {
     }
     strength = Number(strength.toFixed(1));
 
-    const entryParams = this.calculateEntryParameters(pair, direction, technical, marketPrice);
+    let entryParams = this.calculateEntryParameters(pair, direction, technical, marketPrice);
+
+    const signalIntelligence = this.computeSmartSignalIntelligence({
+      pair,
+      direction,
+      economic,
+      news,
+      technical,
+      entry: entryParams,
+      dataQualityContext,
+      confidence,
+      strength,
+      finalScore,
+    });
+
+    if (!dataQualityContext.shouldBlock && direction !== 'NEUTRAL') {
+      const adjustedFinalScore = Number(
+        (finalScore * Number(signalIntelligence.scoreMultiplier || 1)).toFixed(2)
+      );
+      finalScore = clampValue(adjustedFinalScore, -100, 100);
+      direction = this.determineDirection(finalScore, economic, news, technical);
+      entryParams = this.calculateEntryParameters(pair, direction, technical, marketPrice);
+
+      const adjustedConfidence = confidence + Number(signalIntelligence.confidenceDelta || 0);
+      confidence = Number(clampValue(adjustedConfidence, 0, 100).toFixed(1));
+
+      const scoreStrength = Math.min(Math.abs(finalScore), 100);
+      const confidenceStrength = Math.max(0, confidence - 5);
+      strength = Number(
+        clampValue(scoreStrength * 0.75 + confidenceStrength * 0.25, 0, 100).toFixed(1)
+      );
+    }
 
     const explainability = this.buildExplainability({
       pair,
@@ -286,7 +319,12 @@ export const analysisCore = {
       }
       estimatedWinRate = Math.max(35, Math.min(95, estimatedWinRate));
     }
+
+    if (!dataQualityContext.shouldBlock && direction !== 'NEUTRAL') {
+      estimatedWinRate = Number(estimatedWinRate) + Number(signalIntelligence.winRateDelta || 0);
+    }
     estimatedWinRate = Number(estimatedWinRate.toFixed(1));
+    estimatedWinRate = clampValue(estimatedWinRate, 35, 95);
 
     const tradePlan = this.buildTradePlan(
       pair,
@@ -396,6 +434,19 @@ export const analysisCore = {
               (componentWeights.dataQualityWeightFactor ?? 1).toFixed(3)
             ),
           },
+        },
+        intelligence: {
+          qualityIndex: Number(signalIntelligence.qualityIndex.toFixed(1)),
+          qualityBand: signalIntelligence.qualityBand,
+          scoreMultiplier: Number(signalIntelligence.scoreMultiplier.toFixed(3)),
+          confidenceDelta: Number(signalIntelligence.confidenceDelta || 0),
+          winRateDelta: Number(signalIntelligence.winRateDelta || 0),
+          directionAgreementRatio: Number(signalIntelligence.directionAgreementRatio.toFixed(3)),
+          rrQuality: Number(signalIntelligence.rrQuality.toFixed(1)),
+          newsRiskPenalty: Number(signalIntelligence.newsRiskPenalty.toFixed(1)),
+          dataQualityPenalty: Number(signalIntelligence.dataQualityPenalty.toFixed(1)),
+          regimeAdjustment: Number(signalIntelligence.regimeAdjustment.toFixed(1)),
+          volatilityAdjustment: Number(signalIntelligence.volatilityAdjustment.toFixed(1)),
         },
         marketData: resolvedDataQuality
           ? {
@@ -1203,5 +1254,207 @@ export const analysisCore = {
     };
 
     return map[direction] || null;
+  },
+
+  computeSmartSignalIntelligence({
+    pair,
+    direction,
+    economic,
+    news,
+    technical,
+    entry,
+    dataQualityContext,
+  }) {
+    const normalizedDirection = String(direction || '').toUpperCase();
+    const metadata = this.getInstrumentMetadata?.(pair) || getPairMetadata(pair) || null;
+    const assetClass = String(metadata?.assetClass || 'forex')
+      .trim()
+      .toLowerCase();
+
+    const profile =
+      assetClass === 'crypto'
+        ? {
+            rrStrong: 2.35,
+            rrGood: 1.95,
+            rrMin: 1.6,
+            agreementWeight: 0.78,
+            regimeTrendBonus: 10,
+            regimeRangePenalty: -11,
+            volatilityNormalBonus: 4,
+            volatilityVolatilePenalty: -5,
+            volatilityExtremePenalty: -10,
+            newsPenaltyMultiplier: 1.2,
+            dataPenaltyMultiplier: 1.15,
+            scoreFloor: 0.68,
+            scoreCeil: 1.14,
+          }
+        : assetClass === 'metals'
+          ? {
+              rrStrong: 2.15,
+              rrGood: 1.85,
+              rrMin: 1.45,
+              agreementWeight: 0.74,
+              regimeTrendBonus: 9,
+              regimeRangePenalty: -9,
+              volatilityNormalBonus: 5,
+              volatilityVolatilePenalty: -7,
+              volatilityExtremePenalty: -13,
+              newsPenaltyMultiplier: 1.1,
+              dataPenaltyMultiplier: 1.05,
+              scoreFloor: 0.7,
+              scoreCeil: 1.16,
+            }
+          : {
+              rrStrong: 2.0,
+              rrGood: 1.75,
+              rrMin: 1.4,
+              agreementWeight: 0.7,
+              regimeTrendBonus: 8,
+              regimeRangePenalty: -8,
+              volatilityNormalBonus: 6,
+              volatilityVolatilePenalty: -6,
+              volatilityExtremePenalty: -12,
+              newsPenaltyMultiplier: 1,
+              dataPenaltyMultiplier: 1,
+              scoreFloor: 0.72,
+              scoreCeil: 1.18,
+            };
+
+    if (!normalizedDirection || normalizedDirection === 'NEUTRAL') {
+      return {
+        qualityIndex: 50,
+        qualityBand: 'neutral',
+        scoreMultiplier: 1,
+        confidenceDelta: 0,
+        winRateDelta: 0,
+        directionAgreementRatio: 0.5,
+        rrQuality: 0,
+        newsRiskPenalty: 0,
+        dataQualityPenalty: 0,
+        regimeAdjustment: 0,
+        volatilityAdjustment: 0,
+        assetClass,
+      };
+    }
+
+    const votes = [
+      String(economic?.direction || '').toUpperCase(),
+      String(this.normalizeNewsDirection(news?.direction) || '').toUpperCase(),
+      String(technical?.direction || '').toUpperCase(),
+    ].filter((value) => value === 'BUY' || value === 'SELL');
+
+    const alignedVotes = votes.filter((value) => value === normalizedDirection).length;
+    const directionAgreementRatio = votes.length > 0 ? alignedVotes / votes.length : 0.5;
+    const agreementScore = directionAgreementRatio * 100;
+
+    const regimeState = String(technical?.regimeSummary?.state || technical?.regime?.state || '')
+      .trim()
+      .toLowerCase();
+    const regimeAdjustment =
+      regimeState === 'trend' || regimeState === 'trending'
+        ? profile.regimeTrendBonus
+        : regimeState === 'range' || regimeState === 'ranging'
+          ? profile.regimeRangePenalty
+          : regimeState === 'breakout'
+            ? Math.round(profile.regimeTrendBonus * 0.75)
+            : 0;
+
+    const volatilityState = String(
+      technical?.volatilitySummary?.state || technical?.volatility?.state || ''
+    )
+      .trim()
+      .toLowerCase();
+    const volatilityAdjustment =
+      volatilityState === 'normal'
+        ? profile.volatilityNormalBonus
+        : volatilityState === 'calm'
+          ? 3
+          : volatilityState === 'volatile'
+            ? profile.volatilityVolatilePenalty
+            : volatilityState === 'extreme'
+              ? profile.volatilityExtremePenalty
+              : 0;
+
+    const riskReward = Number(entry?.riskReward);
+    const rrQuality = Number.isFinite(riskReward)
+      ? riskReward >= profile.rrStrong
+        ? 12
+        : riskReward >= profile.rrGood
+          ? 7
+          : riskReward >= profile.rrMin
+            ? 2
+            : riskReward < Math.max(1.1, profile.rrMin - 0.2)
+              ? -10
+              : -3
+      : -2;
+
+    const newsImpact = Number(news?.impact);
+    const upcomingEvents = Number(news?.upcomingEvents);
+    const rawNewsRiskPenalty =
+      Number.isFinite(newsImpact) &&
+      newsImpact >= 70 &&
+      Number.isFinite(upcomingEvents) &&
+      upcomingEvents > 0
+        ? 12
+        : Number.isFinite(newsImpact) && newsImpact >= 60
+          ? 7
+          : Number.isFinite(newsImpact) && newsImpact >= 45
+            ? 3
+            : 0;
+    const newsRiskPenalty = rawNewsRiskPenalty * profile.newsPenaltyMultiplier;
+
+    const dqModifier = Number(dataQualityContext?.modifier);
+    const modifierPenalty = Number.isFinite(dqModifier)
+      ? (1 - clampValue(dqModifier, 0, 1)) * 25
+      : 0;
+    const dataQualityPenalty =
+      (modifierPenalty +
+        (dataQualityContext?.shouldBlock ? 20 : 0) +
+        (dataQualityContext?.stale ? 4 : 0)) *
+      profile.dataPenaltyMultiplier;
+
+    const qualityIndexRaw =
+      52 +
+      (agreementScore - 50) * profile.agreementWeight +
+      regimeAdjustment +
+      volatilityAdjustment +
+      rrQuality -
+      newsRiskPenalty -
+      dataQualityPenalty;
+    const qualityIndex = clampValue(qualityIndexRaw, 0, 100);
+
+    const scoreMultiplier = clampValue(
+      profile.scoreFloor + (qualityIndex / 100) * (profile.scoreCeil - profile.scoreFloor),
+      profile.scoreFloor,
+      profile.scoreCeil
+    );
+    const confidenceDelta = Math.round((qualityIndex - 50) * 0.22);
+    const winRateDelta = Math.round((qualityIndex - 50) * 0.28 + (rrQuality > 0 ? 2 : 0));
+
+    const qualityBand =
+      qualityIndex >= 75
+        ? 'elite'
+        : qualityIndex >= 62
+          ? 'strong'
+          : qualityIndex >= 48
+            ? 'balanced'
+            : qualityIndex >= 36
+              ? 'weak'
+              : 'fragile';
+
+    return {
+      qualityIndex,
+      qualityBand,
+      scoreMultiplier,
+      confidenceDelta,
+      winRateDelta,
+      directionAgreementRatio,
+      rrQuality,
+      newsRiskPenalty,
+      dataQualityPenalty,
+      regimeAdjustment,
+      volatilityAdjustment,
+      assetClass,
+    };
   },
 };

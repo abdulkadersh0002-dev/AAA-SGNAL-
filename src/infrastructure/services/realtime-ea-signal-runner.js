@@ -6,6 +6,8 @@ import {
   normalizeBroker,
   normalizeSymbol,
 } from '../../utils/ea-symbols.js';
+import { resolveEaFreshnessPolicy } from '../../core/policy/ea-freshness-policy.js';
+import { getDecisionState } from '../../core/policy/decision-contract.js';
 
 const computeMidFromQuote = (quote) => {
   if (!quote || typeof quote !== 'object') {
@@ -62,6 +64,25 @@ export class RealtimeEaSignalRunner {
       lastScanTotal: 0,
       lastScanBatch: 0,
       lastScanSymbols: 0,
+      pendingBrokers: 0,
+      pendingSymbols: 0,
+      maxPendingSymbolsSeen: 0,
+      flushRuns: 0,
+      flushInProgress: false,
+      lastFlushAt: null,
+      lastFlushDurationMs: 0,
+      maxFlushDurationMs: 0,
+      queueOverflowDrops: 0,
+      lastQueueOverflowAt: null,
+      droppedEvents: [],
+      droppedCounts: {},
+      droppedByBroker: {},
+      quoteRecoveryAttempts: 0,
+      quoteRecoveriesTotal: 0,
+      quoteRecoveryByBroker: {},
+      quoteRecoveryBySource: {},
+      lastQuoteRecoveryAt: null,
+      recentQuoteRecoveries: [],
       lastSignalAt: null,
       lastCandidateAt: null,
       hotSymbols: [],
@@ -90,6 +111,13 @@ export class RealtimeEaSignalRunner {
       ? Math.max(0, Math.trunc(Number(options.maxSnapshotRequestsPerFlush)))
       : 10;
 
+    const envMaxPendingPerBroker = Number(process.env.EA_SIGNAL_MAX_PENDING_SYMBOLS_PER_BROKER);
+    this.maxPendingSymbolsPerBroker = Number.isFinite(Number(options.maxPendingSymbolsPerBroker))
+      ? Math.max(25, Math.trunc(Number(options.maxPendingSymbolsPerBroker)))
+      : Number.isFinite(envMaxPendingPerBroker)
+        ? Math.max(25, Math.trunc(envMaxPendingPerBroker))
+        : 500;
+
     // Periodic revalidation ("living signals")
     const envRevalidateMs = Number(process.env.EA_SIGNAL_REVALIDATE_INTERVAL_MS);
     this.revalidateIntervalMs = Number.isFinite(Number(options.revalidateIntervalMs))
@@ -114,18 +142,16 @@ export class RealtimeEaSignalRunner {
     this.lastRevalidatedAt = new Map(); // key -> timestamp
 
     // Data freshness
-    const envDashQuoteMaxAgeMs = Number(process.env.EA_DASHBOARD_QUOTE_MAX_AGE_MS);
+    const freshnessPolicy = resolveEaFreshnessPolicy();
     this.quoteMaxAgeMs = Number.isFinite(Number(options.quoteMaxAgeMs))
       ? Number(options.quoteMaxAgeMs)
-      : Number.isFinite(envDashQuoteMaxAgeMs)
-        ? Math.max(0, envDashQuoteMaxAgeMs)
-        : 30 * 1000;
+      : freshnessPolicy.dashboardQuoteMaxAgeMs;
     this.snapshotMaxAgeMs = Number.isFinite(Number(options.snapshotMaxAgeMs))
       ? Number(options.snapshotMaxAgeMs)
-      : 5 * 60 * 1000;
+      : freshnessPolicy.snapshotMaxAgeMs;
     this.snapshotRequestTtlMs = Number.isFinite(Number(options.snapshotRequestTtlMs))
       ? Number(options.snapshotRequestTtlMs)
-      : 2 * 60 * 1000;
+      : freshnessPolicy.snapshotRequestTtlMs;
 
     // Strong-signal gating
     const envMinConfidence = Number(process.env.EA_SIGNAL_MIN_CONFIDENCE);
@@ -267,12 +293,8 @@ export class RealtimeEaSignalRunner {
         ? 45
         : null;
 
-    // Default: only publish strict entry-ready signals to the dashboard.
+    // Default: publish strict entry-ready signals to the dashboard.
     // This keeps the dashboard focused on tradeable setups (ENTER + trade-valid).
-    // Set EA_DASHBOARD_ENTRY_ONLY=0/false/no to restore the previous publish policy.
-    const envEntryOnly = String(process.env.EA_DASHBOARD_ENTRY_ONLY || '')
-      .trim()
-      .toLowerCase();
 
     const allowCandidatesByDefault =
       typeof options.dashboardAllowCandidates === 'boolean'
@@ -355,28 +377,6 @@ export class RealtimeEaSignalRunner {
           ? 60
           : 55;
 
-    // When enabled, broadcast fully-analyzed WAIT/MONITOR candidates (not trade-valid yet).
-    // This keeps the dashboard informative even when no strong ENTER signals exist.
-    this.dashboardAllowCandidates =
-      typeof options.dashboardAllowCandidates === 'boolean'
-        ? options.dashboardAllowCandidates
-        : envAllowCandidates === '1' ||
-            envAllowCandidates === 'true' ||
-            envAllowCandidates === 'yes'
-          ? true
-          : eaOnlyMode || isNonProd;
-
-    this.dashboardEntryOnly =
-      typeof options.dashboardEntryOnly === 'boolean'
-        ? options.dashboardEntryOnly
-        : envEntryOnly === '0' || envEntryOnly === 'false' || envEntryOnly === 'no'
-          ? false
-          : envEntryOnly === '1' || envEntryOnly === 'true' || envEntryOnly === 'yes'
-            ? true
-            : eaOnlyMode || isNonProd
-              ? false
-              : true;
-
     this.minConfidence = Number.isFinite(Number(options.minConfidence))
       ? Number(options.minConfidence)
       : Number.isFinite(envMinConfidence)
@@ -415,53 +415,45 @@ export class RealtimeEaSignalRunner {
             ? 55
             : this.minStrength;
 
-    // Near-strong: allow slightly-under-threshold watch candidates to be broadcast
-    // so the dashboard doesn't look empty while a setup is forming.
-    const envNearDeltaConfidence = Number(process.env.EA_SIGNAL_NEAR_DELTA_CONFIDENCE);
-    const envNearDeltaStrength = Number(process.env.EA_SIGNAL_NEAR_DELTA_STRENGTH);
-
-    this.nearDeltaConfidence = Number.isFinite(Number(options.nearDeltaConfidence))
-      ? Math.max(0, Number(options.nearDeltaConfidence))
-      : Number.isFinite(envNearDeltaConfidence)
-        ? Math.max(0, envNearDeltaConfidence)
-        : this.smartStrong
-          ? 6
-          : 10;
-
-    this.nearDeltaStrength = Number.isFinite(Number(options.nearDeltaStrength))
-      ? Math.max(0, Number(options.nearDeltaStrength))
-      : Number.isFinite(envNearDeltaStrength)
-        ? Math.max(0, envNearDeltaStrength)
-        : this.smartStrong
-          ? 6
-          : 10;
-
-    // Dashboard: allow early-forming setups only when explicitly enabled.
-    const envAllowWait = String(process.env.EA_SIGNAL_ALLOW_WAIT_MONITOR || '').toLowerCase();
-    const envAllowNear = String(process.env.EA_SIGNAL_ALLOW_NEAR_STRONG || '').toLowerCase();
-
-    this.allowWaitMonitor =
-      typeof options.allowWaitMonitor === 'boolean'
-        ? options.allowWaitMonitor
-        : envAllowWait === '1' || envAllowWait === 'true' || envAllowWait === 'yes'
-          ? true
-          : allowCandidatesByDefault;
-
-    this.allowNearStrong =
-      typeof options.allowNearStrong === 'boolean'
-        ? options.allowNearStrong
-        : envAllowNear === '1' || envAllowNear === 'true' || envAllowNear === 'yes'
-          ? true
-          : allowCandidatesByDefault;
-
     // State
     this.pendingByBroker = new Map(); // broker -> Set(symbol)
     this.flushTimer = null;
+    this.flushInProgress = false;
+    this.flushQueued = false;
     this.lastGeneratedAt = new Map(); // key -> timestamp
     this.lastFingerprint = new Map(); // key -> string
     this.cursorByBroker = new Map(); // broker -> round-robin cursor
     this.lastPublishedBarTime = new Map(); // key -> epoch ms
     this.lastPublishedMeta = new Map(); // key -> { decisionState, tradeValid, status, confluenceScore, expiresAt }
+    this.lastQuoteRecoveryAtByKey = new Map(); // key -> epoch ms
+    this.lastSnapshotRequestAtByKey = new Map(); // key -> epoch ms
+    const envQuoteRecoveryCooldownMs = Number(process.env.EA_QUOTE_RECOVERY_COOLDOWN_MS);
+    this.quoteRecoveryCooldownMs = Number.isFinite(Number(options.quoteRecoveryCooldownMs))
+      ? Math.max(1000, Number(options.quoteRecoveryCooldownMs))
+      : Number.isFinite(envQuoteRecoveryCooldownMs)
+        ? Math.max(1000, envQuoteRecoveryCooldownMs)
+        : 15_000;
+    const envSnapshotRequestCooldownMs = Number(process.env.EA_SNAPSHOT_REQUEST_COOLDOWN_MS);
+    this.snapshotRequestCooldownMs = Number.isFinite(Number(options.snapshotRequestCooldownMs))
+      ? Math.max(1000, Number(options.snapshotRequestCooldownMs))
+      : Number.isFinite(envSnapshotRequestCooldownMs)
+        ? Math.max(1000, envSnapshotRequestCooldownMs)
+        : 20_000;
+    this.refreshQueueStats();
+  }
+
+  refreshQueueStats() {
+    let pendingSymbols = 0;
+    for (const set of this.pendingByBroker.values()) {
+      pendingSymbols += set?.size || 0;
+    }
+    this.dashboardStats.pendingBrokers = this.pendingByBroker.size;
+    this.dashboardStats.pendingSymbols = pendingSymbols;
+    this.dashboardStats.maxPendingSymbolsSeen = Math.max(
+      Number(this.dashboardStats.maxPendingSymbolsSeen || 0),
+      pendingSymbols
+    );
+    this.dashboardStats.flushInProgress = this.flushInProgress === true;
   }
 
   recordScan({ broker, total, batchSize, symbols } = {}) {
@@ -533,6 +525,241 @@ export class RealtimeEaSignalRunner {
     this.dashboardStats.lastRejects = list;
   }
 
+  getQuoteRecoveryKey({ broker, symbol } = {}) {
+    const normalizedBroker = normalizeBroker(broker);
+    const normalizedSymbol = normalizeSymbol(symbol);
+    if (!normalizedBroker || !normalizedSymbol) {
+      return null;
+    }
+    return `${normalizedBroker}:${normalizedSymbol}`;
+  }
+
+  canAttemptQuoteRecovery({ broker, symbol, now = Date.now() } = {}) {
+    const key = this.getQuoteRecoveryKey({ broker, symbol });
+    if (!key) {
+      return false;
+    }
+    const last = Number(this.lastQuoteRecoveryAtByKey.get(key) || 0);
+    return now - last >= this.quoteRecoveryCooldownMs;
+  }
+
+  recordQuoteRecoveryAttempt({ broker, symbol } = {}) {
+    this.dashboardStats.quoteRecoveryAttempts =
+      Number(this.dashboardStats.quoteRecoveryAttempts || 0) + 1;
+    if (broker || symbol) {
+      this.recordReject('quote_recovery_attempted', {
+        broker: broker || null,
+        symbol: symbol || null,
+      });
+    }
+  }
+
+  recordQuoteRecovery({ broker, symbol, source, price, now = Date.now() } = {}) {
+    const brokerKey = String(normalizeBroker(broker) || 'unknown');
+    const symbolKey = String(normalizeSymbol(symbol) || '').toUpperCase() || null;
+    const sourceKey = String(source || 'fallback_unknown')
+      .trim()
+      .toLowerCase();
+
+    this.dashboardStats.quoteRecoveriesTotal =
+      Number(this.dashboardStats.quoteRecoveriesTotal || 0) + 1;
+    this.dashboardStats.lastQuoteRecoveryAt = now;
+
+    const recoveryByBroker =
+      this.dashboardStats.quoteRecoveryByBroker &&
+      typeof this.dashboardStats.quoteRecoveryByBroker === 'object'
+        ? this.dashboardStats.quoteRecoveryByBroker
+        : {};
+    recoveryByBroker[brokerKey] = Number(recoveryByBroker[brokerKey] || 0) + 1;
+    this.dashboardStats.quoteRecoveryByBroker = recoveryByBroker;
+
+    const recoveryBySource =
+      this.dashboardStats.quoteRecoveryBySource &&
+      typeof this.dashboardStats.quoteRecoveryBySource === 'object'
+        ? this.dashboardStats.quoteRecoveryBySource
+        : {};
+    recoveryBySource[sourceKey] = Number(recoveryBySource[sourceKey] || 0) + 1;
+    this.dashboardStats.quoteRecoveryBySource = recoveryBySource;
+
+    const entries = Array.isArray(this.dashboardStats.recentQuoteRecoveries)
+      ? this.dashboardStats.recentQuoteRecoveries
+      : [];
+    entries.push({
+      ts: now,
+      broker: brokerKey,
+      symbol: symbolKey,
+      source: sourceKey,
+      price: Number.isFinite(Number(price)) ? Number(price) : null,
+    });
+    while (entries.length > 25) {
+      entries.shift();
+    }
+    this.dashboardStats.recentQuoteRecoveries = entries;
+  }
+
+  attemptQuoteRecovery({ broker, symbol, mid, source, now = Date.now() } = {}) {
+    if (!Number.isFinite(Number(mid))) {
+      return null;
+    }
+    if (!this.eaBridgeService?.recordQuote || !this.eaBridgeService?.getQuotes) {
+      return null;
+    }
+
+    const normalizedBroker = normalizeBroker(broker);
+    const normalizedSymbol = normalizeSymbol(symbol);
+    if (!normalizedBroker || !normalizedSymbol) {
+      return null;
+    }
+
+    if (
+      !this.canAttemptQuoteRecovery({ broker: normalizedBroker, symbol: normalizedSymbol, now })
+    ) {
+      return null;
+    }
+
+    this.lastQuoteRecoveryAtByKey.set(`${normalizedBroker}:${normalizedSymbol}`, now);
+    this.recordQuoteRecoveryAttempt({ broker: normalizedBroker, symbol: normalizedSymbol });
+
+    const price = Number(mid);
+    const result = this.eaBridgeService.recordQuote({
+      broker: normalizedBroker,
+      symbol: normalizedSymbol,
+      bid: price,
+      ask: price,
+      last: price,
+      timestamp: now,
+      source: source || 'runner_recovery',
+    });
+
+    if (result?.success === false) {
+      this.recordReject('quote_recovery_failed', {
+        broker: normalizedBroker,
+        symbol: normalizedSymbol,
+        source: source || 'runner_recovery',
+        message: result?.message || null,
+      });
+      return null;
+    }
+
+    const refreshed = this.eaBridgeService.getQuotes({
+      broker: normalizedBroker,
+      symbols: [normalizedSymbol],
+      maxAgeMs: this.quoteMaxAgeMs,
+    });
+    const recovered = Array.isArray(refreshed) && refreshed.length ? refreshed[0] : null;
+
+    if (recovered) {
+      this.recordQuoteRecovery({
+        broker: normalizedBroker,
+        symbol: normalizedSymbol,
+        source: source || 'runner_recovery',
+        price,
+        now,
+      });
+      return recovered;
+    }
+
+    this.recordReject('quote_recovery_not_visible', {
+      broker: normalizedBroker,
+      symbol: normalizedSymbol,
+      source: source || 'runner_recovery',
+    });
+    return null;
+  }
+
+  requestSnapshotBestEffort({ broker, symbol, ctx, reason = null, now = Date.now() } = {}) {
+    if (!this.eaBridgeService?.requestMarketSnapshot) {
+      return false;
+    }
+
+    const normalizedBroker = normalizeBroker(broker);
+    const normalizedSymbol = normalizeSymbol(symbol);
+    if (!normalizedBroker || !normalizedSymbol) {
+      return false;
+    }
+
+    const key = `${normalizedBroker}:${normalizedSymbol}`;
+    const last = Number(this.lastSnapshotRequestAtByKey.get(key) || 0);
+    if (last > 0 && now - last < this.snapshotRequestCooldownMs) {
+      this.recordReject('snapshot_request_throttled', {
+        broker: normalizedBroker,
+        symbol: normalizedSymbol,
+        reason,
+        cooldownMs: this.snapshotRequestCooldownMs,
+        remainingMs: Math.max(0, this.snapshotRequestCooldownMs - (now - last)),
+      });
+      return false;
+    }
+
+    if (ctx && typeof ctx.snapshotRequestsLeft === 'number') {
+      if (ctx.snapshotRequestsLeft <= 0) {
+        this.recordReject('snapshot_request_budget_exhausted', {
+          broker: normalizedBroker,
+          symbol: normalizedSymbol,
+          reason,
+        });
+        return false;
+      }
+      ctx.snapshotRequestsLeft -= 1;
+    }
+
+    try {
+      this.eaBridgeService.requestMarketSnapshot({
+        broker: normalizedBroker,
+        symbol: normalizedSymbol,
+        ttlMs: this.snapshotRequestTtlMs,
+      });
+      this.lastSnapshotRequestAtByKey.set(key, now);
+      return true;
+    } catch (_error) {
+      this.recordReject('snapshot_request_error', {
+        broker: normalizedBroker,
+        symbol: normalizedSymbol,
+        reason,
+      });
+      return false;
+    }
+  }
+
+  recordDroppedEvent({ reason, broker, symbol, event, message } = {}) {
+    const key = String(reason || 'dropped_unknown');
+    const brokerKey =
+      String(broker || 'unknown')
+        .trim()
+        .toLowerCase() || 'unknown';
+    const now = Date.now();
+
+    const droppedCounts =
+      this.dashboardStats.droppedCounts && typeof this.dashboardStats.droppedCounts === 'object'
+        ? this.dashboardStats.droppedCounts
+        : {};
+    droppedCounts[key] = Number(droppedCounts[key] || 0) + 1;
+    this.dashboardStats.droppedCounts = droppedCounts;
+
+    const droppedByBroker =
+      this.dashboardStats.droppedByBroker && typeof this.dashboardStats.droppedByBroker === 'object'
+        ? this.dashboardStats.droppedByBroker
+        : {};
+    droppedByBroker[brokerKey] = Number(droppedByBroker[brokerKey] || 0) + 1;
+    this.dashboardStats.droppedByBroker = droppedByBroker;
+
+    const entries = Array.isArray(this.dashboardStats.droppedEvents)
+      ? this.dashboardStats.droppedEvents
+      : [];
+    entries.push({
+      ts: now,
+      reason: key,
+      broker: brokerKey,
+      symbol: symbol ? String(symbol).trim().toUpperCase() : null,
+      event: event ? String(event) : null,
+      message: message ? String(message) : null,
+    });
+    while (entries.length > 50) {
+      entries.shift();
+    }
+    this.dashboardStats.droppedEvents = entries;
+  }
+
   recordDebugCandidate(candidate) {
     if (!candidate || typeof candidate !== 'object') {
       return;
@@ -570,6 +797,31 @@ export class RealtimeEaSignalRunner {
         : [],
       hotSymbols: Array.isArray(this.dashboardStats.hotSymbols)
         ? [...this.dashboardStats.hotSymbols]
+        : [],
+      droppedEvents: Array.isArray(this.dashboardStats.droppedEvents)
+        ? [...this.dashboardStats.droppedEvents]
+        : [],
+      droppedCounts:
+        this.dashboardStats.droppedCounts && typeof this.dashboardStats.droppedCounts === 'object'
+          ? { ...this.dashboardStats.droppedCounts }
+          : {},
+      droppedByBroker:
+        this.dashboardStats.droppedByBroker &&
+        typeof this.dashboardStats.droppedByBroker === 'object'
+          ? { ...this.dashboardStats.droppedByBroker }
+          : {},
+      quoteRecoveryByBroker:
+        this.dashboardStats.quoteRecoveryByBroker &&
+        typeof this.dashboardStats.quoteRecoveryByBroker === 'object'
+          ? { ...this.dashboardStats.quoteRecoveryByBroker }
+          : {},
+      quoteRecoveryBySource:
+        this.dashboardStats.quoteRecoveryBySource &&
+        typeof this.dashboardStats.quoteRecoveryBySource === 'object'
+          ? { ...this.dashboardStats.quoteRecoveryBySource }
+          : {},
+      recentQuoteRecoveries: Array.isArray(this.dashboardStats.recentQuoteRecoveries)
+        ? [...this.dashboardStats.recentQuoteRecoveries]
         : [],
     };
   }
@@ -745,19 +997,41 @@ export class RealtimeEaSignalRunner {
     }
 
     const set = this.pendingByBroker.get(brokerId) || new Set();
+    let dropped = 0;
     for (const raw of list) {
       const symbol = normalizeSymbol(raw);
       if (!symbol) {
+        continue;
+      }
+      if (!set.has(symbol) && set.size >= this.maxPendingSymbolsPerBroker) {
+        dropped += 1;
         continue;
       }
       set.add(symbol);
     }
     this.pendingByBroker.set(brokerId, set);
 
+    if (dropped > 0) {
+      this.dashboardStats.queueOverflowDrops =
+        Number(this.dashboardStats.queueOverflowDrops || 0) + dropped;
+      this.dashboardStats.lastQueueOverflowAt = Date.now();
+      this.recordReject('pending_queue_overflow', {
+        broker: brokerId,
+        dropped,
+        cap: this.maxPendingSymbolsPerBroker,
+      });
+    }
+
+    this.refreshQueueStats();
+
     this.scheduleFlush();
   }
 
   scheduleFlush() {
+    if (this.flushInProgress) {
+      this.flushQueued = true;
+      return;
+    }
     if (this.flushTimer) {
       return;
     }
@@ -769,74 +1043,99 @@ export class RealtimeEaSignalRunner {
   }
 
   async flushPending() {
-    const brokers = Array.from(this.pendingByBroker.keys());
-    if (brokers.length === 0) {
+    if (this.flushInProgress) {
+      this.flushQueued = true;
       return;
     }
 
-    for (const broker of brokers) {
-      const symbolsSet = this.pendingByBroker.get(broker);
-      if (!symbolsSet || symbolsSet.size === 0) {
-        this.pendingByBroker.delete(broker);
-        continue;
+    this.flushInProgress = true;
+    this.refreshQueueStats();
+    const flushStartedAt = Date.now();
+
+    try {
+      const brokers = Array.from(this.pendingByBroker.keys());
+      if (brokers.length === 0) {
+        return;
       }
 
-      const allSymbols = Array.from(symbolsSet);
-      symbolsSet.clear();
-      this.pendingByBroker.delete(broker);
-
-      const cursor = this.cursorByBroker.get(broker) || 0;
-      const total = allSymbols.length;
-      const batchSize = Math.min(this.maxSymbolsPerFlush, total);
-
-      const batch = [];
-      const remaining = new Set();
-      for (let i = 0; i < total; i++) {
-        const idx = (cursor + i) % total;
-        const symbol = allSymbols[idx];
-        if (batch.length < batchSize) {
-          batch.push(symbol);
-        } else {
-          remaining.add(symbol);
-        }
-      }
-
-      this.cursorByBroker.set(broker, (cursor + batchSize) % Math.max(1, total));
-
-      if (remaining.size > 0) {
-        this.pendingByBroker.set(broker, remaining);
-      }
-
-      const ctx = { snapshotRequestsLeft: this.maxSnapshotRequestsPerFlush };
-
-      // Process sequentially to avoid stampeding the engine.
-      for (const symbol of batch) {
-        if (!this.isSupportedSymbol(symbol)) {
+      for (const broker of brokers) {
+        const symbolsSet = this.pendingByBroker.get(broker);
+        if (!symbolsSet || symbolsSet.size === 0) {
+          this.pendingByBroker.delete(broker);
           continue;
         }
-        try {
-          await this.maybeGenerateSignal({ broker, symbol, ctx });
-        } catch (error) {
-          this.recordReject('flush_symbol_error', {
-            broker,
-            symbol,
-            message: error?.message || null,
-          });
+
+        const allSymbols = Array.from(symbolsSet);
+        symbolsSet.clear();
+        this.pendingByBroker.delete(broker);
+
+        const cursor = this.cursorByBroker.get(broker) || 0;
+        const total = allSymbols.length;
+        const batchSize = Math.min(this.maxSymbolsPerFlush, total);
+
+        const batch = [];
+        const remaining = new Set();
+        for (let i = 0; i < total; i++) {
+          const idx = (cursor + i) % total;
+          const symbol = allSymbols[idx];
+          if (batch.length < batchSize) {
+            batch.push(symbol);
+          } else {
+            remaining.add(symbol);
+          }
+        }
+
+        this.cursorByBroker.set(broker, (cursor + batchSize) % Math.max(1, total));
+
+        if (remaining.size > 0) {
+          this.pendingByBroker.set(broker, remaining);
+        }
+
+        this.refreshQueueStats();
+
+        const ctx = { snapshotRequestsLeft: this.maxSnapshotRequestsPerFlush };
+
+        // Process sequentially to avoid stampeding the engine.
+        for (const symbol of batch) {
+          if (!this.isSupportedSymbol(symbol)) {
+            continue;
+          }
           try {
-            this.logger?.warn?.(
-              { module: 'RealtimeEaSignalRunner', broker, symbol, err: error },
-              'Realtime flush failed for symbol'
-            );
-          } catch (_logError) {
-            // best-effort
+            await this.maybeGenerateSignal({ broker, symbol, ctx });
+          } catch (error) {
+            this.recordReject('flush_symbol_error', {
+              broker,
+              symbol,
+              message: error?.message || null,
+            });
+            try {
+              this.logger?.warn?.(
+                { module: 'RealtimeEaSignalRunner', broker, symbol, err: error },
+                'Realtime flush failed for symbol'
+              );
+            } catch (_logError) {
+              // best-effort
+            }
           }
         }
       }
-    }
+    } finally {
+      this.flushInProgress = false;
+      const flushDuration = Math.max(0, Date.now() - flushStartedAt);
+      this.dashboardStats.flushRuns = Number(this.dashboardStats.flushRuns || 0) + 1;
+      this.dashboardStats.lastFlushAt = Date.now();
+      this.dashboardStats.lastFlushDurationMs = flushDuration;
+      this.dashboardStats.maxFlushDurationMs = Math.max(
+        Number(this.dashboardStats.maxFlushDurationMs || 0),
+        flushDuration
+      );
+      this.refreshQueueStats();
 
-    // If there are still pending symbols, continue flushing.
-    if (this.pendingByBroker.size > 0) {
-      this.scheduleFlush();
+      const needsAnotherPass = this.pendingByBroker.size > 0 || this.flushQueued;
+      this.flushQueued = false;
+      if (needsAnotherPass) {
+        this.scheduleFlush();
+      }
     }
   }
 
@@ -856,7 +1155,7 @@ export class RealtimeEaSignalRunner {
       ? Number(signal.entry.price).toFixed(6)
       : 'na';
 
-    const decisionState = String(signal?.isValid?.decision?.state || '').toUpperCase() || 'na';
+    const decisionState = String(getDecisionState(signal) || '').toUpperCase() || 'na';
     const status =
       String(signal?.signalStatus || signal?.validity?.state || '').toUpperCase() || 'na';
     const confluenceScore = Number.isFinite(Number(signal?.components?.confluence?.score))
@@ -878,7 +1177,7 @@ export class RealtimeEaSignalRunner {
     const quotes = this.eaBridgeService?.getQuotes
       ? this.eaBridgeService.getQuotes({ broker, symbols: [symbol], maxAgeMs: this.quoteMaxAgeMs })
       : [];
-    const quote = Array.isArray(quotes) && quotes.length ? quotes[0] : null;
+    let quote = Array.isArray(quotes) && quotes.length ? quotes[0] : null;
 
     const snapshot = this.eaBridgeService?.getMarketSnapshot
       ? this.eaBridgeService.getMarketSnapshot({ broker, symbol, maxAgeMs: this.snapshotMaxAgeMs })
@@ -944,30 +1243,28 @@ export class RealtimeEaSignalRunner {
         }
       }
       // No local market data yet; ask EA to send a snapshot so the next scan cycle can proceed.
-      try {
-        if (ctx && typeof ctx.snapshotRequestsLeft === 'number') {
-          if (ctx.snapshotRequestsLeft > 0) {
-            ctx.snapshotRequestsLeft -= 1;
-            this.eaBridgeService?.requestMarketSnapshot?.({
-              broker,
-              symbol,
-              ttlMs: this.snapshotRequestTtlMs,
-            });
-          }
-        } else {
-          this.eaBridgeService?.requestMarketSnapshot?.({
-            broker,
-            symbol,
-            ttlMs: this.snapshotRequestTtlMs,
-          });
-        }
-      } catch (_error) {
-        // best-effort
-      }
+      this.requestSnapshotBestEffort({ broker, symbol, ctx, reason: 'missing_market_data', now });
       return;
     }
 
-    const mid = quote ? computeMidFromQuote(quote) : (barFallback?.price ?? snapshotMid);
+    const fallbackMid = barFallback?.price ?? snapshotMid;
+    if (!quote && Number.isFinite(fallbackMid)) {
+      const recoverySource = barFallback
+        ? `bars_${String(barFallback.timeframe || 'unknown').toLowerCase()}`
+        : 'snapshot_mid';
+      const recoveredQuote = this.attemptQuoteRecovery({
+        broker,
+        symbol,
+        mid: fallbackMid,
+        source: recoverySource,
+        now,
+      });
+      if (recoveredQuote) {
+        quote = recoveredQuote;
+      }
+    }
+
+    const mid = quote ? computeMidFromQuote(quote) : fallbackMid;
     if (!Number.isFinite(mid)) {
       return;
     }
@@ -1030,22 +1327,7 @@ export class RealtimeEaSignalRunner {
 
     if (!snapshot) {
       // Ask EA to send the full technical snapshot; dashboard publishing may require it.
-      if (ctx && typeof ctx.snapshotRequestsLeft === 'number') {
-        if (ctx.snapshotRequestsLeft > 0) {
-          ctx.snapshotRequestsLeft -= 1;
-          this.eaBridgeService?.requestMarketSnapshot?.({
-            broker,
-            symbol,
-            ttlMs: this.snapshotRequestTtlMs,
-          });
-        }
-      } else {
-        this.eaBridgeService?.requestMarketSnapshot?.({
-          broker,
-          symbol,
-          ttlMs: this.snapshotRequestTtlMs,
-        });
-      }
+      this.requestSnapshotBestEffort({ broker, symbol, ctx, reason: 'snapshot_missing', now });
 
       if (this.dashboardRequireSnapshot) {
         // No decision should be published before the full analysis snapshot is ready.
@@ -1087,7 +1369,6 @@ export class RealtimeEaSignalRunner {
     let rawSignal;
     try {
       const signalFactory = this.eaBridgeService?.getSignalFactory?.();
-      const snapshotManager = this.eaBridgeService?.getSnapshotManager?.();
 
       if (!signalFactory) {
         // Fallback to old method if SignalFactory not available
@@ -1209,7 +1490,7 @@ export class RealtimeEaSignalRunner {
       }
     }
 
-    const decisionState = rawSignal?.isValid?.decision?.state || null;
+    const decisionState = getDecisionState(rawSignal);
     const tradeValid = rawSignal?.isValid?.isValid === true;
 
     const confluence = rawSignal?.components?.confluence || null;
@@ -1232,10 +1513,6 @@ export class RealtimeEaSignalRunner {
       : this.minStrength;
 
     const isStrong = confidence >= minConfidence && strength >= minStrength;
-    const isNearStrong =
-      this.allowNearStrong &&
-      confidence >= minConfidence - this.nearDeltaConfidence &&
-      strength >= minStrength - this.nearDeltaStrength;
 
     const prevMeta = this.lastPublishedMeta.get(key) || null;
     const statusNow =
@@ -1263,15 +1540,12 @@ export class RealtimeEaSignalRunner {
       return dir === 'BUY' || dir === 'SELL';
     })();
 
-    const allowWaitState = this.allowWaitMonitor && decisionState === 'WAIT_MONITOR';
-    const actionableState = decisionState === 'ENTER' || allowWaitState;
-    const tier = isStrong ? 'strong' : isNearStrong ? 'near' : null;
+    const actionableState = decisionState === 'ENTER';
+    const tier = isStrong ? 'strong' : null;
 
     // Canonical semantics:
     // - 'signal' == entry-ready (ENTER) or lifecycle updates for previously ENTER signals
     // - 'signal_candidate' == watch/candidate visibility (WAIT_MONITOR, diagnostics)
-    const isEnterDecision = decisionState === 'ENTER';
-
     const requiresEnter = this.dashboardRequireEnter;
     const meetsEnter = !requiresEnter || decisionState === 'ENTER';
     const meetsConfluence =
@@ -1291,10 +1565,7 @@ export class RealtimeEaSignalRunner {
     const meetsLayers18 = !this.dashboardRequireLayers18 || layers18Ready;
     const meetsTradeValidity = tradeValid === true;
 
-    // "Analyzed" candidates: any signal that includes the canonical 18-layer payload.
-    // These are NOT necessarily trade-valid yet; they exist to explain why ENTER=0.
-    // Keep it best-effort: allow partial layer sets so the UI can still show diagnostics
-    // while bars/snapshots catch up.
+    // "Analyzed" presence marker from layered payload.
     const analyzedReady = Boolean(rawSignal?.components?.layeredAnalysis) && layers18.length > 0;
     const analyzedComplete = layers18.length >= 20;
 
@@ -1302,47 +1573,17 @@ export class RealtimeEaSignalRunner {
       const canPublishEntryReady =
         directional &&
         decisionState === 'ENTER' &&
-        tier === 'strong' &&
+        isStrong &&
+        meetsEnter &&
         meetsConfluence &&
         meetsLayers18 &&
         meetsTradeValidity;
 
-      const canPublishCandidate = this.dashboardAllowCandidates && analyzedReady;
-      const canPublishFallbackCandidate =
-        this.dashboardAllowCandidates && directional && actionableState && tier === 'strong';
-
-      if (this.dashboardEntryOnly) {
-        // Strict dashboard: keep the primary stream focused on tradeable ENTER.
-        // Still allow lifecycle updates for previously published signals (accuracy), and
-        // publish analyzed candidates on a separate channel so the UI can explain "why 0".
-        if (canPublishEntryReady || (isLifecycleUpdate && prevMeta?.decisionState === 'ENTER')) {
-          return { event: 'signal', keySuffix: '' };
-        }
-        if (canPublishCandidate || canPublishFallbackCandidate) {
-          return { event: 'signal_candidate', keySuffix: ':candidate' };
-        }
-        return null;
-      }
-
-      // Legacy publish policy:
-      // - Standard: strong/near signals in ENTER (or WAIT_MONITOR if allowed).
-      // - Candidates: analyzed payloads (optional).
-      // - Lifecycle updates: if we previously published, broadcast state transitions.
-      // - Candidates may be published for visibility even when not entry-ready.
       if (
-        (directional &&
-          isEnterDecision &&
-          tier != null &&
-          meetsEnter &&
-          meetsConfluence &&
-          meetsLayers18 &&
-          meetsTradeValidity) ||
+        canPublishEntryReady ||
         (directional && isLifecycleUpdate && prevMeta?.decisionState === 'ENTER')
       ) {
         return { event: 'signal', keySuffix: '' };
-      }
-      if (canPublishCandidate || canPublishFallbackCandidate) {
-        return { event: 'signal_candidate', keySuffix: ':candidate' };
       }
       return null;
     })();
@@ -1355,7 +1596,7 @@ export class RealtimeEaSignalRunner {
         if (!actionableState) {
           return 'filtered_state';
         }
-        if (tier == null) {
+        if (!isStrong) {
           return 'filtered_weak';
         }
         if (!meetsEnter) {
@@ -1375,7 +1616,7 @@ export class RealtimeEaSignalRunner {
         if (!meetsTradeValidity) {
           return 'filtered_trade_invalid';
         }
-        if (this.dashboardAllowCandidates && !analyzedReady) {
+        if (!analyzedReady) {
           return 'filtered_missing_layered_analysis';
         }
         return 'filtered_other';
@@ -1404,7 +1645,7 @@ export class RealtimeEaSignalRunner {
         },
       });
 
-      if (tier != null || analyzedReady) {
+      if (isStrong || analyzedReady) {
         const score = Number.isFinite(Number(rawSignal?.finalScore))
           ? Number(rawSignal.finalScore)
           : confidence + strength;
@@ -1484,7 +1725,7 @@ export class RealtimeEaSignalRunner {
     // Single smart path (no conflicts): seed snapshot cache + compute executability using the same payload.
     // Only ENTER signals will be evaluated for execution gates.
     if (
-      (broadcastEvent === 'signal' || broadcastEvent === 'signal_candidate') &&
+      broadcastEvent === 'signal' &&
       (broker === 'mt4' || broker === 'mt5') &&
       typeof this.eaBridgeService?.getSmartSignalSnapshot === 'function'
     ) {
@@ -1497,6 +1738,11 @@ export class RealtimeEaSignalRunner {
         });
 
         if (snapshot && snapshot.signal) {
+          try {
+            dto = validateTradingSignalDTO(createTradingSignalDTO(snapshot.signal));
+          } catch (_error) {
+            // Keep previously validated DTO as fallback.
+          }
           dto.shouldExecute = snapshot.shouldExecute === true;
           dto.execution = snapshot.execution || dto.execution || null;
 
@@ -1534,6 +1780,18 @@ export class RealtimeEaSignalRunner {
       }
     }
 
+    if (broadcastEvent === 'signal' && dto?.shouldExecute !== true) {
+      this.recordReject('filtered_not_executable', {
+        broker,
+        symbol,
+        pair: dto?.pair || symbol,
+        decisionState: getDecisionState(dto),
+        shouldExecute: dto?.shouldExecute === true,
+      });
+      this.lastGeneratedAt.set(broadcastKey, now);
+      return;
+    }
+
     this.lastGeneratedAt.set(broadcastKey, now);
     this.lastFingerprint.set(broadcastKey, fingerprint);
     if (latestBarTime != null) {
@@ -1544,6 +1802,13 @@ export class RealtimeEaSignalRunner {
     try {
       if (typeof this.broadcast !== 'function') {
         this.recordReject('broadcast_unavailable', { broker, symbol, event: broadcastEvent });
+        this.recordDroppedEvent({
+          reason: 'broadcast_unavailable',
+          broker,
+          symbol,
+          event: broadcastEvent,
+          message: 'Broadcast handler is unavailable',
+        });
         return;
       }
       this.broadcast(broadcastEvent, dto);
@@ -1561,12 +1826,24 @@ export class RealtimeEaSignalRunner {
         event: broadcastEvent,
         message: error?.message || null,
       });
+      this.recordDroppedEvent({
+        reason: 'broadcast_error',
+        broker,
+        symbol,
+        event: broadcastEvent,
+        message: error?.message || null,
+      });
       return;
     }
 
     // Local hook for auto-trading execution (server-side).
     // Only ENTER signals are eligible for execution.
-    if (broadcastEvent === 'signal' && dto?.isValid?.decision?.state === 'ENTER' && this.onSignal) {
+    if (
+      broadcastEvent === 'signal' &&
+      getDecisionState(dto) === 'ENTER' &&
+      dto?.shouldExecute === true &&
+      this.onSignal
+    ) {
       try {
         this.onSignal({ broker, signal: dto });
       } catch (_error) {

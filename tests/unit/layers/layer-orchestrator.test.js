@@ -648,4 +648,107 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
       assert.ok(riskPercent <= 3, `riskPercent should be <= 3`);
     });
   });
+
+  // ============================================================================
+  // LAYERS 18-20: FINAL VALIDATION / CLEARANCE / METADATA TESTS
+  // ============================================================================
+
+  describe('Layers 18-20: Smart Finalization', () => {
+    const buildPassingLayerSet = () => [
+      { layer: 1, status: 'PASS', score: 82, metrics: {} },
+      { layer: 2, status: 'PASS', score: 84, metrics: { spreadPoints: 12 } },
+      { layer: 3, status: 'PASS', score: 80, metrics: { volatility: 95 } },
+      { layer: 4, status: 'PASS', score: 86, metrics: {} },
+      { layer: 5, status: 'PASS', score: 78, metrics: {} },
+      { layer: 6, status: 'PASS', score: 82, metrics: {} },
+      { layer: 7, status: 'PASS', score: 79, metrics: {} },
+      { layer: 10, status: 'PASS', score: 75, metrics: {} },
+      { layer: 11, status: 'PASS', score: 88, metrics: { confluenceScore: 88 } },
+      { layer: 12, status: 'PASS', score: 95, metrics: {} },
+      { layer: 13, status: 'PASS', score: 90, metrics: {} },
+      { layer: 14, status: 'PASS', score: 85, metrics: {} },
+      { layer: 16, status: 'PASS', score: 84, metrics: { riskRewardRatio: 2.1 } },
+      { layer: 17, status: 'PASS', score: 86, metrics: { positionSize: 0.21 } },
+    ];
+
+    it('layer 18 passes with adaptive validation on good inputs', async () => {
+      const previousLayers = buildPassingLayerSet();
+      const result = await orchestrator.processLayer18({ previousLayers });
+
+      assert.equal(result.status, 'PASS');
+      assert.ok(result.score >= 75, `result.score should be >= 75`);
+      assert.ok(result.confidence >= 80, `result.confidence should be >= 80`);
+      assert.ok(
+        result.metrics.compositeScore !== undefined,
+        'result.metrics.compositeScore should be defined'
+      );
+      assert.ok(
+        Array.isArray(result.metrics.supportFailures),
+        'result.metrics.supportFailures should be array'
+      );
+    });
+
+    it('layer 18 fails when a critical layer fails', async () => {
+      const previousLayers = buildPassingLayerSet();
+      const idx = previousLayers.findIndex((layer) => layer.layer === 11);
+      previousLayers[idx] = { ...previousLayers[idx], status: 'FAIL' };
+
+      const result = await orchestrator.processLayer18({ previousLayers });
+      assert.equal(result.status, 'FAIL');
+      assert.match(result.reason, /Critical layer L11/i);
+    });
+
+    it('layer 19 fails when spread is too wide', async () => {
+      const previousLayers = buildPassingLayerSet();
+      const l18 = await orchestrator.processLayer18({ previousLayers });
+      previousLayers.push({ layer: 18, ...l18 });
+
+      const idx = previousLayers.findIndex((layer) => layer.layer === 2);
+      previousLayers[idx] = {
+        ...previousLayers[idx],
+        metrics: { ...(previousLayers[idx].metrics || {}), spreadPoints: 31 },
+      };
+
+      const result = await orchestrator.processLayer19({ previousLayers });
+      assert.equal(result.status, 'FAIL');
+      assert.match(result.reason, /spread too wide/i);
+    });
+
+    it('layer 19 passes and returns clearance band on healthy context', async () => {
+      const previousLayers = buildPassingLayerSet();
+      const l18 = await orchestrator.processLayer18({ previousLayers });
+      previousLayers.push({ layer: 18, ...l18 });
+
+      const result = await orchestrator.processLayer19({ previousLayers });
+      assert.equal(result.status, 'PASS');
+      assert.ok(result.score >= 55, `result.score should be >= 55`);
+      assert.ok(
+        ['HIGH', 'MEDIUM', 'LOW'].includes(result.metrics.clearanceBand),
+        `['HIGH', 'MEDIUM', 'LOW'] should contain result.metrics.clearanceBand`
+      );
+    });
+
+    it('layer 20 produces smart execution metadata profile', async () => {
+      const previousLayers = buildPassingLayerSet();
+      const l18 = await orchestrator.processLayer18({ previousLayers });
+      previousLayers.push({ layer: 18, ...l18 });
+      const l19 = await orchestrator.processLayer19({ previousLayers });
+      previousLayers.push({ layer: 19, ...l19 });
+
+      const signal = { direction: 'BUY', confidence: 83, strength: 78 };
+      const result = await orchestrator.processLayer20({ signal, previousLayers });
+
+      assert.equal(result.status, 'PASS');
+      assert.equal(result.metrics.metadataPrepared, true);
+      assert.ok(result.metrics.executionProfile, 'result.metrics.executionProfile should exist');
+      assert.ok(
+        ['immediate', 'normal', 'patient'].includes(result.metrics.executionProfile.urgency),
+        `['immediate', 'normal', 'patient'] should contain result.metrics.executionProfile.urgency`
+      );
+      assert.ok(
+        ['offensive', 'balanced'].includes(result.metrics.executionProfile.riskMode),
+        `['offensive', 'balanced'] should contain result.metrics.executionProfile.riskMode`
+      );
+    });
+  });
 });

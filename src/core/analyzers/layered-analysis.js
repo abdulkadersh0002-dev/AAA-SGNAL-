@@ -1,3 +1,10 @@
+import {
+  getDecisionScore,
+  getDecisionState,
+  getNormalizedDecision,
+  isDecisionBlocked,
+} from '../policy/decision-contract.js';
+
 const normalizeDirection = (value) => {
   const dir = String(value || '').toUpperCase();
   if (dir === 'BUY' || dir === 'SELL') {
@@ -426,26 +433,28 @@ export function buildLayeredAnalysis({ scenario, signal } = {}) {
   const intermarket = safeObj(scn.intermarket) || {};
   const intermarketCorrelation = safeObj(intermarket.correlation) || null;
 
-  const decisionState =
-    scn?.decision?.state || sig?.finalDecision?.state || sig?.isValid?.decision?.state || null;
+  const normalizedSignalDecision = getNormalizedDecision(sig);
+  const legacyDecision =
+    sig?.isValid?.decision && typeof sig.isValid.decision === 'object' ? sig.isValid.decision : {};
+
+  const decisionState = scn?.decision?.state || getDecisionState(sig) || null;
   const isTradeValid =
     decisionState === 'ENTER'
       ? true
       : Boolean(scn?.decision?.isTradeValid ?? sig?.isValid?.isValid);
   const isBlocked =
     decisionState === 'NO_TRADE_BLOCKED' ||
-    Boolean(scn?.decision?.blocked ?? sig?.isValid?.decision?.blocked);
+    Boolean(scn?.decision?.blocked ?? isDecisionBlocked(sig));
   const checks = safeObj(scn?.decision?.checks ?? sig?.isValid?.checks) || {};
-  const decisionScore = toFiniteNumber(
-    scn?.decision?.score ?? sig?.finalDecision?.score ?? sig?.isValid?.decision?.score
-  );
-  const missing = safeArray(scn?.decision?.missing ?? sig?.isValid?.decision?.missing).slice(0, 10);
+  const decisionScore = toFiniteNumber(scn?.decision?.score ?? getDecisionScore(sig));
+  const missing = safeArray(
+    scn?.decision?.missing ?? normalizedSignalDecision?.missing ?? legacyDecision.missing
+  ).slice(0, 10);
   const whatWouldChange = safeArray(
-    scn?.decision?.whatWouldChange ?? sig?.isValid?.decision?.whatWouldChange
+    scn?.decision?.whatWouldChange ?? legacyDecision.whatWouldChange
   ).slice(0, 10);
 
-  const killSwitch =
-    safeObj(scn?.decision?.killSwitch ?? sig?.isValid?.decision?.killSwitch) || null;
+  const killSwitch = safeObj(scn?.decision?.killSwitch ?? legacyDecision.killSwitch) || null;
   const killSwitchIds = safeArray(killSwitch?.ids)
     .map((v) => String(v || ''))
     .filter(Boolean);

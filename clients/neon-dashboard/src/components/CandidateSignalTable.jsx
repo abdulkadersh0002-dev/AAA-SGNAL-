@@ -1,5 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { formatRelativeTime, formatDirection } from '../utils/format.js';
+import {
+  getDecisionMissing,
+  getDecisionScore,
+  getDecisionState,
+  getNormalizedDecision,
+  isDecisionBlocked,
+} from '../utils/decision.js';
 
 const MAX_CANDIDATE_TABLE_ROWS = (() => {
   const raw = Number(import.meta?.env?.VITE_CANDIDATE_TABLE_ROWS);
@@ -14,6 +21,145 @@ const toUpper = (value) =>
     .trim()
     .toUpperCase();
 
+const toFinite = (value) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const selectPipSize = (pair) => {
+  const normalized = toUpper(pair);
+  if (!normalized) {
+    return 0.0001;
+  }
+  if (normalized.includes('JPY')) {
+    return 0.01;
+  }
+  if (normalized.includes('XAU') || normalized.includes('XAG')) {
+    return 0.1;
+  }
+  return 0.0001;
+};
+
+const getExecutionProfile = (signal) => {
+  const fromComponents =
+    signal?.components?.executionProfile && typeof signal.components.executionProfile === 'object'
+      ? signal.components.executionProfile
+      : null;
+  if (fromComponents) {
+    return fromComponents;
+  }
+
+  const layers = Array.isArray(signal?.components?.layeredAnalysis?.layers)
+    ? signal.components.layeredAnalysis.layers
+    : [];
+  const layer20 =
+    layers.find(
+      (layer) => toUpper(layer?.key) === 'L20' || Number(layer?.layer) === 20
+    ) || null;
+  return layer20?.metrics?.executionProfile && typeof layer20.metrics.executionProfile === 'object'
+    ? layer20.metrics.executionProfile
+    : null;
+};
+
+const buildMt5Summary = (signal) => {
+  const execution = signal?.execution && typeof signal.execution === 'object' ? signal.execution : null;
+  const gates = execution?.gates && typeof execution.gates === 'object' ? execution.gates : null;
+  const backendApproved = signal?.shouldExecute === true || execution?.shouldExecute === true;
+
+  const direction = toUpper(signal?.direction);
+  const pair = toUpper(signal?.pair || signal?.symbol || signal?.instrument);
+
+  const entry = toFinite(signal?.entry?.price ?? signal?.entryPrice);
+  const stop = toFinite(signal?.entry?.stopLoss ?? signal?.stopLoss);
+  const take = toFinite(signal?.entry?.takeProfit ?? signal?.takeProfit);
+  const rr =
+    toFinite(signal?.entry?.riskReward ?? signal?.riskReward) ??
+    (entry != null && stop != null && take != null
+      ? Math.abs(take - entry) / Math.max(Math.abs(entry - stop), 1e-9)
+      : null);
+
+  const spreadPips =
+    toFinite(signal?.entry?.spreadPips) ??
+    (() => {
+      const bid = toFinite(signal?.components?.market?.quote?.bid);
+      const ask = toFinite(signal?.components?.market?.quote?.ask);
+      if (bid == null || ask == null) {
+        return null;
+      }
+      return Math.abs(ask - bid) / selectPipSize(pair);
+    })();
+
+  const directionValid = direction === 'BUY' || direction === 'SELL';
+  const sideValid =
+    direction === 'BUY'
+      ? entry != null && stop != null && take != null && stop < entry && take > entry
+      : direction === 'SELL'
+        ? entry != null && stop != null && take != null && stop > entry && take < entry
+        : false;
+
+  const missing = [];
+  if (!pair) {
+    missing.push('pair');
+  }
+  if (!directionValid) {
+    missing.push('direction');
+  }
+  if (entry == null) {
+    missing.push('entry');
+  }
+  if (stop == null) {
+    missing.push('stopLoss');
+  }
+  if (take == null) {
+    missing.push('takeProfit');
+  }
+  if (entry != null && stop != null && take != null && !sideValid) {
+    missing.push('invalid_side');
+  }
+
+  const blockedReason =
+    execution?.blockedReason ||
+    gates?.blockedReason ||
+    (Array.isArray(execution?.blockedReasons) && execution.blockedReasons[0]?.code
+      ? String(execution.blockedReasons[0].code)
+      : null) ||
+    null;
+
+  const structuralReady = missing.length === 0;
+  const ready = backendApproved || (structuralReady && signal?.isValid?.isValid === true);
+  const profile = getExecutionProfile(signal) || {};
+  const urgency = toUpper(profile?.urgency || 'NORMAL');
+  const riskMode = toUpper(profile?.riskMode || 'BALANCED');
+  const protectionBias = toUpper(profile?.protectionBias || 'STANDARD');
+
+  const summaryParts = [];
+  summaryParts.push(
+    ready
+      ? backendApproved
+        ? 'mt5: ready (ea approved)'
+        : 'mt5: ready (structural)'
+      : missing.length
+        ? `mt5: missing ${missing.join(',')}`
+        : 'mt5: blocked'
+  );
+  if (!backendApproved && blockedReason) {
+    summaryParts.push(`blocked ${blockedReason}`);
+  }
+  if (rr != null) {
+    summaryParts.push(`rr 1:${rr.toFixed(2)}`);
+  }
+  if (Number.isFinite(spreadPips)) {
+    summaryParts.push(`spread ${spreadPips.toFixed(1)}p`);
+  }
+  summaryParts.push(`plan ${urgency}/${riskMode}/${protectionBias}`);
+
+  return {
+    ready,
+    missing,
+    summary: summaryParts.join(' · '),
+  };
+};
+
 const pad = (value) => (value == null ? '—' : String(value));
 
 const formatLayer18Score = (value) => {
@@ -24,111 +170,19 @@ const formatLayer18Score = (value) => {
   return Math.abs(numeric) >= 100 ? numeric.toFixed(0) : numeric.toFixed(2);
 };
 
-const resolveDecisionFallbackFromLayers = (signal) => {
-  const layered = signal?.components?.layeredAnalysis || signal?.layeredAnalysis || null;
-  const layers = Array.isArray(layered?.layers) ? layered.layers : null;
-  if (!layers || layers.length === 0) {
-    return null;
-  }
-
-  const parseLayerNo = (layer) => {
-    const n = Number(layer?.layer);
-    return Number.isFinite(n) ? n : null;
-  };
-
-  const isLayerKey = (layer, key) =>
-    String(layer?.key || layer?.id || '')
-      .trim()
-      .toUpperCase() === String(key || '').trim().toUpperCase();
-
-  const normalizeDecision = (decision) => {
-    if (!decision || typeof decision !== 'object') {
-      return null;
-    }
-    const state = String(decision?.state || '')
-      .trim()
-      .toUpperCase();
-    if (!state) {
-      return null;
-    }
-    return {
-      state,
-      blocked: decision?.blocked === true,
-      score: Number.isFinite(Number(decision?.score)) ? Number(decision.score) : undefined,
-      missing: Array.isArray(decision?.missing) ? decision.missing.filter(Boolean) : undefined,
-      whatWouldChange: Array.isArray(decision?.whatWouldChange)
-        ? decision.whatWouldChange.filter(Boolean)
-        : undefined,
-      missingInputs:
-        decision?.missingInputs && typeof decision.missingInputs === 'object'
-          ? decision.missingInputs
-          : undefined,
-      nextSteps: Array.isArray(decision?.nextSteps) ? decision.nextSteps.filter(Boolean) : undefined,
-      killSwitch:
-        decision?.killSwitch && typeof decision.killSwitch === 'object'
-          ? decision.killSwitch
-          : undefined,
-      blockers: Array.isArray(decision?.blockers) ? decision.blockers.filter(Boolean) : undefined,
-      contributors:
-        decision?.contributors && typeof decision.contributors === 'object'
-          ? decision.contributors
-          : undefined,
-      context:
-        decision?.context && typeof decision.context === 'object' ? decision.context : undefined,
-      profile:
-        decision?.profile && typeof decision.profile === 'object' ? decision.profile : undefined
-    };
-  };
-
-  // Prefer the final decision layer (L20) when present.
-  const layer20 =
-    layers.find((layer) => isLayerKey(layer, 'L20') || parseLayerNo(layer) === 20) || null;
-  const preferredDecision = normalizeDecision(layer20?.metrics?.decision);
-  if (preferredDecision) {
-    return preferredDecision;
-  }
-
-  // Otherwise, pick the highest-numbered layer that provides a decision.
-  const decided = layers
-    .map((layer) => ({ layer, decision: normalizeDecision(layer?.metrics?.decision) }))
-    .filter((item) => item.decision);
-  if (decided.length === 0) {
-    return null;
-  }
-
-  decided.sort((a, b) => {
-    const an = parseLayerNo(a.layer) ?? -1;
-    const bn = parseLayerNo(b.layer) ?? -1;
-    return bn - an;
-  });
-
-  return decided[0].decision;
-
-  return null;
-};
-
-const resolveDecision = (signal) => {
-  const decision = signal?.isValid?.decision || null;
-  const state = String(decision?.state || '')
-    .trim()
-    .toUpperCase();
-  if (state) {
-    return decision;
-  }
-  return resolveDecisionFallbackFromLayers(signal);
-};
+const resolveDecision = (signal) => getNormalizedDecision(signal);
 
 const formatDecision = (signal) => {
-  const decision = resolveDecision(signal);
-  const state = toUpper(decision?.state) || '—';
-  const blocked = decision?.blocked === true;
+  const state = toUpper(getDecisionState(signal)) || '—';
+  const blocked = isDecisionBlocked(signal);
   return blocked ? `${state} (BLOCKED)` : state;
 };
 
 const formatBlockers = (signal) => {
   const decision = resolveDecision(signal);
   const blockers = Array.isArray(decision?.blockers) ? decision.blockers.filter(Boolean) : [];
-  const missing = Array.isArray(decision?.missing) ? decision.missing.filter(Boolean) : [];
+  const missing = getDecisionMissing(signal);
+  const mt5 = buildMt5Summary(signal);
 
   const parts = [];
   if (blockers.length) {
@@ -230,6 +284,8 @@ const formatBlockers = (signal) => {
     }
   }
 
+  parts.push(mt5.summary);
+
   return parts.length ? parts.join(' · ') : '—';
 };
 
@@ -276,9 +332,9 @@ const hasRequiredSignalQuality = (signal) => {
     return false;
   }
 
-  const decision = signal?.isValid?.decision || null;
-  const state = toUpper(decision?.state);
-  const blocked = decision?.blocked === true;
+  const decision = resolveDecision(signal);
+  const state = toUpper(getDecisionState(signal));
+  const blocked = isDecisionBlocked(signal);
   if (blocked) {
     return false;
   }
@@ -286,7 +342,7 @@ const hasRequiredSignalQuality = (signal) => {
     return false;
   }
 
-  const missing = Array.isArray(decision?.missing) ? decision.missing.filter(Boolean) : [];
+  const missing = getDecisionMissing(signal);
 
   const confidence = Number(signal?.confidence) || 0;
   const strength = Number(signal?.strength) || 0;
@@ -298,7 +354,7 @@ const hasRequiredSignalQuality = (signal) => {
     const n = Number(raw);
     return Number.isFinite(n) ? n : null;
   })();
-  const decisionScore = Number(signal?.isValid?.decision?.score);
+  const decisionScore = Number(getDecisionScore(signal));
   const scoreRaw = Number.isFinite(decisionScore) ? decisionScore : Number(signal?.score);
   const score = Number.isFinite(scoreRaw) ? scoreRaw : null;
 
@@ -350,7 +406,7 @@ export default function CandidateSignalTable({
         .trim()
         .toUpperCase();
       const direction = String(signal?.direction || '').trim().toUpperCase();
-      const decision = String(signal?.isValid?.decision?.state || '').trim().toUpperCase();
+      const decision = String(getDecisionState(signal) || '').trim().toUpperCase();
       const confidence = Number(signal?.confidence) || 0;
       const strength = Number(signal?.strength) || 0;
       const hasPair = Boolean(pair);

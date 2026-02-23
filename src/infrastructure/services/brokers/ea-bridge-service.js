@@ -16,6 +16,8 @@ import {
   resolveLiquidityGuardThresholds,
   resolveNewsGuardThresholds,
 } from '../../../core/policy/trading-policy.js';
+import { resolveEaFreshnessPolicy } from '../../../core/policy/ea-freshness-policy.js';
+import { getDecisionState } from '../../../core/policy/decision-contract.js';
 import IntelligentTradeManager from './intelligent-trade-manager.js';
 import CacheCoordinator from '../cache/cache-coordinator.js';
 import UnifiedSnapshotManager from '../../../core/engine/unified-snapshot-manager.js';
@@ -29,9 +31,24 @@ class EaBridgeService {
     this.brokerRouter = options.brokerRouter;
     this.brokerMeta = options.brokerMeta || {};
     this.broadcast = typeof options.broadcast === 'function' ? options.broadcast : null;
+    this.freshnessPolicy = resolveEaFreshnessPolicy();
 
     // Active EA sessions
     this.sessions = new Map();
+    this.sessionTelemetry = {
+      reconnects: 0,
+      autoRegisteredHeartbeats: 0,
+      stalePruned: 0,
+      lastConnectAt: null,
+      lastDisconnectAt: null,
+      lastHeartbeatAt: null,
+      lastPruneAt: null,
+    };
+    const envSessionPruneIntervalMs = Number(process.env.EA_SESSION_PRUNE_INTERVAL_MS);
+    this.sessionPruneIntervalMs = Number.isFinite(envSessionPruneIntervalMs)
+      ? Math.max(500, Math.trunc(envSessionPruneIntervalMs))
+      : 5_000;
+    this.lastSessionPruneAt = 0;
 
     // Initialize centralized cache coordinator
     this.cacheCoordinator = new CacheCoordinator({
@@ -196,7 +213,7 @@ class EaBridgeService {
     const envSnapshotTtl = Number(process.env.EA_ANALYSIS_SNAPSHOT_CACHE_TTL_MS);
     this.analysisSnapshotCacheTtlMs = Number.isFinite(envSnapshotTtl)
       ? Math.max(250, Math.trunc(envSnapshotTtl))
-      : 2500;
+      : 10 * 60 * 1000;
 
     // EA management command queue (server -> EA).
     this.managementQueue = new Map(); // broker -> [{ id, symbol, type, payload, createdAt, expiresAt }]
@@ -401,6 +418,9 @@ class EaBridgeService {
             };
 
       // Use cache coordinator with 2.5 second TTL
+      const ttlMs = Number.isFinite(Number(this.analysisSnapshotCacheTtlMs))
+        ? Math.max(250, Math.trunc(this.analysisSnapshotCacheTtlMs))
+        : 2500;
       this.cacheCoordinator.set(
         'analysisSnapshot',
         key,
@@ -408,7 +428,7 @@ class EaBridgeService {
           computedAt: at,
           result: cachedResult,
         },
-        2500
+        ttlMs
       );
 
       return true;
@@ -429,7 +449,11 @@ class EaBridgeService {
     }
 
     const now = Date.now();
-    const ttl = Number.isFinite(Number(maxAgeMs)) ? Math.max(0, Number(maxAgeMs)) : 2500; // Default TTL
+    const ttl = Number.isFinite(Number(maxAgeMs))
+      ? Math.max(0, Number(maxAgeMs))
+      : Number.isFinite(Number(this.analysisSnapshotCacheTtlMs))
+        ? Math.max(250, Math.trunc(this.analysisSnapshotCacheTtlMs))
+        : 2500;
     const age = now - Number(entry.computedAt || 0);
     if (!Number.isFinite(age) || age < 0 || age > ttl) {
       return null;
@@ -681,7 +705,7 @@ class EaBridgeService {
   }
 
   pruneExpiredActiveSymbols(broker) {
-    const normalizedBroker = this.normalizeBroker(broker);
+    const normalizedBroker = this.normalizeSessionBroker(broker);
     if (!normalizedBroker) {
       return;
     }
@@ -704,7 +728,7 @@ class EaBridgeService {
     if (!this.respectDashboardActiveSymbols) {
       return;
     }
-    const broker = this.normalizeBroker(options.broker);
+    const broker = this.normalizeSessionBroker(options.broker);
     const symbol = this.normalizeSymbol(options.symbol || options.pair);
     if (!broker || !symbol) {
       return;
@@ -743,7 +767,7 @@ class EaBridgeService {
 
   setActiveSymbols(options = {}) {
     if (!this.respectDashboardActiveSymbols) {
-      const broker = this.normalizeBroker(options.broker);
+      const broker = this.normalizeSessionBroker(options.broker);
       return {
         success: true,
         message: 'Active symbols ignored (full-scan enabled)',
@@ -751,7 +775,7 @@ class EaBridgeService {
         symbols: [],
       };
     }
-    const broker = this.normalizeBroker(options.broker);
+    const broker = this.normalizeSessionBroker(options.broker);
     const symbols = Array.isArray(options.symbols) ? options.symbols : [];
     if (!broker) {
       return { success: false, message: 'broker is required', symbols: [] };
@@ -812,7 +836,7 @@ class EaBridgeService {
   getActiveSymbols(options = {}) {
     if (!this.respectDashboardActiveSymbols) {
       // Full-scan mode: provide a broad symbol list (prefer EA-registered universe).
-      const broker = this.normalizeBroker(options.broker);
+      const broker = this.normalizeSessionBroker(options.broker);
       if (!broker) {
         return [];
       }
@@ -825,7 +849,7 @@ class EaBridgeService {
         ? this.defaultActiveSymbols.slice(0, max)
         : [];
     }
-    const broker = this.normalizeBroker(options.broker);
+    const broker = this.normalizeSessionBroker(options.broker);
     if (!broker) {
       return [];
     }
@@ -842,7 +866,7 @@ class EaBridgeService {
   }
 
   recordSymbols(payload = {}) {
-    const broker = this.normalizeBroker(payload.broker);
+    const broker = this.normalizeSessionBroker(payload.broker);
     const rawSymbols = Array.isArray(payload.symbols)
       ? payload.symbols
       : Array.isArray(payload.items)
@@ -915,7 +939,7 @@ class EaBridgeService {
   }
 
   getRegisteredSymbols(options = {}) {
-    const broker = this.normalizeBroker(options.broker);
+    const broker = this.normalizeSessionBroker(options.broker);
     if (!broker) {
       return [];
     }
@@ -999,7 +1023,7 @@ class EaBridgeService {
   }
 
   resolveSymbolFromQuotes(broker, requestedSymbol, options = {}) {
-    const normalizedBroker = this.normalizeBroker(broker);
+    const normalizedBroker = this.normalizeSessionBroker(broker);
     const requested = this.normalizeSymbol(requestedSymbol);
     if (!normalizedBroker || !requested) {
       return requested;
@@ -1029,7 +1053,7 @@ class EaBridgeService {
   }
 
   resolveSymbolFromSnapshots(broker, requestedSymbol) {
-    const normalizedBroker = this.normalizeBroker(broker);
+    const normalizedBroker = this.normalizeSessionBroker(broker);
     const requested = this.normalizeSymbol(requestedSymbol);
     if (!normalizedBroker || !requested) {
       return requested;
@@ -1037,7 +1061,7 @@ class EaBridgeService {
 
     const candidates = [];
     for (const snapshot of this.latestSnapshots.values()) {
-      if (!snapshot || snapshot.broker !== normalizedBroker) {
+      if (!snapshot || this.normalizeSessionBroker(snapshot.broker) !== normalizedBroker) {
         continue;
       }
       if (snapshot.symbol) {
@@ -1048,7 +1072,7 @@ class EaBridgeService {
   }
 
   resolveSymbolFromBars(broker, requestedSymbol, timeframe) {
-    const normalizedBroker = this.normalizeBroker(broker);
+    const normalizedBroker = this.normalizeSessionBroker(broker);
     const requested = this.normalizeSymbol(requestedSymbol);
     const tf = this.normalizeTimeframe(timeframe);
     if (!normalizedBroker || !requested || !tf) {
@@ -1060,11 +1084,9 @@ class EaBridgeService {
       if (typeof key !== 'string') {
         continue;
       }
-      const parts = key.split(':');
-      if (parts.length < 3) {
-        continue;
-      }
-      const [keyBroker, keySymbol, keyTf] = parts;
+      const keyBroker = this.extractBrokerFromCompositeKey(key);
+      const keySymbol = this.extractSymbolFromCompositeKey(key);
+      const keyTf = this.extractTimeframeFromCompositeKey(key);
       if (keyBroker !== normalizedBroker) {
         continue;
       }
@@ -1079,7 +1101,7 @@ class EaBridgeService {
   }
 
   pruneExpiredSnapshotRequests(broker) {
-    const normalizedBroker = this.normalizeBroker(broker);
+    const normalizedBroker = this.normalizeSessionBroker(broker);
     if (!normalizedBroker) {
       return;
     }
@@ -1107,7 +1129,7 @@ class EaBridgeService {
   }
 
   requestMarketSnapshot(options = {}) {
-    const broker = this.normalizeBroker(options.broker);
+    const broker = this.normalizeSessionBroker(options.broker);
     const requestedSymbol = this.normalizeSymbol(options.symbol || options.pair);
     const ttlMs = Number.isFinite(Number(options.ttlMs)) ? Number(options.ttlMs) : 2 * 60 * 1000;
     if (!broker || !requestedSymbol) {
@@ -1159,7 +1181,7 @@ class EaBridgeService {
   }
 
   consumeMarketSnapshotRequests(options = {}) {
-    const broker = this.normalizeBroker(options.broker);
+    const broker = this.normalizeSessionBroker(options.broker);
     const max = Number.isFinite(Number(options.max)) ? Math.max(1, Number(options.max)) : 10;
     if (!broker) {
       return [];
@@ -1218,6 +1240,39 @@ class EaBridgeService {
     return symbol || null;
   }
 
+  extractBrokerFromCompositeKey(key) {
+    if (typeof key !== 'string' || !key) {
+      return null;
+    }
+    const broker = key.split(':')[0] || null;
+    return this.normalizeSessionBroker(broker);
+  }
+
+  extractSymbolFromCompositeKey(key) {
+    if (typeof key !== 'string' || !key) {
+      return null;
+    }
+    const parts = String(key).split(':');
+    return this.normalizeSymbol(parts[1]);
+  }
+
+  extractTimeframeFromCompositeKey(key) {
+    if (typeof key !== 'string' || !key) {
+      return null;
+    }
+    const parts = String(key).split(':');
+    const timeframe = String(parts[2] || '')
+      .trim()
+      .toUpperCase();
+    return timeframe || null;
+  }
+
+  isCompositeKeyForBroker(key, broker) {
+    const keyBroker = this.extractBrokerFromCompositeKey(key);
+    const normalizedBroker = this.normalizeSessionBroker(broker);
+    return Boolean(keyBroker && normalizedBroker && keyBroker === normalizedBroker);
+  }
+
   mapSymbolAlias(value) {
     if (!this.symbolAliasMap || this.symbolAliasMap.size === 0) {
       return null;
@@ -1231,7 +1286,7 @@ class EaBridgeService {
   }
 
   recordQuote(payload = {}) {
-    const broker = this.normalizeBroker(payload.broker);
+    const broker = this.normalizeSessionBroker(payload.broker);
     const symbol = this.normalizeSymbol(payload.symbol || payload.pair);
     if (!broker || !symbol) {
       return { success: false, message: 'broker and symbol are required' };
@@ -1400,7 +1455,7 @@ class EaBridgeService {
   }
 
   getLatestQuoteForSymbolMatch(broker, requestedSymbol) {
-    const normalizedBroker = this.normalizeBroker(broker);
+    const normalizedBroker = this.normalizeSessionBroker(broker);
     const requested = this.normalizeSymbol(requestedSymbol);
     if (!normalizedBroker || !requested) {
       return null;
@@ -1427,7 +1482,7 @@ class EaBridgeService {
   }
 
   recordQuotes(payload = {}) {
-    const broker = this.normalizeBroker(payload.broker);
+    const broker = this.normalizeSessionBroker(payload.broker);
     const quotes = Array.isArray(payload.quotes) ? payload.quotes : [];
     if (!broker) {
       return { success: false, message: 'broker is required' };
@@ -1453,7 +1508,7 @@ class EaBridgeService {
   }
 
   getQuotes(options = {}) {
-    const broker = this.normalizeBroker(options.broker);
+    const broker = this.normalizeSessionBroker(options.broker);
     const symbols = Array.isArray(options.symbols) ? options.symbols : null;
     const orderBy = String(options.orderBy || '')
       .trim()
@@ -1496,7 +1551,7 @@ class EaBridgeService {
   }
 
   recordNews(payload = {}) {
-    const broker = this.normalizeBroker(payload.broker);
+    const broker = this.normalizeSessionBroker(payload.broker);
     if (!broker) {
       return { success: false, message: 'broker is required' };
     }
@@ -1624,7 +1679,7 @@ class EaBridgeService {
   }
 
   getNews(options = {}) {
-    const broker = this.normalizeBroker(options.broker);
+    const broker = this.normalizeSessionBroker(options.broker);
     const limit = Number.isFinite(Number(options.limit)) ? Math.max(1, Number(options.limit)) : 50;
     const timeline = broker ? this.newsTimeline.get(broker) || [] : null;
 
@@ -1737,7 +1792,7 @@ class EaBridgeService {
   }
 
   getRequestedSymbolsForBroker(broker) {
-    const normalizedBroker = this.normalizeBroker(broker);
+    const normalizedBroker = this.normalizeSessionBroker(broker);
     if (!normalizedBroker) {
       return [];
     }
@@ -1766,7 +1821,7 @@ class EaBridgeService {
   }
 
   isSymbolRelevantForSynthetic(broker, symbol) {
-    const normalizedBroker = this.normalizeBroker(broker);
+    const normalizedBroker = this.normalizeSessionBroker(broker);
     const candidate = this.normalizeSymbol(symbol);
     if (!normalizedBroker || !candidate) {
       return false;
@@ -1793,7 +1848,7 @@ class EaBridgeService {
   }
 
   recordSyntheticCandle({ broker, symbol, timeframe, timestampMs, price }) {
-    const normalizedBroker = this.normalizeBroker(broker);
+    const normalizedBroker = this.normalizeSessionBroker(broker);
     const normalizedSymbol = this.normalizeSymbol(symbol);
     const tf = this.normalizeTimeframe(timeframe);
     const ts = this.normalizeEpochMs(timestampMs);
@@ -1900,7 +1955,7 @@ class EaBridgeService {
   }
 
   getSyntheticCandles(options = {}) {
-    const broker = this.normalizeBroker(options.broker);
+    const broker = this.normalizeSessionBroker(options.broker);
     const requestedSymbol = this.normalizeSymbol(options.symbol || options.pair);
     const timeframe = this.normalizeTimeframe(options.timeframe || options.tf);
 
@@ -1974,7 +2029,7 @@ class EaBridgeService {
   }
 
   recordMarketSnapshot(payload = {}) {
-    const broker = this.normalizeBroker(payload.broker);
+    const broker = this.normalizeSessionBroker(payload.broker);
     const symbol = this.normalizeSymbol(payload.symbol || payload.pair);
     if (!broker || !symbol) {
       return { success: false, message: 'broker and symbol are required' };
@@ -2302,7 +2357,7 @@ class EaBridgeService {
   }
 
   recordMarketBars(payload = {}) {
-    const broker = this.normalizeBroker(payload.broker);
+    const broker = this.normalizeSessionBroker(payload.broker);
     const symbol = this.normalizeSymbol(payload.symbol || payload.pair);
     const timeframe = this.normalizeTimeframe(payload.timeframe || payload.tf);
 
@@ -2457,7 +2512,7 @@ class EaBridgeService {
   }
 
   getMarketBars(options = {}) {
-    const broker = this.normalizeBroker(options.broker);
+    const broker = this.normalizeSessionBroker(options.broker);
     const requestedSymbol = this.normalizeSymbol(options.symbol || options.pair);
     const timeframe = this.normalizeTimeframe(options.timeframe || options.tf);
 
@@ -2506,7 +2561,7 @@ class EaBridgeService {
   }
 
   getMarketCandles(options = {}) {
-    const broker = this.normalizeBroker(options.broker);
+    const broker = this.normalizeSessionBroker(options.broker);
     const symbol = this.normalizeSymbol(options.symbol || options.pair);
     const timeframe = this.normalizeTimeframe(options.timeframe || options.tf);
 
@@ -2551,7 +2606,7 @@ class EaBridgeService {
   }
 
   getMarketSnapshot(options = {}) {
-    const broker = this.normalizeBroker(options.broker);
+    const broker = this.normalizeSessionBroker(options.broker);
     const requestedSymbol = this.normalizeSymbol(options.symbol || options.pair);
     if (!broker || !requestedSymbol) {
       return null;
@@ -2583,6 +2638,83 @@ class EaBridgeService {
   /**
    * Register EA session
    */
+  normalizeAccountMode(value) {
+    return String(value || 'unknown')
+      .trim()
+      .toLowerCase();
+  }
+
+  normalizeAccountNumber(value) {
+    return String(value || '').trim();
+  }
+
+  normalizeSessionBroker(value) {
+    return (
+      this.normalizeBroker(value) ||
+      String(value || '')
+        .trim()
+        .toLowerCase()
+    );
+  }
+
+  buildSessionId({ broker, accountMode, accountNumber } = {}) {
+    const normalizedBroker = this.normalizeSessionBroker(broker);
+    const normalizedAccountMode = this.normalizeAccountMode(accountMode);
+    const normalizedAccountNumber = this.normalizeAccountNumber(accountNumber);
+    if (!normalizedBroker || !normalizedAccountNumber) {
+      return null;
+    }
+    return `${normalizedBroker}-${normalizedAccountMode || 'unknown'}-${normalizedAccountNumber}`;
+  }
+
+  pruneStaleSessions(options = {}) {
+    const now = Date.now();
+    const maxAgeMs = Number.isFinite(Number(options.maxAgeMs))
+      ? Math.max(0, Number(options.maxAgeMs))
+      : this.freshnessPolicy.heartbeatMaxAgeMs;
+    if (!maxAgeMs) {
+      return 0;
+    }
+
+    let removed = 0;
+    for (const [sessionId, session] of this.sessions.entries()) {
+      if (!session?.isActive) {
+        continue;
+      }
+      const last = Number(session.lastHeartbeat || 0);
+      if (!(last > 0) || now - last <= maxAgeMs) {
+        continue;
+      }
+
+      session.isActive = false;
+      session.disconnectedAt = now;
+      session.disconnectReason = 'heartbeat_timeout';
+      this.sessions.delete(sessionId);
+      removed += 1;
+    }
+
+    if (removed > 0) {
+      this.sessionTelemetry.stalePruned += removed;
+      this.sessionTelemetry.lastPruneAt = now;
+      this.logger.warn(
+        { removed, maxAgeMs, module: 'EaBridgeService' },
+        'Pruned stale EA sessions by heartbeat age'
+      );
+    }
+    return removed;
+  }
+
+  maybePruneStaleSessions(options = {}) {
+    const now = Date.now();
+    const force = options.force === true;
+    if (!force && now - Number(this.lastSessionPruneAt || 0) < this.sessionPruneIntervalMs) {
+      return 0;
+    }
+    const removed = this.pruneStaleSessions(options);
+    this.lastSessionPruneAt = now;
+    return removed;
+  }
+
   registerSession(payload) {
     const { accountNumber, accountMode, broker, equity, balance, server, currency } = payload;
 
@@ -2590,27 +2722,54 @@ class EaBridgeService {
       throw new Error('Account number and broker are required');
     }
 
-    const sessionId = `${broker}-${accountMode}-${accountNumber}`;
+    const now = Date.now();
+    const sessionId = this.buildSessionId({ broker, accountMode, accountNumber });
+    if (!sessionId) {
+      throw new Error('Invalid broker/account payload');
+    }
+    const existing = this.sessions.get(sessionId) || null;
+    const normalizedBroker = this.normalizeSessionBroker(broker);
+    const normalizedAccountMode = this.normalizeAccountMode(accountMode);
+    const normalizedAccountNumber = this.normalizeAccountNumber(accountNumber);
     const session = {
       id: sessionId,
-      broker,
-      accountNumber,
-      accountMode,
+      broker: normalizedBroker,
+      accountNumber: normalizedAccountNumber,
+      accountMode: normalizedAccountMode,
       equity: Number(equity) || 0,
       balance: Number(balance) || 0,
       server,
       currency,
       ea: payload?.ea || null,
-      connectedAt: Date.now(),
-      lastHeartbeat: Date.now(),
+      connectedAt: now,
+      lastHeartbeat: now,
       isActive: true,
-      tradesExecuted: 0,
-      profitLoss: 0,
+      tradesExecuted: Number(existing?.tradesExecuted) || 0,
+      profitLoss: Number(existing?.profitLoss) || 0,
+      heartbeatCount: Number(existing?.heartbeatCount) || 0,
+      reconnectCount: Number(existing?.reconnectCount) || 0,
+      heartbeatLagMs: existing?.heartbeatLagMs ?? null,
+      heartbeatClockSkewMs: existing?.heartbeatClockSkewMs ?? null,
     };
 
-    this.sessions.set(sessionId, session);
+    if (existing?.isActive) {
+      session.reconnectCount += 1;
+      this.sessionTelemetry.reconnects += 1;
+    }
 
-    this.logger.info({ sessionId, broker, accountMode, accountNumber }, 'EA session registered');
+    this.sessions.set(sessionId, session);
+    this.sessionTelemetry.lastConnectAt = now;
+
+    this.logger.info(
+      {
+        sessionId,
+        broker: normalizedBroker,
+        accountMode: normalizedAccountMode,
+        accountNumber: normalizedAccountNumber,
+        reconnectCount: session.reconnectCount,
+      },
+      'EA session registered'
+    );
 
     return {
       success: true,
@@ -2629,13 +2788,18 @@ class EaBridgeService {
    */
   disconnectSession(payload) {
     const { accountNumber, accountMode, broker } = payload;
-    const sessionId = `${broker}-${accountMode}-${accountNumber}`;
+    const sessionId = this.buildSessionId({ broker, accountMode, accountNumber });
+    if (!sessionId) {
+      return { success: false, message: 'Session not found' };
+    }
 
     const session = this.sessions.get(sessionId);
     if (session) {
       session.isActive = false;
       session.disconnectedAt = Date.now();
+      session.disconnectReason = 'explicit_disconnect';
       this.sessions.delete(sessionId);
+      this.sessionTelemetry.lastDisconnectAt = session.disconnectedAt;
 
       this.logger.info({ sessionId }, 'EA session disconnected');
       return { success: true, message: 'Session disconnected' };
@@ -2649,7 +2813,10 @@ class EaBridgeService {
    */
   handleHeartbeat(payload) {
     const { accountNumber, accountMode, broker, equity, balance, timestamp: _timestamp } = payload;
-    const sessionId = `${broker}-${accountMode}-${accountNumber}`;
+    const sessionId = this.buildSessionId({ broker, accountMode, accountNumber });
+    if (!sessionId) {
+      return { success: false, message: 'Session not found. Please reconnect.' };
+    }
 
     let session = this.sessions.get(sessionId);
     if (!session) {
@@ -2659,6 +2826,7 @@ class EaBridgeService {
         const connectResult = this.registerSession(payload);
         if (connectResult?.success) {
           session = this.sessions.get(sessionId) || null;
+          this.sessionTelemetry.autoRegisteredHeartbeats += 1;
         }
       } catch (_error) {
         // fall through
@@ -2668,11 +2836,28 @@ class EaBridgeService {
       return { success: false, message: 'Session not found. Please reconnect.' };
     }
 
-    session.lastHeartbeat = Date.now();
+    const now = Date.now();
+    const heartbeatTsRaw = Number(_timestamp);
+    const heartbeatTs = Number.isFinite(heartbeatTsRaw)
+      ? heartbeatTsRaw > 10_000_000_000
+        ? heartbeatTsRaw
+        : heartbeatTsRaw * 1000
+      : null;
+
+    session.lastHeartbeat = now;
+    session.heartbeatCount = Number(session.heartbeatCount || 0) + 1;
+    session.heartbeatClockSkewMs =
+      heartbeatTs != null
+        ? Math.max(-24 * 60 * 60 * 1000, Math.min(24 * 60 * 60 * 1000, now - heartbeatTs))
+        : null;
+    const previousHeartbeat = Number(session.previousHeartbeatAt || 0);
+    session.heartbeatLagMs = previousHeartbeat > 0 ? Math.max(0, now - previousHeartbeat) : null;
+    session.previousHeartbeatAt = now;
     session.equity = Number(equity) || session.equity;
     if (balance !== undefined) {
       session.balance = Number(balance) || session.balance;
     }
+    this.sessionTelemetry.lastHeartbeatAt = now;
 
     return {
       success: true,
@@ -3236,7 +3421,7 @@ class EaBridgeService {
         broker,
         symbol,
         eaBridgeService: this,
-        quoteMaxAgeMs: 30 * 1000,
+        quoteMaxAgeMs: this.freshnessPolicy.signalExecQuoteMaxAgeMs,
         now: Date.now(),
       });
     } catch (_error) {
@@ -3249,6 +3434,7 @@ class EaBridgeService {
     const layer16 = layers.find((layer) => String(layer?.key || '') === 'L16') || null;
     const layer17 = layers.find((layer) => String(layer?.key || '') === 'L17') || null;
     const layer18 = layers.find((layer) => String(layer?.key || '') === 'L18') || null;
+    const layer20 = layers.find((layer) => String(layer?.key || '') === 'L20') || null;
 
     const entryKey = `${broker}:${symbol}:${direction}`;
     const cachedEntry =
@@ -3281,7 +3467,9 @@ class EaBridgeService {
 
     const confluenceScore =
       Number(layer17?.metrics?.confluenceWeighting?.weightedScore ?? layer17?.confidence) || null;
-    const decisionState = String(layer18?.metrics?.decision?.state || '').toUpperCase();
+    const decisionState = String(
+      layer20?.metrics?.decision?.state || getDecisionState(hydratedSignal) || ''
+    ).toUpperCase();
 
     const envMinConfluence = Number(process.env.EA_SIGNAL_LAYERS18_MIN_CONFLUENCE);
     const minConfluence = Number.isFinite(envMinConfluence) ? Math.max(0, envMinConfluence) : 30;
@@ -3555,7 +3743,7 @@ class EaBridgeService {
       broker,
     } = payload;
 
-    const sessionId = `${broker}-${accountMode}-${accountNumber}`;
+    const sessionId = this.buildSessionId({ broker, accountMode, accountNumber });
     const session = this.sessions.get(sessionId);
 
     if (!session) {
@@ -3768,17 +3956,11 @@ class EaBridgeService {
 
       const pair = broker ? this.resolveSymbolFromQuotes(broker, requested) : requested;
 
-      const envQuoteMaxAgeMs = Number(process.env.EA_SIGNAL_QUOTE_MAX_AGE_MS);
-      const quoteMaxAgeMs = Number.isFinite(envQuoteMaxAgeMs)
-        ? Math.max(1_000, envQuoteMaxAgeMs)
-        : 120 * 1000;
+      const quoteMaxAgeMs = this.freshnessPolicy.signalQuoteMaxAgeMs;
 
       // Execution needs a *fresh* tick; otherwise the MT5 EA (and spread/ATR guards) will refuse to trade.
       // Keep the quoteMaxAgeMs (data availability) separate from execution freshness.
-      const envExecQuoteMaxAgeMs = Number(process.env.EA_SIGNAL_EXEC_QUOTE_MAX_AGE_MS);
-      const execQuoteMaxAgeMs = Number.isFinite(envExecQuoteMaxAgeMs)
-        ? Math.max(1_000, envExecQuoteMaxAgeMs)
-        : quoteMaxAgeMs;
+      const execQuoteMaxAgeMs = this.freshnessPolicy.signalExecQuoteMaxAgeMs;
 
       const isRealBidAskQuote = (q) => {
         if (!q || typeof q !== 'object') {
@@ -3880,12 +4062,20 @@ class EaBridgeService {
         String(quote.source || '') !== 'ea_bars_synthetic';
 
       const snapshot = broker
-        ? this.getMarketSnapshot({ broker, symbol: pair, maxAgeMs: 2 * 60 * 1000 })
+        ? this.getMarketSnapshot({
+            broker,
+            symbol: pair,
+            maxAgeMs: this.freshnessPolicy.signalSnapshotMaxAgeMs,
+          })
         : null;
       let snapshotPending = false;
       if (!snapshot && broker) {
         snapshotPending = true;
-        this.requestMarketSnapshot({ broker, symbol: pair, ttlMs: 2 * 60 * 1000 });
+        this.requestMarketSnapshot({
+          broker,
+          symbol: pair,
+          ttlMs: this.freshnessPolicy.snapshotRequestTtlMs,
+        });
 
         // If we already have enough bar history, proceed anyway so the EA can keep operating.
         // This avoids a hard deadlock when snapshot polling is delayed.
@@ -4030,36 +4220,6 @@ class EaBridgeService {
       const requireLayers18 = autoTradingConfig.realtimeRequireLayers18 !== false;
       const requiresEnterState = true;
 
-      // Optional policy: allow promoting very strong WAIT_MONITOR signals to ENTER for execution.
-      // This is OFF by default and must be explicitly enabled via env.
-      const allowWaitMonitorExecution =
-        String(process.env.EA_SIGNAL_ALLOW_WAIT_MONITOR || '')
-          .trim()
-          .toLowerCase() === 'true';
-
-      const waitExecMinConfidenceRaw = Number(process.env.EA_SIGNAL_WAIT_EXEC_MIN_CONFIDENCE);
-      const waitExecMinStrengthRaw = Number(process.env.EA_SIGNAL_WAIT_EXEC_MIN_STRENGTH);
-      const waitExecMinWinRateRaw = Number(process.env.EA_SIGNAL_WAIT_EXEC_MIN_WIN_RATE);
-      const waitExecMinScoreRaw = Number(process.env.EA_SIGNAL_WAIT_EXEC_MIN_SCORE);
-
-      const waitExecMinConfidence = Number.isFinite(waitExecMinConfidenceRaw)
-        ? Math.max(0, Math.min(100, waitExecMinConfidenceRaw))
-        : 55;
-      const waitExecMinStrength = Number.isFinite(waitExecMinStrengthRaw)
-        ? Math.max(0, Math.min(100, waitExecMinStrengthRaw))
-        : 20;
-      const waitExecMinWinRate = Number.isFinite(waitExecMinWinRateRaw)
-        ? Math.max(0, Math.min(100, waitExecMinWinRateRaw))
-        : 75;
-      const waitExecMinScore = Number.isFinite(waitExecMinScoreRaw)
-        ? Math.max(0, Math.min(100, waitExecMinScoreRaw))
-        : 30;
-
-      const waitExecRequireLayers18 =
-        String(process.env.EA_SIGNAL_WAIT_EXEC_REQUIRE_LAYERS18 || '')
-          .trim()
-          .toLowerCase() === 'true';
-
       const confidence = Number(signal.confidence) || 0;
       const strength = Number(signal.strength) || 0;
       const direction = String(signal.direction || '').toUpperCase();
@@ -4082,12 +4242,7 @@ class EaBridgeService {
           .trim()
           .toUpperCase() || null;
       const decisionState =
-        String(
-          layer20?.metrics?.decision?.state ||
-            signal?.finalDecision?.state ||
-            signal?.isValid?.decision?.state ||
-            ''
-        )
+        String(layer20?.metrics?.decision?.state || getDecisionState(signal) || '')
           .trim()
           .toUpperCase() || null;
 
@@ -4109,52 +4264,7 @@ class EaBridgeService {
         return true;
       };
 
-      const getSignalWinRate = (sig) => {
-        const raw = sig?.winRate;
-        if (raw == null || raw === '') {
-          return null;
-        }
-        const numeric = Number(raw);
-        return Number.isFinite(numeric) ? numeric : null;
-      };
-
-      const getDecisionScore = (sig) => {
-        const raw = sig?.isValid?.decision?.score ?? sig?.score;
-        const numeric = Number(raw);
-        return Number.isFinite(numeric) ? numeric : null;
-      };
-
-      const isWaitMonitor = decisionState === 'WAIT_MONITOR';
-      const decisionMissing = Array.isArray(signal?.isValid?.decision?.missing)
-        ? signal.isValid.decision.missing
-        : [];
-      const decisionBlocked = Boolean(signal?.isValid?.decision?.blocked);
-      const waitWinRate = getSignalWinRate(signal);
-      const waitScore = getDecisionScore(signal);
-
-      // Some live feeds don't include a stable winRate yet.
-      // Keep promotion strict, but don't hard-block solely because winRate is unavailable.
-      const passesWaitWinRate = waitWinRate == null ? true : waitWinRate >= waitExecMinWinRate;
-      const passesWaitScore = waitScore != null && waitScore >= waitExecMinScore;
-
-      // WAIT_MONITOR promotion is deliberately strict: only allow when the signal already
-      // looks like an "ENTER" candidate except for the final state.
-      const canPromoteWaitMonitor =
-        allowWaitMonitorExecution &&
-        isWaitMonitor &&
-        decisionBlocked !== true &&
-        confidence >= waitExecMinConfidence &&
-        strength >= waitExecMinStrength &&
-        passesWaitWinRate &&
-        passesWaitScore &&
-        !decisionMissing.includes('direction_confirmation') &&
-        !decisionMissing.includes('probability') &&
-        !decisionMissing.includes('strength');
-
-      const isEnterByState = decisionState === 'ENTER' && Boolean(signal?.isValid?.isValid);
-      const isEnterCandidateByPromotion =
-        canPromoteWaitMonitor && Boolean(signal?.isValid?.isValid);
-      const isEnter = isEnterByState || isEnterCandidateByPromotion;
+      const isEnter = decisionState === 'ENTER' && Boolean(signal?.isValid?.isValid);
 
       const adjustedSignal = this.adjustSignalWithLearning(signal);
 
@@ -4278,37 +4388,6 @@ class EaBridgeService {
         }
       }
 
-      // Even when realtimeRequireLayers18=false (diagnostics mode), keep execution strict:
-      // if WAIT promotion is enabled, require L18 readiness unless explicitly disabled.
-      if (isEnterCandidateByPromotion && waitExecRequireLayers18) {
-        const computedLayersStatus = evaluateLayers18Readiness({
-          layeredAnalysis: signal?.components?.layeredAnalysis,
-          minConfluence: layers18MinConfluence,
-          decisionStateFallback: decisionState,
-          signal,
-        });
-        layersStatus = layersStatus || computedLayersStatus;
-        if (!computedLayersStatus?.ok) {
-          return {
-            success: true,
-            message: 'WAIT_MONITOR promotion blocked: layers18 readiness failed',
-            signal,
-            snapshotPending,
-            shouldExecute: false,
-            execution: {
-              shouldExecute: false,
-              requireLayers18: true,
-              requiresEnterState,
-              gates: {
-                decisionState,
-                originalDecisionState,
-                layersStatus: computedLayersStatus,
-              },
-            },
-          };
-        }
-      }
-
       if (direction !== 'BUY' && direction !== 'SELL') {
         return {
           success: false,
@@ -4402,15 +4481,15 @@ class EaBridgeService {
         // Never execute without a fresh, real-time quote.
         quoteOkForExecution;
 
-      const decision =
+      const executionDecision =
         adjustedSignal?.isValid?.decision && typeof adjustedSignal.isValid.decision === 'object'
           ? adjustedSignal.isValid.decision
           : null;
-      const executionBlockedReasons = Array.isArray(decision?.blockedReasons)
-        ? decision.blockedReasons
+      const executionBlockedReasons = Array.isArray(executionDecision?.blockedReasons)
+        ? executionDecision.blockedReasons
         : null;
       const executionBlockedReason =
-        (typeof decision?.blockedReason === 'string' && decision.blockedReason) ||
+        (typeof executionDecision?.blockedReason === 'string' && executionDecision.blockedReason) ||
         (Array.isArray(executionBlockedReasons) && executionBlockedReasons[0]?.code
           ? String(executionBlockedReasons[0].code)
           : null);
@@ -4432,10 +4511,10 @@ class EaBridgeService {
         gates: {
           tradingEnabled,
           tradingEnableReason: enablement.reason,
-          decisionState: shouldExecuteNow && isEnterCandidateByPromotion ? 'ENTER' : decisionState,
+          decisionState,
           originalDecisionState,
           layer18Verdict,
-          isEnter: shouldExecuteNow && isEnterCandidateByPromotion ? true : isEnter,
+          isEnter,
           isEnterOverride: false,
           minConfidence,
           minStrength,
@@ -4493,37 +4572,9 @@ class EaBridgeService {
 
       cacheSignalEntryContext();
 
-      // If we are executing a promoted WAIT_MONITOR, expose it as ENTER to downstream clients/EAs.
-      // This preserves the global invariant "ENTER is executable" while enabling the requested policy.
-      let responseSignal = adjustedSignal;
-      if (shouldExecuteNow && isEnterCandidateByPromotion) {
-        try {
-          responseSignal = {
-            ...(adjustedSignal || {}),
-            finalDecision: {
-              ...(adjustedSignal?.finalDecision || {}),
-              state: 'ENTER',
-            },
-            isValid: {
-              ...(adjustedSignal?.isValid || {}),
-              decision: {
-                ...(adjustedSignal?.isValid?.decision &&
-                typeof adjustedSignal.isValid.decision === 'object'
-                  ? adjustedSignal.isValid.decision
-                  : {}),
-                state: 'ENTER',
-                promotedFrom: originalDecisionState || 'WAIT_MONITOR',
-              },
-            },
-          };
-        } catch (_error) {
-          responseSignal = adjustedSignal;
-        }
-      }
-
       const response = {
         success: true,
-        signal: responseSignal,
+        signal: adjustedSignal,
         snapshotPending,
         shouldExecute: shouldExecuteNow,
         execution: {
@@ -4531,20 +4582,10 @@ class EaBridgeService {
           shouldExecute: shouldExecuteNow,
           gates: {
             ...(baseExecution.gates || {}),
-            isEnterOverride: Boolean(shouldExecuteNow && isEnterCandidateByPromotion),
-            decisionState:
-              shouldExecuteNow && isEnterCandidateByPromotion ? 'ENTER' : decisionState,
+            isEnterOverride: false,
+            decisionState,
             originalDecisionState,
-            waitMonitorPromotion: Boolean(shouldExecuteNow && isEnterCandidateByPromotion),
-            waitExecThresholds: isEnterCandidateByPromotion
-              ? {
-                  minConfidence: waitExecMinConfidence,
-                  minStrength: waitExecMinStrength,
-                  minWinRate: waitExecMinWinRate,
-                  minScore: waitExecMinScore,
-                  requireLayers18: Boolean(waitExecRequireLayers18),
-                }
-              : undefined,
+            waitMonitorPromotion: false,
           },
         },
       };
@@ -4600,7 +4641,18 @@ class EaBridgeService {
     // Fast-path: if a very recent snapshot exists (e.g. seeded by the realtime runner), reuse it.
     // This ensures the EA execution poll sees the exact same 20-layer snapshot as the dashboard.
     try {
-      const cached = this.getCachedAnalysisSnapshot({ broker, symbol });
+      const cacheFreshMaxAgeMs = 2500;
+      const isConnected = broker
+        ? this.isBrokerConnected({
+            broker,
+            maxAgeMs: this.freshnessPolicy.heartbeatMaxAgeMs,
+          })
+        : true;
+      const cached = this.getCachedAnalysisSnapshot({
+        broker,
+        symbol,
+        maxAgeMs: isConnected ? cacheFreshMaxAgeMs : this.analysisSnapshotCacheTtlMs,
+      });
       if (cached && typeof cached === 'object' && cached.signal) {
         return cached;
       }
@@ -4809,7 +4861,7 @@ class EaBridgeService {
           eaBridgeService: this,
           // Dashboard analysis is informational; tolerate slightly older quotes so Layer 1 can
           // display bid/ask + spread even when the stream is briefly idle.
-          quoteMaxAgeMs: 2 * 60 * 1000,
+          quoteMaxAgeMs: this.freshnessPolicy.dashboardAnalysisQuoteMaxAgeMs,
           barFallback: bestEffortBarFallback(),
           now,
         });
@@ -4915,10 +4967,7 @@ class EaBridgeService {
         (layer) => String(layer?.key || '').toUpperCase() === 'L20' || Number(layer?.layer) === 20
       ) || null;
     const decisionState = String(
-      layer20?.metrics?.decision?.state ||
-        signal?.finalDecision?.state ||
-        signal?.isValid?.decision?.state ||
-        ''
+      layer20?.metrics?.decision?.state || getDecisionState(signal) || ''
     )
       .trim()
       .toUpperCase();
@@ -4927,7 +4976,9 @@ class EaBridgeService {
       decisionState === 'ENTER' ||
       decisionState === 'ENTER_STRONG' ||
       decisionState === 'ENTER_TRADE';
-    if (!isEnterish) {
+    const isWaitMonitor = decisionState === 'WAIT_MONITOR';
+
+    if (!isEnterish && !isWaitMonitor) {
       return {
         ...analysis,
         shouldExecute: false,
@@ -4946,6 +4997,7 @@ class EaBridgeService {
 
       const merged = {
         ...analysis,
+        signal: exec?.signal || analysis?.signal || signal,
         shouldExecute: exec?.shouldExecute === true,
         execution: exec?.execution || null,
         executionMessage: exec?.message || null,
@@ -4992,8 +5044,37 @@ class EaBridgeService {
   /**
    * Get bridge statistics
    */
+  listActiveSessions() {
+    return Array.from(this.sessions.values()).filter((s) => s?.isActive === true);
+  }
+
+  getActiveSessionsForBroker(broker) {
+    const normalizedBroker = this.normalizeSessionBroker(broker) || null;
+    if (!normalizedBroker) {
+      return [];
+    }
+    return this.listActiveSessions().filter(
+      (session) => this.normalizeSessionBroker(session?.broker) === normalizedBroker
+    );
+  }
+
+  hasFreshHeartbeatForBroker({ broker, maxAgeMs, now = Date.now() } = {}) {
+    const sessions = this.getActiveSessionsForBroker(broker);
+    if (sessions.length === 0) {
+      return false;
+    }
+    return sessions.some((session) => {
+      if (!maxAgeMs) {
+        return true;
+      }
+      const last = Number(session?.lastHeartbeat || 0);
+      return last > 0 && now - last <= maxAgeMs;
+    });
+  }
+
   getStatistics() {
-    const activeSessions = Array.from(this.sessions.values()).filter((s) => s.isActive);
+    this.maybePruneStaleSessions({ maxAgeMs: this.freshnessPolicy.heartbeatMaxAgeMs });
+    const activeSessions = this.listActiveSessions();
 
     const quoteCountsByBroker = {};
     for (const quote of this.latestQuotes.values()) {
@@ -5016,11 +5097,9 @@ class EaBridgeService {
     const barsSeriesCountsByBroker = {};
     let totalBarsStored = 0;
     for (const [key, series] of this.latestBars.entries()) {
-      if (typeof key === 'string') {
-        const broker = key.split(':')[0];
-        if (broker) {
-          barsSeriesCountsByBroker[broker] = (barsSeriesCountsByBroker[broker] || 0) + 1;
-        }
+      const scopedBroker = this.extractBrokerFromCompositeKey(key);
+      if (scopedBroker) {
+        barsSeriesCountsByBroker[scopedBroker] = (barsSeriesCountsByBroker[scopedBroker] || 0) + 1;
       }
       if (Array.isArray(series)) {
         totalBarsStored += series.length;
@@ -5090,7 +5169,14 @@ class EaBridgeService {
         profitLoss: s.profitLoss,
         connectedAt: s.connectedAt,
         lastHeartbeat: s.lastHeartbeat,
+        heartbeatLagMs: s.heartbeatLagMs ?? null,
+        heartbeatClockSkewMs: s.heartbeatClockSkewMs ?? null,
+        heartbeatCount: Number(s.heartbeatCount || 0),
+        reconnectCount: Number(s.reconnectCount || 0),
       })),
+      sessionTelemetry: {
+        ...this.sessionTelemetry,
+      },
     };
   }
 
@@ -5098,7 +5184,8 @@ class EaBridgeService {
    * Get all active sessions
    */
   getActiveSessions() {
-    return Array.from(this.sessions.values()).filter((s) => s.isActive);
+    this.maybePruneStaleSessions({ maxAgeMs: this.freshnessPolicy.heartbeatMaxAgeMs });
+    return this.listActiveSessions();
   }
 
   /**
@@ -5106,7 +5193,7 @@ class EaBridgeService {
    * Used to prevent generating signals before MT4/MT5 is actually connected.
    */
   listKnownSymbols(options = {}) {
-    const broker = this.normalizeBroker(options.broker) || null;
+    const broker = this.normalizeSessionBroker(options.broker) || null;
     if (!broker) {
       return [];
     }
@@ -5158,7 +5245,7 @@ class EaBridgeService {
       if (symbols.size >= max) {
         break;
       }
-      if (!String(key).toLowerCase().startsWith(`${broker}:`)) {
+      if (!this.isCompositeKeyForBroker(key, broker)) {
         continue;
       }
       if (!acceptIfFresh(quote.receivedAt ?? quote.timestamp)) {
@@ -5176,7 +5263,7 @@ class EaBridgeService {
         if (!key || !snapshot) {
           continue;
         }
-        if (!String(key).toLowerCase().startsWith(`${broker}:`)) {
+        if (!this.isCompositeKeyForBroker(key, broker)) {
           continue;
         }
         if (!acceptIfFresh(snapshot.receivedAt ?? snapshot.timestamp)) {
@@ -5198,7 +5285,7 @@ class EaBridgeService {
         if (!key || !bars) {
           continue;
         }
-        if (!String(key).toLowerCase().startsWith(`${broker}:`)) {
+        if (!this.isCompositeKeyForBroker(key, broker)) {
           continue;
         }
         const list = Array.isArray(bars) ? bars : [];
@@ -5209,8 +5296,7 @@ class EaBridgeService {
         }
 
         // key format: broker:symbol:timeframe
-        const parts = String(key).split(':');
-        const sym = this.normalizeSymbol(parts[1]);
+        const sym = this.extractSymbolFromCompositeKey(key);
         if (sym) {
           symbols.add(sym);
         }
@@ -5224,29 +5310,18 @@ class EaBridgeService {
   }
 
   isBrokerConnected(options = {}) {
-    const broker = this.normalizeBroker(options.broker) || null;
+    const broker = this.normalizeSessionBroker(options.broker) || null;
     if (!broker) {
       return false;
     }
 
-    const envMaxAgeMs = Number(process.env.EA_HEARTBEAT_MAX_AGE_MS);
     const maxAgeMs = Number.isFinite(Number(options.maxAgeMs))
       ? Math.max(0, Number(options.maxAgeMs))
-      : Number.isFinite(envMaxAgeMs)
-        ? Math.max(0, envMaxAgeMs)
-        : 10 * 60 * 1000;
+      : this.freshnessPolicy.heartbeatMaxAgeMs;
+    this.maybePruneStaleSessions({ maxAgeMs });
     const now = Date.now();
 
-    const hasFreshHeartbeat = this.getActiveSessions().some((session) => {
-      if (!session || this.normalizeBroker(session.broker) !== broker) {
-        return false;
-      }
-      if (!maxAgeMs) {
-        return true;
-      }
-      const last = Number(session.lastHeartbeat || 0);
-      return last > 0 && now - last <= maxAgeMs;
-    });
+    const hasFreshHeartbeat = this.hasFreshHeartbeatForBroker({ broker, maxAgeMs, now });
 
     if (hasFreshHeartbeat) {
       return true;

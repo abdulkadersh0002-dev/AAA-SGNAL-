@@ -1,5 +1,24 @@
 import { z } from 'zod';
 
+const normalizeDecisionState = (value) => {
+  const normalized = String(value ?? '')
+    .trim()
+    .toUpperCase();
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized === 'ENTER') {
+    return 'ENTER';
+  }
+  if (normalized === 'WAIT' || normalized === 'WAIT_MONITOR') {
+    return 'WAIT_MONITOR';
+  }
+  if (normalized === 'NO_TRADE_BLOCKED' || normalized === 'NO_TRADE' || normalized === 'BLOCKED') {
+    return 'NO_TRADE_BLOCKED';
+  }
+  return undefined;
+};
+
 /**
  * @typedef {Object} TradingSignalDTO
  * @property {string|null|undefined} broker
@@ -198,7 +217,7 @@ export function createTradingSignalDTO(raw) {
       const direction = layer?.metrics?.direction != null ? String(layer.metrics.direction) : null;
       const confidence = layer?.metrics?.confidence ?? layer?.confidence ?? null;
       return {
-        state,
+        state: normalizeDecisionState(state),
         score: Number.isFinite(Number(decision?.score)) ? Number(decision.score) : null,
         blocked: decision?.blocked === true,
         missing: Array.isArray(decision?.missing) ? decision.missing.map((v) => String(v)) : null,
@@ -330,7 +349,9 @@ export function createTradingSignalDTO(raw) {
       decision:
         raw.isValid?.decision && typeof raw.isValid.decision === 'object'
           ? {
-              state: raw.isValid.decision.state || layeredDecisionFallback?.state || undefined,
+              state: normalizeDecisionState(
+                raw.isValid.decision.state || layeredDecisionFallback?.state
+              ),
               blocked:
                 raw.isValid.decision.blocked === undefined
                   ? undefined
@@ -411,7 +432,7 @@ export function createTradingSignalDTO(raw) {
             }
           : layeredDecisionFallback
             ? {
-                state: layeredDecisionFallback.state,
+                state: normalizeDecisionState(layeredDecisionFallback.state),
                 blocked: layeredDecisionFallback.blocked,
                 score: layeredDecisionFallback.score ?? undefined,
                 missing: layeredDecisionFallback.missing

@@ -23,6 +23,12 @@ import LoginPanel from './components/LoginPanel.jsx';
 import SmartSettingsPanel from './components/SmartSettingsPanel.jsx';
 import { formatDateTime, formatNumber, formatRelativeTime } from './utils/format.js';
 import {
+  getDecisionMissing,
+  getDecisionScore,
+  getDecisionState,
+  isDecisionBlocked,
+} from './utils/decision.js';
+import {
   ACTIVE_SYMBOLS_SYNC_MAX,
   ACTIVE_SYMBOLS_SYNC_INTERVAL_MS,
   EA_ONLY_UI_MODE,
@@ -55,6 +61,46 @@ const SHOW_AUTOTRADING_UI = false;
 // Keep this tied to the UI flag so hidden controls don't spam the console.
 const DASHBOARD_AUTOTRADING_AUTOSTART = SHOW_AUTOTRADING_UI;
 
+const DASHBOARD_HEARTBEAT_MAX_AGE_MS = (() => {
+  const raw = Number(import.meta?.env?.VITE_EA_HEARTBEAT_MAX_AGE_MS);
+  if (!Number.isFinite(raw)) {
+    return 2 * 60 * 1000;
+  }
+  return Math.max(1_000, Math.trunc(raw));
+})();
+
+const DASHBOARD_QUOTES_FETCH_MAX_AGE_MS = (() => {
+  const raw = Number(import.meta?.env?.VITE_EA_DASHBOARD_QUOTES_FETCH_MAX_AGE_MS);
+  if (!Number.isFinite(raw)) {
+    return 10 * 60 * 1000;
+  }
+  return Math.max(1_000, Math.trunc(raw));
+})();
+
+const DASHBOARD_QUOTES_HOLD_MS = (() => {
+  const raw = Number(import.meta?.env?.VITE_EA_DASHBOARD_QUOTES_HOLD_MS);
+  if (!Number.isFinite(raw)) {
+    return 10 * 60 * 1000;
+  }
+  return Math.max(30_000, Math.trunc(raw));
+})();
+
+const DASHBOARD_SYMBOLS_CACHE_MS = (() => {
+  const raw = Number(import.meta?.env?.VITE_EA_SYMBOLS_CACHE_MS);
+  if (!Number.isFinite(raw)) {
+    return 60 * 1000;
+  }
+  return Math.max(10_000, Math.trunc(raw));
+})();
+
+const DASHBOARD_SNAPSHOT_REQUEST_TTL_MS = (() => {
+  const raw = Number(import.meta?.env?.VITE_EA_SNAPSHOT_REQUEST_TTL_MS);
+  if (!Number.isFinite(raw)) {
+    return 2 * 60 * 1000;
+  }
+  return Math.max(1_000, Math.trunc(raw));
+})();
+
 const matchesTickerCategory = (symbolUpper, categoryId) => {
   const allowed = isFxSymbol(symbolUpper) || isMetalSymbol(symbolUpper);
   if (!allowed) {
@@ -65,6 +111,60 @@ const matchesTickerCategory = (symbolUpper, categoryId) => {
     return true;
   }
   return classifyTickerSymbol(symbolUpper) === category;
+};
+
+const getSignalSortTimestamp = (signal) => {
+  const cached = Number(signal?.sortTimestamp);
+  if (Number.isFinite(cached)) {
+    return cached;
+  }
+  return toTimestamp(signal?.openedAt || signal?.timestamp) || 0;
+};
+
+const mergeSignalLists = (incomingSignals = [], currentSignals = [], maxItems = MAX_CANDIDATE_ITEMS) => {
+  const merged = [
+    ...(Array.isArray(incomingSignals) ? incomingSignals.filter(Boolean) : []),
+    ...(Array.isArray(currentSignals) ? currentSignals.filter(Boolean) : []),
+  ];
+  const byKey = new Map();
+
+  for (const item of merged) {
+    const key = item?.mergeKey || item?.id;
+    if (!key) {
+      continue;
+    }
+
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, item);
+      continue;
+    }
+
+    const existingTs = getSignalSortTimestamp(existing);
+    const itemTs = getSignalSortTimestamp(item);
+    if (itemTs >= existingTs) {
+      byKey.set(key, item);
+    }
+  }
+
+  return Array.from(byKey.values())
+    .slice()
+    .sort((a, b) => getSignalSortTimestamp(b) - getSignalSortTimestamp(a))
+    .slice(0, Math.max(1, Number(maxItems) || MAX_CANDIDATE_ITEMS));
+};
+
+const getSettledValue = (result, fallback = null) => {
+  if (result?.status !== 'fulfilled') {
+    return fallback;
+  }
+  return result.value ?? fallback;
+};
+
+const getSettledErrorMessage = (result, fallbackMessage) => {
+  if (result?.status !== 'rejected') {
+    return null;
+  }
+  return result?.reason?.message || fallbackMessage;
 };
 
 const normalizeSignal = (payload = {}, fallbackTimestamp) => {
@@ -126,11 +226,7 @@ const normalizeSignal = (payload = {}, fallbackTimestamp) => {
       tradeRef?.pnl ??
       tradeRef?.profit
   );
-  const decisionScore = toNumber(
-    payload?.isValid?.decision?.score ??
-      payload?.components?.layeredDecision?.decision?.score ??
-      payload?.components?.layeredDecision?.score
-  );
+  const decisionScore = toNumber(getDecisionScore(payload));
   const score = toNumber(
     payload.finalScore ??
       decisionScore ??
@@ -206,6 +302,7 @@ const normalizeSignal = (payload = {}, fallbackTimestamp) => {
     layeredAnalysis: payload?.components?.layeredAnalysis || payload?.layeredAnalysis || null,
     shouldExecute: payload?.shouldExecute ?? payload?.execution?.shouldExecute ?? payload?.tradeReference?.shouldExecute,
     timestamp,
+    sortTimestamp: openedAt || timestamp,
     expiresAt,
     signalStatus: payload.signalStatus || payload.validity?.state || null,
     entry: payload.entry || null,
@@ -341,6 +438,7 @@ function App() {
   const tickerTrackRef = useRef(null);
   const [eaBridgeSessions, setEaBridgeSessions] = useState([]);
   const [eaBridgeStatus, setEaBridgeStatus] = useState(null);
+  const [eaBridgeStatistics, setEaBridgeStatistics] = useState(null);
   const [eaBridgeStatsError, setEaBridgeStatsError] = useState(null);
   const [autoTradingAction, setAutoTradingAction] = useState({ loading: false, error: null });
   const [autoTradingPanelOpen, setAutoTradingPanelOpen] = useState(false);
@@ -377,83 +475,18 @@ function App() {
     if (!Array.isArray(incomingSignals) || incomingSignals.length === 0) {
       return;
     }
-    setSignals((current) => {
-      const merged = [...incomingSignals.filter(Boolean), ...current.filter(Boolean)];
-      const byKey = new Map();
-
-      for (const item of merged) {
-        const key = item?.mergeKey || item?.id;
-        if (!key) {
-          continue;
-        }
-
-        const existing = byKey.get(key);
-        if (!existing) {
-          byKey.set(key, item);
-          continue;
-        }
-
-        const existingTs = toTimestamp(existing?.openedAt || existing?.timestamp) || 0;
-        const itemTs = toTimestamp(item?.openedAt || item?.timestamp) || 0;
-        if (itemTs >= existingTs) {
-          byKey.set(key, item);
-        }
-      }
-
-      return Array.from(byKey.values())
-        .slice()
-        .sort((a, b) => {
-          const aTs = toTimestamp(a?.openedAt || a?.timestamp) || 0;
-          const bTs = toTimestamp(b?.openedAt || b?.timestamp) || 0;
-          return bTs - aTs;
-        })
-        .slice(0, MAX_CANDIDATE_ITEMS);
-    });
+    setSignals((current) => mergeSignalLists(incomingSignals, current, MAX_CANDIDATE_ITEMS));
   }, []);
 
   const mergeCandidateSignals = useCallback((incomingSignals = []) => {
     if (!Array.isArray(incomingSignals) || incomingSignals.length === 0) {
       return;
     }
-    setCandidateSignals((current) => {
-      const merged = [...incomingSignals.filter(Boolean), ...current.filter(Boolean)];
-      const byKey = new Map();
-
-      for (const item of merged) {
-        const key = item?.mergeKey || item?.id;
-        if (!key) {
-          continue;
-        }
-
-        const existing = byKey.get(key);
-        if (!existing) {
-          byKey.set(key, item);
-          continue;
-        }
-
-        const existingTs = toTimestamp(existing?.openedAt || existing?.timestamp) || 0;
-        const itemTs = toTimestamp(item?.openedAt || item?.timestamp) || 0;
-        if (itemTs >= existingTs) {
-          byKey.set(key, item);
-        }
-      }
-
-      return Array.from(byKey.values())
-        .slice()
-        .sort((a, b) => {
-          const aTs = toTimestamp(a?.openedAt || a?.timestamp) || 0;
-          const bTs = toTimestamp(b?.openedAt || b?.timestamp) || 0;
-          return bTs - aTs;
-        })
-        .slice(0, MAX_CANDIDATE_ITEMS);
-    });
+    setCandidateSignals((current) => mergeSignalLists(incomingSignals, current, MAX_CANDIDATE_ITEMS));
   }, []);
 
   const entryReadySignalsMeta = useMemo(() => {
-    const primary = Array.isArray(signals) ? signals : [];
-    const fallbackCandidates = Array.isArray(candidateSignals) ? candidateSignals : [];
-    const usingCandidatesFallback = primary.length === 0 && fallbackCandidates.length > 0;
-    const pool = primary.length > 0 ? primary : fallbackCandidates;
+    const pool = Array.isArray(signals) ? signals : [];
 
     // Keep UI in sync with backend "strong" publish policy defaults.
     const STRICT_MIN_CONFIDENCE = 75;
@@ -493,19 +526,9 @@ function App() {
       ? Math.max(0, Math.min(100, RELAXED_ENTRY_MIN_SCORE))
       : 26;
 
-    // WATCH mode should stay high-signal: hide weak/noisy WAIT_MONITOR items.
-    // Can be tuned at build time via VITE_WATCHLIST_MIN_CONFIDENCE / VITE_WATCHLIST_MIN_STRENGTH.
-    const WATCH_MIN_CONFIDENCE = Number(import.meta.env.VITE_WATCHLIST_MIN_CONFIDENCE);
-    const WATCH_MIN_STRENGTH = Number(import.meta.env.VITE_WATCHLIST_MIN_STRENGTH);
-    const watchMinConfidence = Number.isFinite(WATCH_MIN_CONFIDENCE)
-      ? Math.max(0, Math.min(100, WATCH_MIN_CONFIDENCE))
-      : 70;
-    const watchMinStrength = Number.isFinite(WATCH_MIN_STRENGTH)
-      ? Math.max(0, Math.min(100, WATCH_MIN_STRENGTH))
-      : 70;
 
     const isEnterDecision = (signal) => {
-      const state = String(signal?.isValid?.decision?.state || '').toUpperCase();
+      const state = String(getDecisionState(signal) || '').toUpperCase();
       return state === 'ENTER' || state === 'ENTER_STRONG' || state === 'ENTER_TRADE';
     };
 
@@ -534,7 +557,7 @@ function App() {
             return false;
           }
 
-          const blocked = signal?.isValid?.decision?.blocked === true;
+          const blocked = isDecisionBlocked(signal);
           if (blocked) {
             return false;
           }
@@ -564,7 +587,7 @@ function App() {
           const confidence = Number(signal?.confidence) || 0;
           const strength = Number(signal?.strength) || 0;
           const winRate = Number(signal?.winRate) || 0;
-          const decisionScore = Number(signal?.isValid?.decision?.score);
+          const decisionScore = Number(getDecisionScore(signal));
           const score = Number.isFinite(decisionScore)
             ? decisionScore
             : Number(signal?.score) || 0;
@@ -572,9 +595,7 @@ function App() {
             ? Number(minWinRate)
             : entryMinWinRate;
           const effectiveMinScore = Number.isFinite(Number(minScore)) ? Number(minScore) : entryMinScore;
-          const missing = Array.isArray(signal?.isValid?.decision?.missing)
-            ? signal.isValid.decision.missing
-            : [];
+          const missing = getDecisionMissing(signal);
           if (confidence < minConfidence || strength < minStrength) {
             return false;
           }
@@ -604,8 +625,8 @@ function App() {
           if (bWin !== aWin) {
             return bWin - aWin;
           }
-          const aScore = Number(a?.isValid?.decision?.score ?? a?.score) || 0;
-          const bScore = Number(b?.isValid?.decision?.score ?? b?.score) || 0;
+          const aScore = Number(getDecisionScore(a) ?? a?.score) || 0;
+          const bScore = Number(getDecisionScore(b) ?? b?.score) || 0;
           if (bScore !== aScore) {
             return bScore - aScore;
           }
@@ -614,86 +635,8 @@ function App() {
           if (bStrength !== aStrength) {
             return bStrength - aStrength;
           }
-          const aTs = toTimestamp(a?.openedAt || a?.timestamp) || 0;
-          const bTs = toTimestamp(b?.openedAt || b?.timestamp) || 0;
-          return bTs - aTs;
-        })
-        .slice(0, 50);
-
-    const buildWatchList = () =>
-      pool
-        .filter(Boolean)
-        .filter((signal) => {
-          const direction = String(signal?.direction || '').toUpperCase();
-          if (direction !== 'BUY' && direction !== 'SELL') {
-            return false;
-          }
-
-          const blocked = signal?.isValid?.decision?.blocked === true;
-          if (blocked) {
-            return false;
-          }
-
-          const state = String(signal?.isValid?.decision?.state || '').toUpperCase();
-          if (state !== 'WAIT_MONITOR') {
-            return false;
-          }
-
-          // WATCH mode is monitoring-only: show high-quality WAIT_MONITOR signals
-          // even if precise entry/SL/TP levels aren't computed yet.
-
-          // Filter out weak/noisy candidates.
-          const confidence = Number(signal?.confidence) || 0;
-          const strength = Number(signal?.strength) || 0;
-          const winRate = Number(signal?.winRate) || 0;
-          const decisionScore = Number(signal?.isValid?.decision?.score);
-          const score = Number.isFinite(decisionScore)
-            ? decisionScore
-            : Number(signal?.score) || 0;
-          const missing = Array.isArray(signal?.isValid?.decision?.missing)
-            ? signal.isValid.decision.missing
-            : [];
-          if (confidence < watchMinConfidence || strength < watchMinStrength) {
-            return false;
-          }
-
-          if (winRate < entryMinWinRate) {
-            return false;
-          }
-
-          if (score < entryMinScore) {
-            return false;
-          }
-
-          if (
-            missing.includes('direction_confirmation') ||
-            missing.includes('probability') ||
-            missing.includes('strength')
-          ) {
-            return false;
-          }
-
-          return true;
-        })
-        .slice()
-        .sort((a, b) => {
-          const aTradeable = isTradeable(a) ? 1 : 0;
-          const bTradeable = isTradeable(b) ? 1 : 0;
-          if (bTradeable !== aTradeable) {
-            return bTradeable - aTradeable;
-          }
-          const aStrength = Number(a?.strength) || 0;
-          const bStrength = Number(b?.strength) || 0;
-          if (bStrength !== aStrength) {
-            return bStrength - aStrength;
-          }
-          const aConf = Number(a?.confidence) || 0;
-          const bConf = Number(b?.confidence) || 0;
-          if (bConf !== aConf) {
-            return bConf - aConf;
-          }
-          const aTs = toTimestamp(a?.openedAt || a?.timestamp) || 0;
-          const bTs = toTimestamp(b?.openedAt || b?.timestamp) || 0;
+          const aTs = getSignalSortTimestamp(a);
+          const bTs = getSignalSortTimestamp(b);
           return bTs - aTs;
         })
         .slice(0, 50);
@@ -706,9 +649,7 @@ function App() {
     if (strict.length > 0) {
       return {
         signals: strict,
-        modeLabel: usingCandidatesFallback
-          ? `Executable ENTER (strict · candidates · win≥${entryMinWinRate} score≥${entryMinScore})`
-          : `Executable ENTER (strict · win≥${entryMinWinRate} score≥${entryMinScore})`
+        modeLabel: `Executable ENTER (strict · win≥${entryMinWinRate} score≥${entryMinScore})`
       };
     }
 
@@ -722,20 +663,14 @@ function App() {
     if (relaxed.length > 0) {
       return {
         signals: relaxed,
-        modeLabel: usingCandidatesFallback
-          ? `Executable ENTER (relaxed · candidates ${relaxedMinConfidence}/${relaxedMinStrength} · win≥${relaxedEntryMinWinRate} score≥${relaxedEntryMinScore})`
-          : `Executable ENTER (relaxed ${relaxedMinConfidence}/${relaxedMinStrength} · win≥${relaxedEntryMinWinRate} score≥${relaxedEntryMinScore})`
+        modeLabel: `Executable ENTER (relaxed ${relaxedMinConfidence}/${relaxedMinStrength} · win≥${relaxedEntryMinWinRate} score≥${relaxedEntryMinScore})`
       };
     }
-
-    const watch = buildWatchList();
-      return {
-      signals: watch,
-      modeLabel: usingCandidatesFallback
-          ? `WATCH (WAIT_MONITOR ≥${watchMinConfidence}/${watchMinStrength} · win≥${entryMinWinRate} score≥${entryMinScore} · candidates)`
-          : `WATCH (WAIT_MONITOR ≥${watchMinConfidence}/${watchMinStrength} · win≥${entryMinWinRate} score≥${entryMinScore})`
+    return {
+      signals: [],
+      modeLabel: 'Executable ENTER only'
     };
-  }, [signals, candidateSignals]);
+  }, [signals]);
 
   const entryReadySignals = entryReadySignalsMeta.signals;
 
@@ -835,20 +770,14 @@ function App() {
         fetchJson('/api/statistics')
       ]);
 
-      const statusRes = results[0]?.status === 'fulfilled' ? results[0].value : null;
-      const statsRes = results[1]?.status === 'fulfilled' ? results[1].value : null;
+      const statusRes = getSettledValue(results[0], null);
+      const statsRes = getSettledValue(results[1], null);
 
       const status = statusRes?.status || null;
       const statistics = statsRes?.statistics || null;
 
-      const statusError =
-        results[0]?.status === 'rejected'
-          ? results[0]?.reason?.message || 'Failed to load engine status'
-          : null;
-      const statsError =
-        results[1]?.status === 'rejected'
-          ? results[1]?.reason?.message || 'Failed to load engine statistics'
-          : null;
+      const statusError = getSettledErrorMessage(results[0], 'Failed to load engine status');
+      const statsError = getSettledErrorMessage(results[1], 'Failed to load engine statistics');
 
       setEngineSnapshot((prev) => ({
         status: status ?? prev.status ?? null,
@@ -870,9 +799,10 @@ function App() {
     setEaBridgeStatsError(null);
     try {
       // Sessions endpoint is the source of truth for EA heartbeats.
-      const [sessionsRes, statusRes] = await Promise.allSettled([
+      const [sessionsRes, statusRes, statisticsRes] = await Promise.allSettled([
         fetchJson('/api/broker/bridge/sessions'),
-        fetchJson('/api/broker/bridge/status')
+        fetchJson('/api/broker/bridge/status'),
+        fetchJson('/api/broker/bridge/statistics')
       ]);
 
       if (sessionsRes.status === 'fulfilled') {
@@ -884,6 +814,19 @@ function App() {
 
       if (statusRes.status === 'fulfilled') {
         setEaBridgeStatus(statusRes.value || null);
+      }
+
+      if (statisticsRes.status === 'fulfilled') {
+        setEaBridgeStatistics(statisticsRes.value || null);
+      }
+
+      const errors = [
+        getSettledErrorMessage(sessionsRes, 'sessions unavailable'),
+        getSettledErrorMessage(statusRes, 'bridge status unavailable'),
+        getSettledErrorMessage(statisticsRes, 'bridge statistics unavailable')
+      ].filter(Boolean);
+      if (errors.length > 0 && errors.length === 3) {
+        setEaBridgeStatsError(errors[0]);
       }
     } catch (error) {
       // Best-effort: don't wipe previously-known sessions on transient API issues.
@@ -920,14 +863,14 @@ function App() {
       setMarketFeed((prev) => ({ ...prev, loading: prev.updatedAt == null, error: null }));
       try {
         const now = Date.now();
-        const symbolsCacheMs = 5 * 60 * 1000;
+        const symbolsCacheMs = DASHBOARD_SYMBOLS_CACHE_MS;
         const shouldFetchSymbols =
           !marketSymbolsRef.current.lastFetchedAt ||
           now - marketSymbolsRef.current.lastFetchedAt > symbolsCacheMs;
 
         const requests = [
           fetchJson(
-            `/api/broker/bridge/${effectivePlatformId}/market/quotes?maxAgeMs=900000&orderBy=symbol`
+            `/api/broker/bridge/${effectivePlatformId}/market/quotes?maxAgeMs=${DASHBOARD_QUOTES_FETCH_MAX_AGE_MS}&orderBy=symbol`
           ),
           shouldFetchSymbols
             ? fetchJson(`/api/broker/bridge/${effectivePlatformId}/market/symbols?max=3000`)
@@ -990,17 +933,26 @@ function App() {
               : null;
 
         setMarketFeed((prev) => {
-          const nextQuotes = quotesSucceeded
-            ? quotes
-            : Array.isArray(prev?.quotes)
-              ? prev.quotes
-              : [];
+          const prevQuotes = Array.isArray(prev?.quotes) ? prev.quotes : [];
+          const prevUpdatedAt = Number(prev?.updatedAt || 0);
+          const shouldHoldQuotes =
+            quotesSucceeded &&
+            quotes.length === 0 &&
+            prevQuotes.length > 0 &&
+            prevUpdatedAt > 0 &&
+            now - prevUpdatedAt <= DASHBOARD_QUOTES_HOLD_MS;
+
+          const nextQuotes = shouldHoldQuotes
+            ? prevQuotes
+            : quotesSucceeded
+              ? quotes
+              : prevQuotes;
           const nextNews = includeNews ? news || [] : prev.news;
           const hasData =
             (Array.isArray(nextQuotes) && nextQuotes.length > 0) ||
             (Array.isArray(nextNews) && nextNews.length > 0);
 
-          if (quotesSucceeded) {
+          if (quotesSucceeded && !shouldHoldQuotes) {
             const bySymbol = new Map();
             const symbols = [];
             const indexBySymbol = new Map();
@@ -1127,11 +1079,11 @@ function App() {
         return true;
       }
       const hbAge = Number(eaBridgeStatus?.sessions?.lastHeartbeatAgeMs);
-      if (Number.isFinite(hbAge) && hbAge >= 0 && hbAge <= 2 * 60 * 1000) {
+      if (Number.isFinite(hbAge) && hbAge >= 0 && hbAge <= DASHBOARD_HEARTBEAT_MAX_AGE_MS) {
         return true;
       }
       const hb = Number(eaBridgeStatus?.sessions?.lastHeartbeat || 0);
-      if (hb > 0 && nowMs - hb <= 2 * 60 * 1000) {
+      if (hb > 0 && nowMs - hb <= DASHBOARD_HEARTBEAT_MAX_AGE_MS) {
         return true;
       }
     }
@@ -1139,7 +1091,7 @@ function App() {
     if (Array.isArray(sessions) && sessions.length > 0) {
       return sessions.some((session) => {
         const heartbeat = Number(session?.lastHeartbeat || 0);
-        return heartbeat > 0 && nowMs - heartbeat <= 2 * 60 * 1000;
+        return heartbeat > 0 && nowMs - heartbeat <= DASHBOARD_HEARTBEAT_MAX_AGE_MS;
       });
     }
 
@@ -1147,7 +1099,7 @@ function App() {
     // even if sessions haven't loaded yet (or the endpoint is temporarily failing).
     const quotes = Array.isArray(marketFeed?.quotes) ? marketFeed.quotes : [];
     const updatedAt = Number(marketFeed?.updatedAt || 0);
-    if (quotes.length > 0 && updatedAt > 0 && nowMs - updatedAt <= 2 * 60 * 1000) {
+    if (quotes.length > 0 && updatedAt > 0 && nowMs - updatedAt <= DASHBOARD_HEARTBEAT_MAX_AGE_MS) {
       return true;
     }
 
@@ -1196,19 +1148,9 @@ function App() {
       : !hasBridgeStats && eaBridgeStatsError
         ? 'Unknown'
         : 'Disconnected';
-    const modeLabel = entryReadySignalsMeta?.modeLabel || 'ENTER only';
+    const modeLabel = entryReadySignalsMeta?.modeLabel || 'Executable ENTER only';
 
-    const isWatchMode = String(modeLabel || '')
-      .trim()
-      .toUpperCase()
-      .startsWith('WATCH');
-
-    const headline =
-      retained > 0
-        ? isWatchMode
-          ? 'Live watchlist signals'
-          : 'Live entry-ready signals'
-        : 'Signal Dashboard';
+    const headline = retained > 0 ? 'Live entry-ready signals' : 'Signal Dashboard';
 
     const emptyDetails = (() => {
       if (!bridgeIsConnected) {
@@ -1226,12 +1168,8 @@ function App() {
       }
       const candidatesHint =
         candidateCount > 0
-          ? ` No strict ENTER signals yet, but ${candidateCount} analyzed candidates are available below (with reasons).`
+          ? ` ${candidateCount} analyzed candidates are available below (not auto-trading yet).`
           : '';
-
-      if (isWatchMode) {
-        return `EA is connected and streaming quotes for ${uniqueSymbols.size || quoteCount} symbols. Showing WATCH signals (WAIT_MONITOR) — these are monitoring-only and will not auto-trade until they become executable ENTER (fresh ticks required).${candidatesHint}`;
-      }
 
       return `EA is connected and streaming quotes for ${uniqueSymbols.size || quoteCount} symbols. Auto-trading starts only when an executable ENTER signal appears (fresh ticks required).${candidatesHint}`;
     })();
@@ -1244,7 +1182,7 @@ function App() {
       retained,
       latestTs,
       modeLabel,
-      isWatchMode,
+      isWatchMode: false,
       emptyDetails,
       candidateCount,
       strongOverrideCount,
@@ -1720,7 +1658,7 @@ function App() {
       try {
         await postJson(`/api/broker/bridge/${effectivePlatformId}/market/snapshot/request`, {
           symbol,
-          ttlMs: 2 * 60 * 1000
+          ttlMs: DASHBOARD_SNAPSHOT_REQUEST_TTL_MS
         });
         ref.lastSentAt = Date.now();
         ref.backoffUntil = 0;
@@ -1794,7 +1732,7 @@ function App() {
   const TICKER_QUOTE_STALE_MS = (() => {
     const raw = Number(import.meta?.env?.VITE_TICKER_QUOTE_STALE_MS);
     if (!Number.isFinite(raw)) {
-      return 2 * 60 * 1000;
+      return 10 * 60 * 1000;
     }
     return Math.max(30_000, Math.trunc(raw));
   })();
@@ -2001,38 +1939,36 @@ function App() {
     TICKER_CATALOG_SYNC_INTERVAL_MS
   ]);
 
-  const openAnalyzerForSymbolAndRequestSnapshot = useCallback(
-    (symbolValue) => {
+  const openAnalysisViewForSymbolAndRequestSnapshot = useCallback(
+    (symbolValue, view = 'analyzer') => {
       const raw = String(symbolValue || '').trim();
       const normalized = normalizeTickerSymbol(raw);
       if (!normalized) {
         return;
       }
+      const openPairView = view === 'pair';
       void requestSnapshotForSymbol(normalized);
       preserveScrollPosition(() => {
         setAnalyzerSymbol(raw);
-        setAnalyzerOpen(true);
-        setPairAnalysisOpen(false);
+        setAnalyzerOpen(!openPairView);
+        setPairAnalysisOpen(openPairView);
       });
     },
     [preserveScrollPosition, requestSnapshotForSymbol]
   );
 
+  const openAnalyzerForSymbolAndRequestSnapshot = useCallback(
+    (symbolValue) => {
+      openAnalysisViewForSymbolAndRequestSnapshot(symbolValue, 'analyzer');
+    },
+    [openAnalysisViewForSymbolAndRequestSnapshot]
+  );
+
   const openPairAnalysisForSymbolAndRequestSnapshot = useCallback(
     (symbolValue) => {
-      const raw = String(symbolValue || '').trim();
-      const normalized = normalizeTickerSymbol(raw);
-      if (!normalized) {
-        return;
-      }
-      void requestSnapshotForSymbol(normalized);
-      preserveScrollPosition(() => {
-        setAnalyzerSymbol(raw);
-        setAnalyzerOpen(false);
-        setPairAnalysisOpen(true);
-      });
+      openAnalysisViewForSymbolAndRequestSnapshot(symbolValue, 'pair');
     },
-    [preserveScrollPosition, requestSnapshotForSymbol]
+    [openAnalysisViewForSymbolAndRequestSnapshot]
   );
 
   const closeAnalyzer = useCallback(() => {
@@ -2251,7 +2187,7 @@ function App() {
       return;
     }
 
-    const decisionState = normalized?.isValid?.decision?.state || null;
+    const decisionState = getDecisionState(normalized);
     if (decisionState !== 'ENTER') {
       return;
     }
@@ -3372,16 +3308,15 @@ function App() {
         }
         const normalized = normalizeSignal(payload, event.timestamp);
         if (normalized?.id) {
-          const decisionState = String(normalized?.isValid?.decision?.state || '').toUpperCase();
-          const isEnter = decisionState === 'ENTER' || decisionState === 'ENTER_STRONG' || decisionState === 'ENTER_TRADE';
-          const isWatch = decisionState === 'WAIT_MONITOR';
+          const decisionState = String(getDecisionState(normalized) || '').toUpperCase();
+          const isEnter =
+            decisionState === 'ENTER' ||
+            decisionState === 'ENTER_STRONG' ||
+            decisionState === 'ENTER_TRADE';
 
           // Only treat ENTER as "entry-ready" when it is actually executable now.
-          // Otherwise, show it in Candidates so the user can see it with reasons
-          // (common when MT5 ticks are stale/missing for that symbol).
+          // Otherwise, keep it in Candidates so the user can see it with reasons.
           if (isEnter && normalized.shouldExecute === true) {
-            mergeSignals([normalized]);
-          } else if (isWatch) {
             mergeSignals([normalized]);
           } else {
             mergeCandidateSignals([normalized]);
@@ -3484,7 +3419,7 @@ function App() {
         refreshModuleHealth?.();
       }
     },
-    [effectivePlatformId, loadEngineSnapshot, mergeSignals, refreshModuleHealth]
+    [effectivePlatformId, loadEngineSnapshot, mergeSignals, mergeCandidateSignals, refreshModuleHealth]
   );
 
   useWebSocketFeed(handleEngineEvent);
@@ -3615,10 +3550,10 @@ function App() {
         <div className="dashboard__brand">
           <div className="dashboard__logo">
             <span className="dashboard__logo-orb" />
-            <span className="dashboard__logo-text">NEON OPS</span>
+            <span className="dashboard__logo-text">منصة ابو عبدو (حبال )</span>
           </div>
           <div>
-            <h1 className="dashboard__title">Neon Trading Console</h1>
+            <h1 className="dashboard__title">منصة ابو عبدو (حبال )</h1>
             <p className="dashboard__subtitle">Smart signal orchestration & execution</p>
           </div>
         </div>
@@ -3680,6 +3615,7 @@ function App() {
                     eaOnly={EA_ONLY_UI_MODE}
                     eaBridgeConnected={bridgeIsConnected}
                     eaQuotes={marketFeed?.quotes || []}
+                    eaBridgeStatus={eaBridgeStatus}
                   />
                   {SHOW_AUTOTRADING_UI && (
                     <button
@@ -6432,7 +6368,7 @@ function App() {
                     <div className="signal-dashboard-panel__title">
                       <h2>{entryReadyPanelMeta.headline}</h2>
                       <p className="panel__hint">
-                        EA {entryReadyPanelMeta.isWatchMode ? 'watchlist' : 'entry-ready'} signals ({entryReadyPanelMeta.modeLabel})
+                        EA entry-ready signals ({entryReadyPanelMeta.modeLabel})
                       </p>
                     </div>
                     <div className="signal-dashboard-panel__tags">
@@ -6493,11 +6429,7 @@ function App() {
                       snapshots={featureSnapshots}
                       selectedId={entryReadySelectedId}
                       mode="strong"
-                      emptyTitle={
-                        entryReadyPanelMeta.isWatchMode
-                          ? 'No WATCH (WAIT_MONITOR) signals right now.'
-                          : 'No entry-ready EA signals right now.'
-                      }
+                      emptyTitle="No entry-ready EA signals right now."
                       emptyDetails={entryReadyPanelMeta.emptyDetails}
                       onSelect={(signal, id) => {
                         setEntryReadySelectedId(id || null);
@@ -6534,12 +6466,14 @@ function App() {
                     </div>
                   )}
 
-                  {((entryReadyPanelMeta.isWatchMode && candidateSignals.length > 0) ||
-                    (!entryReadyPanelMeta.isWatchMode && entryReadySignals.length === 0)) && (
+                  {candidateSignals.length > 0 && (
                     <div className="signal-dashboard-panel__candidates">
                       <CandidateSignalTable
                         signals={candidateSignals}
                         selectedId={candidateSelectedId}
+                        title="Analyzed candidates (not auto-trading)"
+                        hint="Signals that are not approved for auto-trading yet. Review the blockers and execution gates below."
+                        emptyText="No analyzed candidates right now."
                         onSelect={(signal, id) => {
                           setCandidateSelectedId(id || null);
                           if (signal?.pair) {
@@ -6562,9 +6496,12 @@ function App() {
         {!pairAnalysisOpen && metaTraderBridgeOpen && (
           <section className="dashboard__section">
             <MetaTraderBridgePanel
-              brokerConnectors={brokerStatus.connectors}
               brokerHealth={brokerStatus.health}
               onRefreshBrokers={refreshBrokerStatus}
+              bridgeStats={eaBridgeStatistics}
+              bridgeStatus={eaBridgeStatus}
+              bridgeError={eaBridgeStatsError}
+              onRefreshBridgeStats={refreshEaBridgeStats}
               selectedPlatform={selectedPlatform}
               onSelectedPlatformChange={setSelectedPlatform}
               showAutoTradingControls={false}

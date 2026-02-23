@@ -28,6 +28,32 @@ const buildEnterSignal = () => ({
   },
 });
 
+const buildWaitMonitorSignal = () => ({
+  broker: 'mt5',
+  pair: 'EURUSD',
+  direction: 'BUY',
+  confidence: 88,
+  strength: 84,
+  winRate: 82,
+  timeframe: 'M15',
+  isValid: { isValid: true, decision: { state: 'WAIT_MONITOR', score: 78, blocked: false } },
+  entry: { price: 1.1, stopLoss: 1.09, takeProfit: 1.12, riskReward: 2 },
+  entryPrice: 1.1,
+  stopLoss: 1.09,
+  takeProfit: 1.12,
+  components: {
+    normalizedDecision: { state: 'WAIT_MONITOR', score: 78, blocked: false },
+    layeredAnalysis: {
+      layers: [
+        { key: 'L16', metrics: { verdict: 'PASS', isTradeValid: true } },
+        { key: 'L17', confidence: 84, metrics: { confluenceWeighting: { weightedScore: 84 } } },
+        { key: 'L18', metrics: { verdict: 'PASS' } },
+        { key: 'L20', metrics: { decision: { state: 'WAIT_MONITOR' } } },
+      ],
+    },
+  },
+});
+
 describe('EA bridge execution uses precomputed snapshot', () => {
   it('does not call getAnalysisSnapshot when payload.signal is provided', async () => {
     const svc = new EaBridgeService({
@@ -103,5 +129,63 @@ describe('EA bridge execution uses precomputed snapshot', () => {
     assert.equal(result.success, true);
     assert.ok(result.signal);
     assert.equal(String(result.signal?.pair || '').toUpperCase(), 'EURUSD');
+  });
+
+  it('promotes WAIT_MONITOR to ENTER when promotion policy and structural layers are satisfied', async () => {
+    const prevAllowWait = process.env.EA_SIGNAL_ALLOW_WAIT_MONITOR;
+    delete process.env.EA_SIGNAL_WAIT_EXEC_REQUIRE_LAYERS18;
+    process.env.EA_SIGNAL_ALLOW_WAIT_MONITOR = 'true';
+
+    try {
+      const svc = new EaBridgeService({
+        logger: silentLogger,
+        tradingEngine: { config: { autoTrading: { realtimeRequireLayers18: true } } },
+      });
+
+      svc.restrictSymbols = false;
+
+      svc.getQuotes = () => [
+        {
+          broker: 'mt5',
+          symbol: 'EURUSD',
+          bid: 1.1,
+          ask: 1.1001,
+          receivedAt: Date.now(),
+          source: 'ea_tick',
+        },
+      ];
+
+      svc.getMarketSnapshot = () => ({
+        quote: { broker: 'mt5', symbol: 'EURUSD', bid: 1.1, ask: 1.1001, receivedAt: Date.now() },
+        timeframes: {},
+      });
+
+      svc.getAnalysisSnapshot = async () => {
+        throw new Error('getAnalysisSnapshot should not be called');
+      };
+
+      svc.intelligentTradeManager.evaluateTradeEntry = () => ({ shouldOpen: true, reasons: [] });
+
+      const signal = buildWaitMonitorSignal();
+      const result = await svc.getSignalForExecution({
+        broker: 'mt5',
+        symbol: 'EURUSD',
+        signal,
+      });
+
+      assert.equal(result.success, true);
+      assert.equal(result.shouldExecute, true);
+      assert.equal(String(result.signal?.isValid?.decision?.state || '').toUpperCase(), 'ENTER');
+      assert.equal(
+        String(result.signal?.components?.normalizedDecision?.state || '').toUpperCase(),
+        'ENTER'
+      );
+    } finally {
+      if (prevAllowWait == null) {
+        delete process.env.EA_SIGNAL_ALLOW_WAIT_MONITOR;
+      } else {
+        process.env.EA_SIGNAL_ALLOW_WAIT_MONITOR = prevAllowWait;
+      }
+    }
   });
 });

@@ -6,22 +6,24 @@ import { normalizeBrokerId } from '../app/app-constants.js';
 const NA_LABEL = 'N/A';
 
 function MetaTraderBridgePanel({
-  brokerConnectors = [],
   brokerHealth = [],
   onRefreshBrokers,
+  bridgeStats: bridgeStatsProp = null,
+  bridgeStatus: bridgeStatusProp = null,
+  bridgeError: bridgeErrorProp = null,
+  onRefreshBridgeStats,
   selectedPlatform: selectedPlatformProp,
   onSelectedPlatformChange,
   showAutoTradingControls = false
 }) {
   const [bridgeActivity, setBridgeActivity] = useState({});
   const [selectedPlatformState, setSelectedPlatformState] = useState('MT5');
-  const [bridgeStats, setBridgeStats] = useState(null);
-  const [bridgeStatus, setBridgeStatus] = useState(null);
+  const [bridgeStats, setBridgeStats] = useState(bridgeStatsProp);
+  const [bridgeStatus, setBridgeStatus] = useState(bridgeStatusProp);
   const [statsError, setStatsError] = useState(null);
   const [statusError, setStatusError] = useState(null);
   const [statsLoading, setStatsLoading] = useState(false);
   const [statusLoading, setStatusLoading] = useState(false);
-  const [localConnectorHealth, setLocalConnectorHealth] = useState({});
   const [autoTradingEnabled, setAutoTradingEnabled] = useState(false);
   const [autoTradingLoading, setAutoTradingLoading] = useState(false);
   const [autoTradingError, setAutoTradingError] = useState(null);
@@ -39,12 +41,6 @@ function MetaTraderBridgePanel({
   );
 
   const trackedPlatforms = useMemo(() => ['MT4', 'MT5'], []);
-  // In EA-only mode we treat MT4/MT5 as available even if optional connector
-  // microservices are not provisioned (the EA talks to /api/broker/bridge/*).
-  const _normalizedConnectors = useMemo(
-    () => brokerConnectors.map((id) => String(id).toUpperCase()),
-    [brokerConnectors]
-  );
 
   const connectorHealthMap = useMemo(() => {
     const map = new Map();
@@ -64,33 +60,44 @@ function MetaTraderBridgePanel({
     [bridgeActivity]
   );
 
-  const refreshStats = useCallback(async () => {
+  useEffect(() => {
+    if (bridgeStatsProp !== undefined) {
+      setBridgeStats(bridgeStatsProp);
+    }
+  }, [bridgeStatsProp]);
+
+  useEffect(() => {
+    if (bridgeStatusProp !== undefined) {
+      setBridgeStatus(bridgeStatusProp);
+    }
+  }, [bridgeStatusProp]);
+
+  useEffect(() => {
+    if (!bridgeErrorProp) {
+      return;
+    }
+    setStatsError(String(bridgeErrorProp));
+  }, [bridgeErrorProp]);
+
+  const refreshBridgeTelemetry = useCallback(async () => {
+    if (typeof onRefreshBridgeStats !== 'function') {
+      return;
+    }
     setStatsLoading(true);
-    setStatsError(null);
+    setStatusLoading(true);
     try {
-      const stats = await fetchJson('/api/broker/bridge/statistics');
-      setBridgeStats(stats);
+      await onRefreshBridgeStats();
+      setStatsError(null);
+      setStatusError(null);
     } catch (error) {
-      setBridgeStats(null);
-      setStatsError(error?.message || 'Failed to load bridge statistics');
+      const message = error?.message || 'Failed to load bridge telemetry';
+      setStatsError(message);
+      setStatusError(message);
     } finally {
       setStatsLoading(false);
-    }
-  }, []);
-
-  const refreshStatus = useCallback(async () => {
-    setStatusLoading(true);
-    setStatusError(null);
-    try {
-      const status = await fetchJson('/api/broker/bridge/status?maxAgeMs=120000');
-      setBridgeStatus(status);
-    } catch (error) {
-      setBridgeStatus(null);
-      setStatusError(error?.message || 'Failed to load bridge status');
-    } finally {
       setStatusLoading(false);
     }
-  }, []);
+  }, [onRefreshBridgeStats]);
 
   const refreshAutoTradingStatus = useCallback(async () => {
     setAutoTradingError(null);
@@ -121,12 +128,12 @@ function MetaTraderBridgePanel({
   }, [selectedPlatform, setSelectedPlatform]);
 
   useEffect(() => {
-    const tasks = [refreshStats(), refreshStatus()];
+    const tasks = [refreshBridgeTelemetry()];
     if (showAutoTradingControls) {
       tasks.push(refreshAutoTradingStatus());
     }
     void Promise.allSettled(tasks);
-  }, [refreshAutoTradingStatus, refreshStats, refreshStatus, showAutoTradingControls]);
+  }, [refreshAutoTradingStatus, refreshBridgeTelemetry, showAutoTradingControls]);
 
   useEffect(() => {
     if (!showAutoTradingControls) {
@@ -135,11 +142,6 @@ function MetaTraderBridgePanel({
     const timer = setInterval(refreshAutoTradingStatus, 15000);
     return () => clearInterval(timer);
   }, [refreshAutoTradingStatus, showAutoTradingControls]);
-
-  useEffect(() => {
-    const timer = setInterval(refreshStatus, 15000);
-    return () => clearInterval(timer);
-  }, [refreshStatus]);
 
   const handleBridgeAction = useCallback(
     async (platform) => {
@@ -159,7 +161,7 @@ function MetaTraderBridgePanel({
       }));
 
       try {
-        await Promise.allSettled([refreshStats(), refreshStatus(), onRefreshBrokers?.()]);
+        await Promise.allSettled([refreshBridgeTelemetry(), onRefreshBrokers?.()]);
 
         setBridgeActivity((prev) => ({
           ...prev,
@@ -181,7 +183,7 @@ function MetaTraderBridgePanel({
         }));
       }
     },
-    [onRefreshBrokers, refreshStats, refreshStatus]
+    [onRefreshBrokers, refreshBridgeTelemetry]
   );
 
   const selectedSessions = useMemo(() => {
@@ -193,17 +195,13 @@ function MetaTraderBridgePanel({
   const selectedConnectorSnapshot = useMemo(() => {
     const platform = String(selectedPlatform).toUpperCase();
     const platformId = platform.toLowerCase();
-    const local = localConnectorHealth[platformId];
-    if (local) {
-      return local;
-    }
     return (
       connectorHealthMap.get(platform) ||
       connectorHealthMap.get(platformId.toUpperCase()) ||
       connectorHealthMap.get(platformId) ||
       null
     );
-  }, [connectorHealthMap, localConnectorHealth, selectedPlatform]);
+  }, [connectorHealthMap, selectedPlatform]);
 
   const primarySession = useMemo(() => {
     if (!Array.isArray(selectedSessions) || selectedSessions.length === 0) {
@@ -251,6 +249,46 @@ function MetaTraderBridgePanel({
     }
     return Date.now() - Number(selectedSummary.lastHeartbeat) <= 2 * 60 * 1000;
   }, [bridgeStatus, selectedPlatform, selectedSummary.lastHeartbeat]);
+
+  const selectedRealtimeDropAudit = useMemo(() => {
+    const platformId = String(selectedPlatform || '').toLowerCase();
+    const audit = bridgeStatus?.realtimeDropAudit || null;
+    const events = Array.isArray(audit?.recent)
+      ? audit.recent.filter((entry) => String(entry?.broker || '').toLowerCase() === platformId)
+      : [];
+    const byReason = {};
+    for (const item of events) {
+      const reason = String(item?.reason || 'dropped_unknown');
+      byReason[reason] = Number(byReason[reason] || 0) + 1;
+    }
+    return {
+      total: events.length,
+      latestAt: events.length ? Number(events[events.length - 1]?.ts || 0) : null,
+      byReason,
+    };
+  }, [bridgeStatus, selectedPlatform]);
+
+  const selectedRealtimeResilience = useMemo(() => {
+    const platformId = String(selectedPlatform || '').toLowerCase();
+    const resilience = bridgeStatus?.realtimeResilience || null;
+    const events = Array.isArray(resilience?.recent)
+      ? resilience.recent.filter((entry) => String(entry?.broker || '').toLowerCase() === platformId)
+      : [];
+    const bySource = {};
+    for (const item of events) {
+      const source = String(item?.source || 'fallback_unknown');
+      bySource[source] = Number(bySource[source] || 0) + 1;
+    }
+    return {
+      attempts: Number(resilience?.attempts || 0),
+      recoveries: Number(resilience?.recoveries || 0),
+      successRatePct: Number.isFinite(Number(resilience?.successRatePct))
+        ? Number(resilience.successRatePct)
+        : null,
+      latestAt: events.length ? Number(events[events.length - 1]?.ts || 0) : null,
+      bySource,
+    };
+  }, [bridgeStatus, selectedPlatform]);
 
   const toggleAutoTrading = useCallback(async () => {
     setAutoTradingLoading(true);
@@ -320,8 +358,7 @@ function MetaTraderBridgePanel({
             className="engine-console__bridge-refresh"
             onClick={async () => {
               await Promise.allSettled([
-                refreshStats(),
-                refreshStatus(),
+                refreshBridgeTelemetry(),
                 refreshAutoTradingStatus(),
                 onRefreshBrokers?.()
               ]);
@@ -465,6 +502,60 @@ function MetaTraderBridgePanel({
                     <dd>
                       {Number.isFinite(selectedSummary.profitLoss)
                         ? formatNumber(selectedSummary.profitLoss)
+                        : NA_LABEL}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Dropped Events</dt>
+                    <dd>{String(selectedRealtimeDropAudit.total || 0)}</dd>
+                  </div>
+                  <div>
+                    <dt>Drop Reasons</dt>
+                    <dd>
+                      {Object.keys(selectedRealtimeDropAudit.byReason || {}).length
+                        ? Object.entries(selectedRealtimeDropAudit.byReason)
+                            .map(([reason, count]) => `${reason}:${count}`)
+                            .join(', ')
+                        : NA_LABEL}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Last Drop</dt>
+                    <dd>
+                      {selectedRealtimeDropAudit.latestAt
+                        ? formatDateTime(selectedRealtimeDropAudit.latestAt)
+                        : NA_LABEL}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Quote Recoveries</dt>
+                    <dd>
+                      {`${selectedRealtimeResilience.recoveries}/${selectedRealtimeResilience.attempts}`}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Recovery Success</dt>
+                    <dd>
+                      {selectedRealtimeResilience.successRatePct != null
+                        ? `${selectedRealtimeResilience.successRatePct}%`
+                        : NA_LABEL}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Recovery Sources</dt>
+                    <dd>
+                      {Object.keys(selectedRealtimeResilience.bySource || {}).length
+                        ? Object.entries(selectedRealtimeResilience.bySource)
+                            .map(([source, count]) => `${source}:${count}`)
+                            .join(', ')
+                        : NA_LABEL}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt>Last Recovery</dt>
+                    <dd>
+                      {selectedRealtimeResilience.latestAt
+                        ? formatDateTime(selectedRealtimeResilience.latestAt)
                         : NA_LABEL}
                     </dd>
                   </div>

@@ -606,6 +606,124 @@ const describeActivity = (events = []) => {
   };
 };
 
+const describeExecutionReliability = ({ eaOnly, eaBridgeConnected, eaBridgeStatus } = {}) => {
+  if (!eaOnly) {
+    return null;
+  }
+
+  const status = eaBridgeStatus && typeof eaBridgeStatus === 'object' ? eaBridgeStatus : null;
+  const audit = status?.realtimeDropAudit && typeof status.realtimeDropAudit === 'object'
+    ? status.realtimeDropAudit
+    : null;
+  const realtimeSignals =
+    status?.realtimeSignals && typeof status.realtimeSignals === 'object'
+      ? status.realtimeSignals
+      : null;
+  const resilience =
+    status?.realtimeResilience && typeof status.realtimeResilience === 'object'
+      ? status.realtimeResilience
+      : null;
+
+  const droppedTotal = Number(audit?.total || 0);
+  const overflowDrops = Number(realtimeSignals?.queueOverflowDrops || 0);
+  const flushDurationMs = toNumber(realtimeSignals?.lastFlushDurationMs);
+  const maxFlushDurationMs = toNumber(realtimeSignals?.maxFlushDurationMs);
+
+  const reconnects = toNumber(status?.sessionTelemetry?.reconnects) || 0;
+  const stalePruned = toNumber(status?.sessionTelemetry?.stalePruned) || 0;
+  const quoteRecoveryAttempts = toNumber(resilience?.attempts) || 0;
+  const quoteRecoveries = toNumber(resilience?.recoveries) || 0;
+  const quoteRecoverySuccessRate = toNumber(resilience?.successRatePct);
+
+  const detailParts = [];
+  if (droppedTotal > 0) {
+    detailParts.push(`Dropped events ${droppedTotal}`);
+  }
+  if (overflowDrops > 0) {
+    detailParts.push(`Queue drops ${overflowDrops}`);
+  }
+  if (reconnects > 0) {
+    detailParts.push(`Reconnects ${reconnects}`);
+  }
+  if (stalePruned > 0) {
+    detailParts.push(`Stale sessions pruned ${stalePruned}`);
+  }
+  if (quoteRecoveryAttempts > 0) {
+    const successPart =
+      quoteRecoverySuccessRate != null ? ` (${Math.round(quoteRecoverySuccessRate)}%)` : '';
+    detailParts.push(`Quote recoveries ${quoteRecoveries}/${quoteRecoveryAttempts}${successPart}`);
+  }
+  if (flushDurationMs != null) {
+    detailParts.push(`Flush ${Math.round(flushDurationMs)}ms`);
+  }
+  if (maxFlushDurationMs != null) {
+    detailParts.push(`Max flush ${Math.round(maxFlushDurationMs)}ms`);
+  }
+
+  const latestDropAt = toTimestamp(audit?.latestAt);
+  if (latestDropAt) {
+    detailParts.push(`Last drop ${formatRelativeTime(latestDropAt)}`);
+  }
+
+  const recentIncidents = (Array.isArray(audit?.recent) ? audit.recent : [])
+    .slice(-10)
+    .map((entry) => {
+      const ts = toTimestamp(entry?.ts);
+      const broker = String(entry?.broker || '').trim().toUpperCase() || 'N/A';
+      const symbol = String(entry?.symbol || '').trim().toUpperCase() || null;
+      const reason = String(entry?.reason || 'dropped_unknown')
+        .trim()
+        .toLowerCase();
+      const eventType = String(entry?.event || '').trim().toLowerCase();
+      const left = [broker, symbol, reason].filter(Boolean).join(' ');
+      const right = [eventType || null, ts ? formatRelativeTime(ts) : null].filter(Boolean).join(' · ');
+      return right ? `${left} · ${right}` : left;
+    })
+    .filter(Boolean)
+    .reverse();
+
+  if (!eaBridgeConnected && droppedTotal === 0 && reconnects === 0) {
+    return {
+      state: 'warning',
+      message: 'Execution path offline',
+      detail: 'EA bridge disconnected'
+    };
+  }
+
+  const highDropPressure = droppedTotal >= 10 || overflowDrops >= 10;
+  const mediumDropPressure = droppedTotal >= 3 || overflowDrops >= 3;
+  const reconnectPressure = reconnects >= 3 || stalePruned >= 3;
+
+  if (highDropPressure || reconnectPressure) {
+    return {
+      state: 'critical',
+      message: 'Execution reliability degraded',
+      detail: detailParts.join(' · ') || 'Frequent drop/reconnect turbulence detected',
+      incidents: recentIncidents,
+    };
+  }
+
+  if (mediumDropPressure || reconnects > 0 || stalePruned > 0) {
+    return {
+      state: 'warning',
+      message: 'Execution reliability unstable',
+      detail: detailParts.join(' · ') || 'Transient drops detected',
+      incidents: recentIncidents,
+    };
+  }
+
+  return {
+    state: 'positive',
+    message: 'Execution path stable',
+    detail:
+      detailParts.join(' · ') ||
+      (eaBridgeConnected
+        ? 'No recent dropped events or reconnect churn'
+        : 'Awaiting EA bridge connection'),
+    incidents: recentIncidents,
+  };
+};
+
 function useSystemHealthDiagnostics({
   snapshot,
   featureSnapshots,
@@ -613,7 +731,8 @@ function useSystemHealthDiagnostics({
   events,
   eaOnly,
   eaBridgeConnected,
-  eaQuotes
+  eaQuotes,
+  eaBridgeStatus,
 }) {
   const moduleHealth = useModuleHealth() || {};
   const providerAvailability = useProviderAvailability() || {};
@@ -696,6 +815,19 @@ function useSystemHealthDiagnostics({
       ...describeSignalFlow(signals, events, { eaOnly, eaBridgeConnected, eaQuotes })
     });
 
+    const executionReliability = describeExecutionReliability({
+      eaOnly,
+      eaBridgeConnected,
+      eaBridgeStatus,
+    });
+    if (executionReliability) {
+      health.push({
+        id: 'insight-execution-reliability',
+        label: 'Execution Reliability',
+        ...executionReliability,
+      });
+    }
+
     const performance = classifyPerformance(snapshot?.statistics);
     health.push({
       id: 'insight-performance',
@@ -720,7 +852,8 @@ function useSystemHealthDiagnostics({
     events,
     eaOnly,
     eaBridgeConnected,
-    eaQuotes
+    eaQuotes,
+    eaBridgeStatus,
   ]);
 
   return {
@@ -738,7 +871,8 @@ export function SystemHealthHeaderIndicator({
   events,
   eaOnly = false,
   eaBridgeConnected = false,
-  eaQuotes = []
+  eaQuotes = [],
+  eaBridgeStatus = null,
 }) {
   const { overallState, overallLabel, overallUpdatedAt, items } = useSystemHealthDiagnostics({
     snapshot,
@@ -747,7 +881,8 @@ export function SystemHealthHeaderIndicator({
     events,
     eaOnly,
     eaBridgeConnected,
-    eaQuotes
+    eaQuotes,
+    eaBridgeStatus,
   });
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef(null);
@@ -819,6 +954,11 @@ export function SystemHealthHeaderIndicator({
                     {item.detail && (
                       <span className="system-health-indicator__meta">{item.detail}</span>
                     )}
+                    {Array.isArray(item.incidents) && item.incidents.length > 0 && (
+                      <span className="system-health-indicator__meta">
+                        Recent incidents: {item.incidents.join(' • ')}
+                      </span>
+                    )}
                   </div>
                 </li>
               ))}
@@ -842,7 +982,8 @@ function SystemHealthSummary({
   events,
   eaOnly = false,
   eaBridgeConnected = false,
-  eaQuotes = []
+  eaQuotes = [],
+  eaBridgeStatus = null,
 }) {
   const { overallState, overallLabel, overallUpdatedAt, items } = useSystemHealthDiagnostics({
     snapshot,
@@ -851,7 +992,8 @@ function SystemHealthSummary({
     events,
     eaOnly,
     eaBridgeConnected,
-    eaQuotes
+    eaQuotes,
+    eaBridgeStatus,
   });
 
   return (
@@ -882,6 +1024,11 @@ function SystemHealthSummary({
               <div className="health-panel__details">
                 <span className="health-panel__status">{item.message}</span>
                 {item.detail && <span className="health-panel__meta">{item.detail}</span>}
+                {Array.isArray(item.incidents) && item.incidents.length > 0 && (
+                  <span className="health-panel__meta">
+                    Recent incidents: {item.incidents.join(' • ')}
+                  </span>
+                )}
               </div>
             </li>
           ))}

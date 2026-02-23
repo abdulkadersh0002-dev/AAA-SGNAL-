@@ -1,5 +1,11 @@
 import { buildLayeredAnalysis } from '../../core/analyzers/layered-analysis.js';
 import { getPairMetadata } from '../../config/pair-catalog.js';
+import {
+  getDecisionScore,
+  getDecisionState,
+  getNormalizedDecision,
+  isDecisionBlocked,
+} from '../../core/policy/decision-contract.js';
 
 const toNumberOrNull = (value) => {
   const n = Number(value);
@@ -217,6 +223,11 @@ export const buildScenarioForLayeredAnalysis = ({
   barsCoverage,
   now,
 } = {}) => {
+  const normalizedDecision = getNormalizedDecision(rawSignal);
+  const legacyDecision =
+    rawSignal?.isValid?.decision && typeof rawSignal.isValid.decision === 'object'
+      ? rawSignal.isValid.decision
+      : {};
   const nowMs = toNumberOrNull(now) ?? Date.now();
 
   const receivedAt =
@@ -319,14 +330,17 @@ export const buildScenarioForLayeredAnalysis = ({
       candles: rawSignal?.components?.technical?.candlesSummary || null,
     },
     decision: {
-      state: rawSignal?.isValid?.decision?.state || null,
-      blocked: Boolean(rawSignal?.isValid?.decision?.blocked),
-      score: rawSignal?.isValid?.decision?.score ?? null,
+      state: getDecisionState(rawSignal),
+      blocked: isDecisionBlocked(rawSignal),
+      score: getDecisionScore(rawSignal),
       reason: rawSignal?.isValid?.reason || null,
       checks: rawSignal?.isValid?.checks || null,
       isTradeValid: rawSignal?.isValid?.isValid === true,
-      missing: rawSignal?.isValid?.decision?.missing || null,
-      whatWouldChange: rawSignal?.isValid?.decision?.whatWouldChange || null,
+      missing:
+        (Array.isArray(normalizedDecision?.missing) && normalizedDecision.missing) ||
+        legacyDecision.missing ||
+        null,
+      whatWouldChange: legacyDecision.whatWouldChange || null,
     },
   };
 };
@@ -367,8 +381,7 @@ export const attachLayeredAnalysisToSignal = ({
   };
 
   const generatedAt = toNumberOrNull(rawSignal?.generatedAt ?? now) ?? Date.now();
-  const fallbackDecisionState =
-    rawSignal?.finalDecision?.state || rawSignal?.isValid?.decision?.state || null;
+  const fallbackDecisionState = getDecisionState(rawSignal);
 
   const baseEntryContext = {
     generatedAt,
@@ -444,11 +457,7 @@ export const attachLayeredAnalysisToSignal = ({
     const layer20 = getLayer('L20');
     const confluenceScore =
       Number(layer17?.metrics?.confluenceWeighting?.weightedScore ?? layer17?.confidence) || null;
-    const decisionState =
-      layer20?.metrics?.decision?.state ||
-      rawSignal?.finalDecision?.state ||
-      rawSignal?.isValid?.decision?.state ||
-      null;
+    const decisionState = layer20?.metrics?.decision?.state || getDecisionState(rawSignal) || null;
     const spreadPoints = toNumberOrNull(layer1?.metrics?.spreadPoints);
     const newsImpact =
       toNumberOrNull(layer14?.metrics?.news?.impact ?? layer14?.metrics?.newsImpactScore) ??
@@ -499,6 +508,35 @@ export const attachLayeredAnalysisToSignal = ({
         : 'High-impact news event detected',
     ].filter(Boolean);
     rawSignal.components.invalidationRules = invalidationRules;
+
+    const normalizedDecision = getNormalizedDecision(rawSignal);
+    if (normalizedDecision) {
+      rawSignal.components.normalizedDecision = normalizedDecision;
+      if (rawSignal.isValid && typeof rawSignal.isValid === 'object') {
+        const legacyDecision =
+          rawSignal.isValid.decision && typeof rawSignal.isValid.decision === 'object'
+            ? rawSignal.isValid.decision
+            : {};
+        rawSignal.isValid.decision = {
+          ...legacyDecision,
+          state: normalizedDecision.state,
+          blocked: normalizedDecision.blocked,
+          score:
+            normalizedDecision.score != null
+              ? normalizedDecision.score
+              : (legacyDecision.score ?? null),
+          missing:
+            Array.isArray(normalizedDecision.missing) && normalizedDecision.missing.length
+              ? normalizedDecision.missing
+              : legacyDecision.missing || [],
+          blockers:
+            Array.isArray(normalizedDecision.blockers) && normalizedDecision.blockers.length
+              ? normalizedDecision.blockers
+              : legacyDecision.blockers || [],
+          source: normalizedDecision.source,
+        };
+      }
+    }
   } catch (error) {
     // best-effort; never block trading/analysis, but do surface why layers are missing.
     rawSignal.components.layeredAnalysis = rawSignal.components.layeredAnalysis || { layers: [] };
@@ -538,11 +576,7 @@ export const evaluateLayers18Readiness = ({
   const layer18Pass = layer18Verdict === 'PASS';
 
   const layer20State = String(
-    layer20?.metrics?.decision?.state ||
-      decisionStateFallback ||
-      signal?.finalDecision?.state ||
-      signal?.isValid?.decision?.state ||
-      ''
+    layer20?.metrics?.decision?.state || decisionStateFallback || getDecisionState(signal) || ''
   ).toUpperCase();
 
   // Canonical semantics:

@@ -71,6 +71,261 @@ const formatLayer18Score = (value) => {
   return Math.abs(numeric) >= 100 ? numeric.toFixed(0) : numeric.toFixed(2);
 };
 
+const toFinite = (value) => {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : null;
+};
+
+const toUpper = (value) =>
+  String(value || '')
+    .trim()
+    .toUpperCase();
+
+const selectPipSize = (pair) => {
+  const normalized = toUpper(pair);
+  if (!normalized) {
+    return 0.0001;
+  }
+  if (normalized.includes('JPY')) {
+    return 0.01;
+  }
+  if (normalized.includes('XAU') || normalized.includes('XAG')) {
+    return 0.1;
+  }
+  return 0.0001;
+};
+
+const extractExecutionProfile = (signal) => {
+  const fromComponents =
+    signal?.components?.executionProfile && typeof signal.components.executionProfile === 'object'
+      ? signal.components.executionProfile
+      : null;
+  if (fromComponents) {
+    return fromComponents;
+  }
+
+  const layers = Array.isArray(signal?.components?.layeredAnalysis?.layers)
+    ? signal.components.layeredAnalysis.layers
+    : [];
+  const layer20 =
+    layers.find(
+      (layer) => toUpper(layer?.key) === 'L20' || Number(layer?.layer) === 20
+    ) || null;
+
+  return layer20?.metrics?.executionProfile && typeof layer20.metrics.executionProfile === 'object'
+    ? layer20.metrics.executionProfile
+    : null;
+};
+
+const resolveSmartExecution = ({ signal, snapshot, pair, direction }) => {
+  const execution = signal?.execution && typeof signal.execution === 'object' ? signal.execution : null;
+  const gates = execution?.gates && typeof execution.gates === 'object' ? execution.gates : null;
+  const profile = extractExecutionProfile(signal) || {};
+  const urgency = toUpper(profile?.urgency || 'NORMAL');
+  const riskMode = toUpper(profile?.riskMode || 'BALANCED');
+  const protectionBias = toUpper(profile?.protectionBias || 'STANDARD');
+
+  const featureRoot = snapshot?.features && typeof snapshot.features === 'object' ? snapshot.features : {};
+  const quote =
+    featureRoot.quote && typeof featureRoot.quote === 'object'
+      ? featureRoot.quote
+      : signal?.components?.market?.quote && typeof signal.components.market.quote === 'object'
+        ? signal.components.market.quote
+        : {};
+
+  const bid = toFinite(quote.bid);
+  const ask = toFinite(quote.ask);
+  const mid =
+    toFinite(quote.mid) ??
+    (bid != null && ask != null ? Number(((bid + ask) / 2).toFixed(selectPricePrecision(pair))) : null);
+
+  const entryRaw = toFinite(signal?.entryPrice ?? signal?.entry?.price);
+  const stopRaw = toFinite(signal?.stopLoss ?? signal?.entry?.stopLoss);
+  const takeRaw = toFinite(signal?.takeProfit ?? signal?.entry?.takeProfit);
+  const atr = toFinite(signal?.atr ?? signal?.entry?.atr);
+  const spreadPips =
+    toFinite(quote.spreadPips) ??
+    toFinite(signal?.entry?.spreadPips) ??
+    (bid != null && ask != null
+      ? Math.abs(ask - bid) / selectPipSize(pair)
+      : null);
+
+  let smartEntry = entryRaw;
+  if (smartEntry == null) {
+    if (direction === 'BUY' && ask != null) {
+      smartEntry = ask;
+    } else if (direction === 'SELL' && bid != null) {
+      smartEntry = bid;
+    } else {
+      smartEntry = mid;
+    }
+  }
+
+  const pipSize = selectPipSize(pair);
+  const minStopPips = Math.max(8, Number.isFinite(spreadPips) ? spreadPips * 1.8 : 0);
+  const atrPips = Number.isFinite(atr) ? Math.max(0, atr / pipSize) : null;
+  const stopDistancePips =
+    atrPips != null ? Math.max(minStopPips, atrPips * 1.1) : minStopPips;
+  const stopDistancePrice = stopDistancePips * pipSize;
+
+  let smartStop = stopRaw;
+  if (smartStop == null && smartEntry != null) {
+    smartStop =
+      direction === 'BUY'
+        ? Number((smartEntry - stopDistancePrice).toFixed(selectPricePrecision(pair)))
+        : direction === 'SELL'
+          ? Number((smartEntry + stopDistancePrice).toFixed(selectPricePrecision(pair)))
+          : null;
+  }
+
+  const riskDistance =
+    smartEntry != null && smartStop != null ? Math.abs(smartEntry - smartStop) : null;
+  const rrSource = toFinite(signal?.riskReward ?? signal?.entry?.riskReward);
+  const rrTarget =
+    rrSource != null && rrSource > 0
+      ? rrSource
+      : riskMode === 'OFFENSIVE'
+        ? 2.4
+        : protectionBias === 'TIGHT'
+          ? 1.6
+          : urgency === 'PATIENT'
+            ? 1.8
+            : 2.0;
+
+  let smartTake = takeRaw;
+  if (smartTake == null && smartEntry != null && riskDistance != null && riskDistance > 0) {
+    smartTake =
+      direction === 'BUY'
+        ? Number((smartEntry + riskDistance * rrTarget).toFixed(selectPricePrecision(pair)))
+        : direction === 'SELL'
+          ? Number((smartEntry - riskDistance * rrTarget).toFixed(selectPricePrecision(pair)))
+          : null;
+  }
+
+  const directionValid = direction === 'BUY' || direction === 'SELL';
+  const sideValid =
+    direction === 'BUY'
+      ? smartStop != null && smartTake != null && smartStop < smartEntry && smartTake > smartEntry
+      : direction === 'SELL'
+        ? smartStop != null && smartTake != null && smartStop > smartEntry && smartTake < smartEntry
+        : false;
+
+  const rrEffective =
+    smartEntry != null && smartStop != null && smartTake != null
+      ? Math.abs(smartTake - smartEntry) / Math.max(Math.abs(smartEntry - smartStop), 1e-9)
+      : null;
+
+  const lotRaw =
+    toFinite(signal?.riskManagement?.positionSize) ??
+    toFinite(signal?.positionSize) ??
+    toFinite(signal?.entry?.positionSize);
+  const lot = lotRaw != null && lotRaw > 0 ? lotRaw : 0.01;
+
+  const backendApproved = signal?.shouldExecute === true || execution?.shouldExecute === true;
+  const blockedReason =
+    execution?.blockedReason ||
+    gates?.blockedReason ||
+    (Array.isArray(execution?.blockedReasons) && execution.blockedReasons[0]?.code
+      ? String(execution.blockedReasons[0].code)
+      : null) ||
+    null;
+
+  const mt5Ready =
+    backendApproved ||
+    (Boolean(pair) && directionValid && smartEntry != null && sideValid && signal?.isValid?.isValid === true);
+
+  return {
+    profile: {
+      urgency: urgency || 'NORMAL',
+      riskMode: riskMode || 'BALANCED',
+      protectionBias: protectionBias || 'STANDARD',
+      confidenceBand: toUpper(profile?.confidenceBand || 'MEDIUM'),
+    },
+    entry: smartEntry,
+    stopLoss: smartStop,
+    takeProfit: smartTake,
+    lot,
+    rr: rrEffective,
+    spreadPips,
+    mt5Ready,
+    backendApproved,
+    blockedReason,
+    quoteTs: snapshot?.ts ?? snapshot?.timestamp ?? snapshot?.updatedAt ?? null,
+  };
+};
+
+const resolveExecutionDebugChain = (signal) => {
+  const layers = Array.isArray(signal?.components?.layeredAnalysis?.layers)
+    ? signal.components.layeredAnalysis.layers
+    : [];
+  const layer18 =
+    layers.find((layer) => toUpper(layer?.key) === 'L18' || Number(layer?.layer) === 18) || null;
+  const layer20 =
+    layers.find((layer) => toUpper(layer?.key) === 'L20' || Number(layer?.layer) === 20) || null;
+
+  const execution = signal?.execution && typeof signal.execution === 'object' ? signal.execution : null;
+  const gates = execution?.gates && typeof execution.gates === 'object' ? execution.gates : null;
+  const layersStatus =
+    gates?.layersStatus && typeof gates.layersStatus === 'object' ? gates.layersStatus : null;
+
+  const decisionState =
+    toUpper(gates?.decisionState) ||
+    toUpper(layer20?.metrics?.decision?.state) ||
+    toUpper(signal?.isValid?.decision?.state) ||
+    '—';
+
+  const originalDecisionState = toUpper(gates?.originalDecisionState) || null;
+  const layer18Verdict =
+    toUpper(gates?.layer18Verdict) || toUpper(layer18?.metrics?.verdict) || '—';
+  const layers18Ready = layersStatus?.ok === true;
+  const intelligentApproved = gates?.intelligentApproved === true;
+  const tradingEnabled = gates?.tradingEnabled === true;
+  const passesStrengthFloor = gates?.passesStrengthFloor === true;
+  const quoteOk = gates?.quoteOk === true;
+  const shouldExecute = signal?.shouldExecute === true || execution?.shouldExecute === true;
+
+  const blockedReason =
+    execution?.blockedReason ||
+    gates?.blockedReason ||
+    (Array.isArray(execution?.blockedReasons) && execution.blockedReasons[0]?.code
+      ? String(execution.blockedReasons[0].code)
+      : null) ||
+    null;
+
+  const intelligentReasons = Array.isArray(gates?.intelligentReasons)
+    ? gates.intelligentReasons.filter(Boolean)
+    : [];
+
+  return {
+    decisionState,
+    originalDecisionState,
+    layer18Verdict,
+    layers18Ready,
+    tradingEnabled,
+    passesStrengthFloor,
+    quoteOk,
+    intelligentApproved,
+    intelligentReasonsLabel: intelligentReasons.length
+      ? intelligentReasons.slice(0, 3).join(' | ')
+      : '—',
+    shouldExecute,
+    blockedReason: blockedReason || '—',
+    stageDecisionLabel:
+      decisionState === 'ENTER' ? 'ENTER' : decisionState === 'WAIT_MONITOR' ? 'WAIT_MONITOR' : decisionState,
+    stageLayersLabel:
+      layers18Ready
+        ? `READY · L18 ${layer18Verdict}`
+        : `NOT READY · L18 ${layer18Verdict}`,
+    stageIntelligentLabel:
+      intelligentApproved
+        ? 'APPROVED'
+        : gates?.intelligentApproved === false
+          ? 'BLOCKED'
+          : '—',
+    stageFinalLabel: shouldExecute ? 'EXECUTE NOW' : 'NO EXECUTE',
+  };
+};
+
 function SignalDashboardTable({
   signals = [],
   snapshots = [],
@@ -157,6 +412,8 @@ function SignalDashboardTable({
 
       const snapshotFeatures = snapshot?.features || {};
       const snapshotTs = snapshot?.ts ?? snapshot?.timestamp ?? snapshot?.updatedAt ?? null;
+      const smartExecution = resolveSmartExecution({ signal, snapshot, pair, direction });
+      const executionDebug = resolveExecutionDebugChain(signal);
 
       const signalTechnical = signal.components?.technical || {};
       const signalTrend = signalTechnical.trend || null;
@@ -259,7 +516,35 @@ function SignalDashboardTable({
         confluenceMinLabel,
         confluenceVariant,
         confluenceLayerCount: layerCount,
-        confluenceFailCount: failCount
+        confluenceFailCount: failCount,
+        mt5Ready: smartExecution.mt5Ready,
+        mt5ReadyLabel: smartExecution.mt5Ready ? 'READY' : 'NEEDS REVIEW',
+        mt5BackendLabel: smartExecution.backendApproved ? 'EA-APPROVED' : 'EA-BLOCKED',
+        mt5BlockedReason: smartExecution.blockedReason || '—',
+        smartEntryLabel: formatNumber(smartExecution.entry, precision),
+        smartStopLossLabel: formatNumber(smartExecution.stopLoss, precision),
+        smartTakeProfitLabel: formatNumber(smartExecution.takeProfit, precision),
+        smartRiskRewardLabel: formatRiskReward(smartExecution.rr),
+        smartLotLabel: smartExecution.lot != null ? Number(smartExecution.lot).toFixed(2) : '0.01',
+        smartSpreadLabel:
+          smartExecution.spreadPips != null ? `${Number(smartExecution.spreadPips).toFixed(1)}p` : '—',
+        executionProfileLabel: `${smartExecution.profile.urgency}/${smartExecution.profile.riskMode}/${smartExecution.profile.protectionBias}`,
+        executionConfidenceBand: smartExecution.profile.confidenceBand,
+        debugDecisionLabel: executionDebug.stageDecisionLabel,
+        debugLayersLabel: executionDebug.stageLayersLabel,
+        debugIntelligentLabel: executionDebug.stageIntelligentLabel,
+        debugFinalLabel: executionDebug.stageFinalLabel,
+        debugDecisionState: executionDebug.decisionState,
+        debugOriginalDecisionState: executionDebug.originalDecisionState,
+        debugLayer18Verdict: executionDebug.layer18Verdict,
+        debugLayers18Ready: executionDebug.layers18Ready ? 'YES' : 'NO',
+        debugTradingEnabled: executionDebug.tradingEnabled ? 'YES' : 'NO',
+        debugStrengthFloor: executionDebug.passesStrengthFloor ? 'YES' : 'NO',
+        debugQuoteOk: executionDebug.quoteOk ? 'YES' : 'NO',
+        debugIntelligentApproved: executionDebug.intelligentApproved ? 'YES' : 'NO',
+        debugIntelligentReasons: executionDebug.intelligentReasonsLabel,
+        debugShouldExecute: executionDebug.shouldExecute ? 'YES' : 'NO',
+        debugBlockedReason: executionDebug.blockedReason,
       };
     });
   }, [ageTick, signals, snapshots]);
@@ -405,6 +690,91 @@ function SignalDashboardTable({
                       <summary style={{ cursor: 'pointer', fontWeight: 600 }}>
                         {row.layeredAnalysis.layers.length} Layers — Full Analysis
                       </summary>
+                      <div
+                        style={{
+                          marginTop: 8,
+                          marginBottom: 8,
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                          gap: 8,
+                          fontSize: 12,
+                        }}
+                      >
+                        <div>
+                          <strong>MT5:</strong> {row.mt5ReadyLabel}
+                        </div>
+                        <div>
+                          <strong>EA Gate:</strong> {row.mt5BackendLabel}
+                        </div>
+                        <div>
+                          <strong>Blocked:</strong> {row.mt5BlockedReason}
+                        </div>
+                        <div>
+                          <strong>Smart Entry:</strong> {row.smartEntryLabel}
+                        </div>
+                        <div>
+                          <strong>Smart SL:</strong> {row.smartStopLossLabel}
+                        </div>
+                        <div>
+                          <strong>Smart TP:</strong> {row.smartTakeProfitLabel}
+                        </div>
+                        <div>
+                          <strong>Smart R:R:</strong> {row.smartRiskRewardLabel}
+                        </div>
+                        <div>
+                          <strong>Lot:</strong> {row.smartLotLabel}
+                        </div>
+                        <div>
+                          <strong>Spread:</strong> {row.smartSpreadLabel}
+                        </div>
+                        <div>
+                          <strong>Execution Profile:</strong> {row.executionProfileLabel}
+                        </div>
+                        <div>
+                          <strong>Band:</strong> {row.executionConfidenceBand}
+                        </div>
+                      </div>
+
+                      <div
+                        style={{
+                          marginTop: 6,
+                          marginBottom: 8,
+                          border: '1px solid var(--panelBorder, rgba(255,255,255,0.08))',
+                          borderRadius: 8,
+                          padding: '8px 10px',
+                          display: 'grid',
+                          gap: 6,
+                          fontSize: 12,
+                        }}
+                      >
+                        <div style={{ fontWeight: 700 }}>Debug Chain</div>
+                        <div>
+                          <strong>1) Decision:</strong> {row.debugDecisionLabel}
+                          {row.debugOriginalDecisionState ? ` (from ${row.debugOriginalDecisionState})` : ''}
+                        </div>
+                        <div>
+                          <strong>2) Layers18:</strong> {row.debugLayersLabel}
+                        </div>
+                        <div>
+                          <strong>3) Intelligent Gate:</strong> {row.debugIntelligentLabel}
+                        </div>
+                        <div>
+                          <strong>4) Final:</strong> {row.debugFinalLabel}
+                        </div>
+                        <div style={{ opacity: 0.9 }}>
+                          <strong>Checks:</strong> trading {row.debugTradingEnabled} · floor {row.debugStrengthFloor} · quote {row.debugQuoteOk} · layers {row.debugLayers18Ready}
+                        </div>
+                        <div style={{ opacity: 0.9 }}>
+                          <strong>Intelligent reasons:</strong> {row.debugIntelligentReasons}
+                        </div>
+                        <div style={{ opacity: 0.9 }}>
+                          <strong>Blocked reason:</strong> {row.debugBlockedReason}
+                        </div>
+                        <div style={{ opacity: 0.9 }}>
+                          <strong>Decision state:</strong> {row.debugDecisionState} · <strong>shouldExecute:</strong> {row.debugShouldExecute}
+                        </div>
+                      </div>
+
                       <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
                         {row.layeredAnalysis.layers.map((layer) => {
                           const layerNo = Number(layer?.layer);
@@ -471,6 +841,85 @@ function SignalDashboardTable({
                           Analysis Layers ({row.confluenceLayerCount}) — Score {row.confluenceLabel}{' '}
                           (min {row.confluenceMinLabel})
                         </summary>
+                        <div
+                          style={{
+                            marginTop: 8,
+                            marginBottom: 8,
+                            display: 'grid',
+                            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+                            gap: 8,
+                            fontSize: 12,
+                          }}
+                        >
+                          <div>
+                            <strong>MT5:</strong> {row.mt5ReadyLabel}
+                          </div>
+                          <div>
+                            <strong>EA Gate:</strong> {row.mt5BackendLabel}
+                          </div>
+                          <div>
+                            <strong>Blocked:</strong> {row.mt5BlockedReason}
+                          </div>
+                          <div>
+                            <strong>Smart Entry:</strong> {row.smartEntryLabel}
+                          </div>
+                          <div>
+                            <strong>Smart SL:</strong> {row.smartStopLossLabel}
+                          </div>
+                          <div>
+                            <strong>Smart TP:</strong> {row.smartTakeProfitLabel}
+                          </div>
+                          <div>
+                            <strong>Smart R:R:</strong> {row.smartRiskRewardLabel}
+                          </div>
+                          <div>
+                            <strong>Lot:</strong> {row.smartLotLabel}
+                          </div>
+                          <div>
+                            <strong>Spread:</strong> {row.smartSpreadLabel}
+                          </div>
+                          <div>
+                            <strong>Execution Profile:</strong> {row.executionProfileLabel}
+                          </div>
+                        </div>
+
+                        <div
+                          style={{
+                            marginTop: 6,
+                            marginBottom: 8,
+                            border: '1px solid var(--panelBorder, rgba(255,255,255,0.08))',
+                            borderRadius: 8,
+                            padding: '8px 10px',
+                            display: 'grid',
+                            gap: 6,
+                            fontSize: 12,
+                          }}
+                        >
+                          <div style={{ fontWeight: 700 }}>Debug Chain</div>
+                          <div>
+                            <strong>1) Decision:</strong> {row.debugDecisionLabel}
+                            {row.debugOriginalDecisionState ? ` (from ${row.debugOriginalDecisionState})` : ''}
+                          </div>
+                          <div>
+                            <strong>2) Layers18:</strong> {row.debugLayersLabel}
+                          </div>
+                          <div>
+                            <strong>3) Intelligent Gate:</strong> {row.debugIntelligentLabel}
+                          </div>
+                          <div>
+                            <strong>4) Final:</strong> {row.debugFinalLabel}
+                          </div>
+                          <div style={{ opacity: 0.9 }}>
+                            <strong>Checks:</strong> trading {row.debugTradingEnabled} · floor {row.debugStrengthFloor} · quote {row.debugQuoteOk} · layers {row.debugLayers18Ready}
+                          </div>
+                          <div style={{ opacity: 0.9 }}>
+                            <strong>Intelligent reasons:</strong> {row.debugIntelligentReasons}
+                          </div>
+                          <div style={{ opacity: 0.9 }}>
+                            <strong>Blocked reason:</strong> {row.debugBlockedReason}
+                          </div>
+                        </div>
+
                         <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
                           {row.confluence.layers.map((layer, idx) => {
                             const status = formatLayerStatus(layer?.status);

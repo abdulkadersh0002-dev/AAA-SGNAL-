@@ -19,7 +19,7 @@ const ADMIN_OPTIONS = [
 ];
 
 const DEFAULT_BRAND = {
-  name: 'Neon Intelligence Console',
+  name: 'منصة ابو عبدو (حبال )',
   tagline: 'Secure Operations & Smart Signal Oversight',
 };
 
@@ -63,7 +63,7 @@ export default function LoginPanel({ brand = DEFAULT_BRAND, onDemoLogin }) {
         <div className="auth-panel__brand">
           <div className="auth-panel__logo">
             <span className="auth-panel__logo-orb" />
-            <span className="auth-panel__logo-text">NEON</span>
+            <span className="auth-panel__logo-text">منصة ابو عبدو (حبال )</span>
           </div>
           <div>
             <h1 className="auth-panel__title">{hero.title}</h1>
