@@ -37,6 +37,22 @@ npm run dev
 
 For detailed setup instructions in **English and Arabic**, see **[QUICK_START.md](./QUICK_START.md)** 📖
 
+### ⚡ Clone & Open in VS Code (first time)
+
+**Windows** – double-click `clone-and-open.bat`, or run:
+
+```bat
+git clone https://github.com/abdulkadersh0002-dev/AAA-SGNAL-.git && cd AAA-SGNAL- && code .
+```
+
+**Mac / Linux** – run:
+
+```bash
+git clone https://github.com/abdulkadersh0002-dev/AAA-SGNAL-.git && cd AAA-SGNAL- && code .
+```
+
+Or use the ready-made scripts in the repo root: `clone-and-open.bat` (Windows) / `clone-and-open.sh` (Mac/Linux).
+
 ### First Time Setup (Quick)
 
 ```bash
