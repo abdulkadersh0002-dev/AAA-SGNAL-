@@ -11,14 +11,14 @@ import {
   calculateStochastic,
   calculateSMA,
   calculateEMA,
+  calculateADX,
+  calculateATR,
   determineTrend,
-  // calculateADX,  // Reserved for future use
   calculatePivotPoints,
-  // calculateFibonacciLevels,  // Reserved for future use
   checkSupportResistance,
   detectMACrossover,
-  // calculateATR,  // Reserved for future use
 } from '../../lib/utils/technical-analysis.js';
+import { analyzeCandleSeries } from '../analyzers/candle-analysis-lite.js';
 
 class LayerOrchestrator {
   constructor(options = {}) {
@@ -939,19 +939,398 @@ class LayerOrchestrator {
     }
   }
 
-  async processLayer8({ snapshot: _snapshot }) {
-    // Momentum Analysis - placeholder
-    return { status: 'PASS', score: 70, confidence: 65, reason: 'Momentum positive' };
+  async processLayer8({ snapshot, signal }) {
+    // Momentum Analysis - ADX strength + RSI rate-of-change
+    try {
+      const bars = snapshot?.bars || {};
+      const direction = signal?.direction?.toLowerCase();
+
+      if (!direction) {
+        return {
+          status: 'FAIL',
+          score: 0,
+          confidence: 0,
+          reason: 'Signal direction not specified',
+        };
+      }
+
+      const h1Bars = bars.H1;
+      if (!h1Bars || h1Bars.length < 20) {
+        return {
+          status: 'PASS',
+          score: 60,
+          confidence: 40,
+          reason: 'Insufficient data for momentum (passing with low confidence)',
+        };
+      }
+
+      const closes = h1Bars.map((b) => b.close);
+      const highs = h1Bars.map((b) => b.high);
+      const lows = h1Bars.map((b) => b.low);
+
+      // ADX measures trend strength (>25 = trending, >40 = strong trend)
+      const adx = calculateADX(highs, lows, closes, 14);
+      const atr = calculateATR(highs, lows, closes, 14);
+
+      // RSI rate of change (momentum direction)
+      const rsi = calculateRSI(closes, 14);
+      const rsiPrev = calculateRSI(closes.slice(0, -3), 14);
+      const rsiMomentum = rsi != null && rsiPrev != null ? rsi - rsiPrev : null;
+
+      // Recent price rate-of-change (last 5 bars vs 10 bars ago)
+      const recent = closes[closes.length - 1];
+      const past = closes[Math.max(0, closes.length - 6)];
+      const roc5 = past && past !== 0 ? ((recent - past) / past) * 100 : null;
+
+      let score = 50;
+      let aligned = 0;
+      let total = 0;
+      const metrics = {
+        adx: adx?.adx,
+        plusDI: adx?.plusDI,
+        minusDI: adx?.minusDI,
+        rsi,
+        rsiMomentum,
+        roc5: roc5 != null ? Math.round(roc5 * 1000) / 1000 : null,
+        atr,
+      };
+
+      // ADX strength bonus
+      if (adx?.adx != null) {
+        const adxValue = adx.adx;
+        total++;
+        if (adxValue >= 25) {
+          score += 15;
+          // DI alignment
+          if (
+            (direction === 'buy' && adx.plusDI > adx.minusDI) ||
+            (direction === 'sell' && adx.minusDI > adx.plusDI)
+          ) {
+            aligned++;
+            score += 10;
+          }
+        } else if (adxValue < 15) {
+          score -= 15; // Weak/choppy market
+        }
+      }
+
+      // RSI momentum direction
+      if (rsiMomentum != null) {
+        total++;
+        const momentumBullish = rsiMomentum > 2;
+        const momentumBearish = rsiMomentum < -2;
+        if ((direction === 'buy' && momentumBullish) || (direction === 'sell' && momentumBearish)) {
+          aligned++;
+          score += 10;
+        } else if (
+          (direction === 'buy' && momentumBearish) ||
+          (direction === 'sell' && momentumBullish)
+        ) {
+          score -= 10;
+        }
+      }
+
+      // Price rate-of-change confirmation
+      if (roc5 != null) {
+        total++;
+        if ((direction === 'buy' && roc5 > 0.01) || (direction === 'sell' && roc5 < -0.01)) {
+          aligned++;
+          score += 10;
+        }
+      }
+
+      const finalScore = Math.min(100, Math.max(0, score));
+      const confidence = Math.min(
+        90,
+        40 + (total > 0 ? (aligned / total) * 40 : 0) + (adx?.adx >= 25 ? 10 : 0)
+      );
+      const status = finalScore >= 45 ? 'PASS' : 'FAIL';
+
+      return {
+        status,
+        score: finalScore,
+        confidence: Math.round(confidence),
+        reason:
+          status === 'PASS'
+            ? `Momentum ${direction.toUpperCase()}: ADX=${adx?.adx?.toFixed(1) ?? 'n/a'}, RSI=${rsi?.toFixed(1) ?? 'n/a'}`
+            : `Weak momentum for ${direction.toUpperCase()}: ADX=${adx?.adx?.toFixed(1) ?? 'n/a'}`,
+        metrics,
+      };
+    } catch (error) {
+      return {
+        status: 'ERROR',
+        score: 0,
+        confidence: 0,
+        reason: `Momentum error: ${error.message}`,
+      };
+    }
   }
 
-  async processLayer9({ snapshot: _snapshot }) {
-    // Volume Profile - placeholder (optional)
-    return { status: 'PASS', score: 60, confidence: 50, reason: 'Volume confirmed' };
+  async processLayer9({ snapshot, signal }) {
+    // Volume Profile - volume confirmation using bar data
+    try {
+      const bars = snapshot?.bars || {};
+      const direction = signal?.direction?.toLowerCase();
+
+      if (!direction) {
+        return {
+          status: 'PASS',
+          score: 60,
+          confidence: 50,
+          reason: 'No direction for volume check',
+        };
+      }
+
+      // Try multiple timeframes for volume data
+      const tfPriority = ['H1', 'M15', 'H4'];
+      let targetBars = null;
+      let usedTf = null;
+      for (const tf of tfPriority) {
+        if (bars[tf] && bars[tf].length >= 10) {
+          targetBars = bars[tf];
+          usedTf = tf;
+          break;
+        }
+      }
+
+      if (!targetBars) {
+        // No volume data — pass with neutral confidence (volume not always available)
+        return {
+          status: 'PASS',
+          score: 60,
+          confidence: 45,
+          reason: 'Volume data unavailable (skipping volume check)',
+        };
+      }
+
+      const hasVolume = targetBars.some((b) => b.volume != null && b.volume > 0);
+      if (!hasVolume) {
+        return {
+          status: 'PASS',
+          score: 60,
+          confidence: 45,
+          reason: 'No volume data in bars (broker may not provide volume)',
+        };
+      }
+
+      // Use analyzeCandleSeries for SMC volume analysis
+      const analysis = analyzeCandleSeries(targetBars, { timeframe: usedTf });
+      if (!analysis) {
+        return { status: 'PASS', score: 60, confidence: 45, reason: 'Volume analysis unavailable' };
+      }
+
+      const volImbalance = analysis.smc?.volumeImbalance;
+      const volSpike = analysis.smc?.volumeSpike;
+      const volSummary = analysis.volume;
+
+      let score = 65;
+      let confidence = 55;
+      const metrics = {
+        timeframe: usedTf,
+        volumeImbalance: volImbalance,
+        volumeSpike: volSpike,
+        volumeSummary: volSummary,
+      };
+
+      // Volume imbalance alignment
+      if (volImbalance?.state) {
+        const buying = volImbalance.state === 'buying';
+        const selling = volImbalance.state === 'selling';
+        if ((direction === 'buy' && buying) || (direction === 'sell' && selling)) {
+          score += 20;
+          confidence += 15;
+        } else if ((direction === 'buy' && selling) || (direction === 'sell' && buying)) {
+          score -= 20;
+          confidence += 10; // Still confident in the assessment, just negative
+        }
+      }
+
+      // Volume spike is generally positive (market showing interest)
+      if (volSpike?.isSpike) {
+        score += 10;
+        confidence += 5;
+      }
+
+      // Volume trend: expanding volume confirms moves
+      if (volSummary?.trendPct != null) {
+        if (volSummary.trendPct > 10) {
+          score += 5;
+        } else if (volSummary.trendPct < -30) {
+          score -= 5;
+        }
+      }
+
+      const finalScore = Math.min(100, Math.max(0, score));
+      const finalConfidence = Math.min(90, Math.max(30, confidence));
+      const status = finalScore >= 40 ? 'PASS' : 'FAIL';
+
+      return {
+        status,
+        score: finalScore,
+        confidence: finalConfidence,
+        reason:
+          status === 'PASS'
+            ? `Volume ${volImbalance?.state ?? 'neutral'} pressure (${usedTf})`
+            : `Volume counter to ${direction.toUpperCase()} direction`,
+        metrics,
+      };
+    } catch (error) {
+      return {
+        status: 'PASS',
+        score: 60,
+        confidence: 45,
+        reason: `Volume check skipped: ${error.message}`,
+      };
+    }
   }
 
-  async processLayer10({ snapshot: _snapshot }) {
-    // Candlestick Patterns - placeholder
-    return { status: 'PASS', score: 75, confidence: 70, reason: 'Pattern detected' };
+  async processLayer10({ snapshot, signal }) {
+    // Candlestick Patterns — uses real SMC+pattern analysis via analyzeCandleSeries
+    try {
+      const bars = snapshot?.bars || {};
+      const direction = signal?.direction?.toLowerCase();
+
+      if (!direction) {
+        return {
+          status: 'PASS',
+          score: 65,
+          confidence: 55,
+          reason: 'No direction for pattern check',
+        };
+      }
+
+      // Prefer M15 for patterns (most recent price action), fall back to H1
+      const tfPriority = ['M15', 'H1', 'H4'];
+      let targetBars = null;
+      let usedTf = null;
+      for (const tf of tfPriority) {
+        if (bars[tf] && bars[tf].length >= 10) {
+          targetBars = bars[tf];
+          usedTf = tf;
+          break;
+        }
+      }
+
+      if (!targetBars) {
+        return {
+          status: 'PASS',
+          score: 65,
+          confidence: 50,
+          reason: 'Insufficient bar data for pattern analysis',
+        };
+      }
+
+      const analysis = analyzeCandleSeries(targetBars, { timeframe: usedTf });
+      if (!analysis) {
+        return {
+          status: 'PASS',
+          score: 65,
+          confidence: 50,
+          reason: 'Pattern analysis unavailable',
+        };
+      }
+
+      const patterns = analysis.patterns || [];
+      const structure = analysis.structure;
+      const liquiditySweep = analysis.smc?.liquiditySweep;
+      const orderBlock = analysis.smc?.orderBlock;
+      const priceImbalance = analysis.smc?.priceImbalance;
+
+      // Score patterns that align with signal direction
+      let patternScore = 0;
+      let alignedPatterns = 0;
+      const totalPatterns = patterns.length;
+
+      for (const p of patterns) {
+        const patternDir = String(p?.bias || '').toUpperCase();
+        const strength = Number(p?.strength) || 0;
+        if (
+          (direction === 'buy' && patternDir === 'BUY') ||
+          (direction === 'sell' && patternDir === 'SELL')
+        ) {
+          patternScore += strength;
+          alignedPatterns++;
+        } else if (patternDir !== 'NEUTRAL') {
+          patternScore -= strength * 0.5;
+        }
+      }
+
+      // Structure alignment
+      let structureBonus = 0;
+      if (structure?.bias) {
+        const structureDir = String(structure.bias).toUpperCase();
+        if (
+          (direction === 'buy' && structureDir === 'BUY') ||
+          (direction === 'sell' && structureDir === 'SELL')
+        ) {
+          structureBonus = 20;
+        } else if (structureDir !== 'NEUTRAL') {
+          structureBonus = -15;
+        }
+      }
+
+      // SMC bonuses: liquidity sweep + order block alignment
+      let smcBonus = 0;
+      if (liquiditySweep?.detected) {
+        smcBonus += 10;
+      }
+      if (orderBlock?.near) {
+        const obDir = String(orderBlock?.direction || '').toUpperCase();
+        if (
+          (direction === 'buy' && obDir === 'BUY') ||
+          (direction === 'sell' && obDir === 'SELL')
+        ) {
+          smcBonus += 15;
+        }
+      }
+      if (priceImbalance?.detected) {
+        smcBonus += 5;
+      }
+
+      const baseScore = 60;
+      const finalScore = Math.min(
+        100,
+        Math.max(0, baseScore + patternScore + structureBonus + smcBonus)
+      );
+      const confidence = Math.min(
+        90,
+        45 +
+          (totalPatterns > 0 ? Math.min(20, alignedPatterns * 7) : 0) +
+          (structure ? 10 : 0) +
+          smcBonus * 0.3
+      );
+      const status = finalScore >= 40 ? 'PASS' : 'FAIL';
+
+      const patternNames = patterns.map((p) => p?.name || 'unknown').join(', ');
+
+      return {
+        status,
+        score: Math.round(finalScore),
+        confidence: Math.round(confidence),
+        reason:
+          status === 'PASS'
+            ? `Patterns aligned (${alignedPatterns}/${totalPatterns}): ${patternNames || 'structure confirmed'}`
+            : `Patterns counter to ${direction.toUpperCase()} signal`,
+        metrics: {
+          timeframe: usedTf,
+          patterns,
+          structure,
+          alignedPatterns,
+          totalPatterns,
+          smcBonus,
+          liquiditySweep: liquiditySweep?.detected ?? false,
+          orderBlockNear: orderBlock?.near ?? false,
+          priceImbalance: priceImbalance?.detected ?? false,
+        },
+      };
+    } catch (error) {
+      return {
+        status: 'PASS',
+        score: 65,
+        confidence: 50,
+        reason: `Pattern check skipped: ${error.message}`,
+      };
+    }
   }
 
   async processLayer11({ snapshot, signal }) {
@@ -1082,19 +1461,213 @@ class LayerOrchestrator {
     return { status: 'PASS', score: 100, confidence: 95, reason: 'No high-impact news' };
   }
 
-  async processLayer13({ snapshot: _snapshot }) {
-    // Economic Calendar - placeholder
-    return { status: 'PASS', score: 90, confidence: 85, reason: 'Calendar clear' };
+  async processLayer13({ snapshot }) {
+    // Economic Calendar — check upcoming high-impact events in next 4 hours
+    try {
+      const news = snapshot?.news || [];
+      const now = Date.now();
+      const lookAheadMs = 4 * 60 * 60 * 1000; // 4 hours
+
+      // Filter calendar events that are high-impact and imminent
+      const upcomingHigh = news.filter((n) => {
+        const impact = Number(n?.impact ?? n?.importance ?? 0);
+        const eventTime = Number(n?.time ?? n?.datetime ?? n?.timestamp ?? 0);
+        const isUpcoming = eventTime > 0 && eventTime >= now && eventTime <= now + lookAheadMs;
+        return impact >= 65 && isUpcoming;
+      });
+
+      const allHigh = news.filter((n) => Number(n?.impact ?? n?.importance ?? 0) >= 65);
+
+      if (upcomingHigh.length >= 2) {
+        return {
+          status: 'FAIL',
+          score: 20,
+          confidence: 85,
+          reason: `${upcomingHigh.length} high-impact calendar events within 4 hours`,
+          metrics: { upcomingHighImpact: upcomingHigh.length, totalHighImpact: allHigh.length },
+        };
+      }
+
+      if (upcomingHigh.length === 1) {
+        return {
+          status: 'PASS',
+          score: 65,
+          confidence: 75,
+          reason: '1 high-impact event upcoming — trade with caution',
+          metrics: { upcomingHighImpact: 1, totalHighImpact: allHigh.length },
+        };
+      }
+
+      return {
+        status: 'PASS',
+        score: 95,
+        confidence: 88,
+        reason: 'Calendar clear — no high-impact events imminent',
+        metrics: { upcomingHighImpact: 0, totalHighImpact: allHigh.length },
+      };
+    } catch (error) {
+      return {
+        status: 'PASS',
+        score: 85,
+        confidence: 70,
+        reason: `Calendar check skipped: ${error.message}`,
+      };
+    }
   }
 
-  async processLayer14({ snapshot: _snapshot }) {
-    // Market Session - placeholder
-    return { status: 'PASS', score: 80, confidence: 75, reason: 'Good trading session' };
+  async processLayer14({ snapshot }) {
+    // Market Session — London/New York/Asia/Sydney session detection
+    try {
+      const now = snapshot?.quote?.timestamp ?? Date.now();
+      const utcHour = new Date(now).getUTCHours();
+      const utcMinute = new Date(now).getUTCMinutes();
+      const utcTime = utcHour + utcMinute / 60;
+
+      // Session windows (UTC)
+      // Sydney:  21:00–06:00 UTC (low liquidity)
+      // Tokyo/Asia: 00:00–09:00 UTC (medium)
+      // London: 07:00–16:00 UTC (high liquidity)
+      // New York: 12:00–21:00 UTC (high liquidity)
+      // London+NY overlap: 12:00–16:00 UTC (highest liquidity — best to trade)
+
+      const inLondon = utcTime >= 7.0 && utcTime < 16.0;
+      const inNewYork = utcTime >= 12.0 && utcTime < 21.0;
+      const inAsia = utcTime >= 0.0 && utcTime < 9.0;
+      const inOverlap = utcTime >= 12.0 && utcTime < 16.0; // London/NY overlap
+
+      let session, score, confidence, reason;
+
+      if (inOverlap) {
+        session = 'LONDON_NY_OVERLAP';
+        score = 95;
+        confidence = 92;
+        reason = `London/NY overlap (${utcHour.toString().padStart(2, '0')}:${utcMinute.toString().padStart(2, '0')} UTC) — peak liquidity`;
+      } else if (inLondon && !inNewYork) {
+        session = 'LONDON';
+        score = 85;
+        confidence = 88;
+        reason = `London session (${utcHour.toString().padStart(2, '0')}:${utcMinute.toString().padStart(2, '0')} UTC) — good liquidity`;
+      } else if (inNewYork && !inLondon) {
+        session = 'NEW_YORK';
+        score = 80;
+        confidence = 85;
+        reason = `New York session (${utcHour.toString().padStart(2, '0')}:${utcMinute.toString().padStart(2, '0')} UTC) — good liquidity`;
+      } else if (inAsia) {
+        session = 'ASIA';
+        score = 60;
+        confidence = 70;
+        reason = `Asian session (${utcHour.toString().padStart(2, '0')}:${utcMinute.toString().padStart(2, '0')} UTC) — moderate liquidity`;
+      } else {
+        session = 'OFF_HOURS';
+        score = 35;
+        confidence = 80;
+        reason = `Off-hours (${utcHour.toString().padStart(2, '0')}:${utcMinute.toString().padStart(2, '0')} UTC) — low liquidity`;
+      }
+
+      // Off-hours is a soft fail (low liquidity increases risk)
+      const status = score >= 50 ? 'PASS' : 'FAIL';
+
+      return {
+        status,
+        score,
+        confidence,
+        reason,
+        metrics: { session, utcHour, utcMinute, inLondon, inNewYork, inAsia, inOverlap },
+      };
+    } catch (error) {
+      return {
+        status: 'PASS',
+        score: 70,
+        confidence: 60,
+        reason: `Session check skipped: ${error.message}`,
+      };
+    }
   }
 
-  async processLayer15({ snapshot: _snapshot }) {
-    // Correlation Analysis - placeholder (optional)
-    return { status: 'PASS', score: 70, confidence: 60, reason: 'Correlations normal' };
+  async processLayer15({ snapshot, signal }) {
+    // Correlation Analysis — guard against over-exposure on correlated pairs
+    try {
+      const pair = signal?.pair || snapshot?.symbol || '';
+      const direction = signal?.direction?.toLowerCase();
+
+      if (!pair || !direction) {
+        return {
+          status: 'PASS',
+          score: 70,
+          confidence: 60,
+          reason: 'Pair/direction not available for correlation check',
+        };
+      }
+
+      // Known high-correlation clusters (simplified; production would use live data)
+      // Same-direction exposure on all three USD pairs = over-correlated
+      const usdPositive = ['EURUSD', 'GBPUSD', 'AUDUSD', 'NZDUSD']; // BUY = long USD pairs
+      const usdNegative = ['USDJPY', 'USDCHF', 'USDCAD']; // BUY = short USD
+      const goldCorrelated = ['XAUUSD', 'XAGUSD'];
+
+      const pairUpper = pair.toUpperCase().replace(/[^A-Z]/g, '');
+
+      // Check if signal would increase USD exposure beyond 2 correlated positions
+      const activePairs = Array.isArray(snapshot?.activePairs) ? snapshot.activePairs : [];
+      let correlatedCount = 0;
+
+      for (const active of activePairs) {
+        const activePair = String(active?.pair || '').toUpperCase();
+        const activeDir = String(active?.direction || '').toLowerCase();
+        const sameDirection = activeDir === direction;
+
+        if (usdPositive.includes(pairUpper) && usdPositive.includes(activePair) && sameDirection) {
+          correlatedCount++;
+        } else if (
+          usdNegative.includes(pairUpper) &&
+          usdNegative.includes(activePair) &&
+          sameDirection
+        ) {
+          correlatedCount++;
+        } else if (
+          goldCorrelated.includes(pairUpper) &&
+          goldCorrelated.includes(activePair) &&
+          sameDirection
+        ) {
+          correlatedCount++;
+        }
+      }
+
+      if (correlatedCount >= 2) {
+        return {
+          status: 'FAIL',
+          score: 30,
+          confidence: 75,
+          reason: `High correlation exposure: ${correlatedCount} same-direction correlated trades open`,
+          metrics: { pair: pairUpper, direction, correlatedCount },
+        };
+      }
+
+      if (correlatedCount === 1) {
+        return {
+          status: 'PASS',
+          score: 65,
+          confidence: 72,
+          reason: `1 correlated trade — moderate correlation risk`,
+          metrics: { pair: pairUpper, direction, correlatedCount },
+        };
+      }
+
+      return {
+        status: 'PASS',
+        score: 85,
+        confidence: 80,
+        reason: `No correlated exposure detected for ${pairUpper}`,
+        metrics: { pair: pairUpper, direction, correlatedCount: 0 },
+      };
+    } catch (error) {
+      return {
+        status: 'PASS',
+        score: 75,
+        confidence: 65,
+        reason: `Correlation check skipped: ${error.message}`,
+      };
+    }
   }
 
   async processLayer16({ snapshot: _snapshot, signal }) {

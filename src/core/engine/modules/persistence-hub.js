@@ -209,16 +209,81 @@ export const persistenceHub = {
         ? losses.reduce((sum, t) => sum + parseFloat(t.finalPnL.percentage), 0) / losses.length
         : 0;
 
+    // ── Expectancy ─────────────────────────────────────────────────────────────
+    // E = (winRate × avgWin) + (lossRate × avgLoss)
+    const winRate = closed.length > 0 ? wins.length / closed.length : 0;
+    const lossRate = 1 - winRate;
+    const expectancy = Number((winRate * avgWin + lossRate * avgLoss).toFixed(4));
+
+    // ── Profit factor ──────────────────────────────────────────────────────────
+    const grossProfit = wins.reduce((sum, t) => sum + parseFloat(t.finalPnL.percentage), 0);
+    const grossLoss = Math.abs(
+      losses.reduce((sum, t) => sum + parseFloat(t.finalPnL.percentage), 0)
+    );
+    const profitFactor = grossLoss > 0 ? Number((grossProfit / grossLoss).toFixed(2)) : 0;
+
+    // ── Max drawdown ───────────────────────────────────────────────────────────
+    let peak = 0;
+    let cumPnL = 0;
+    let maxDrawdownPct = 0;
+    for (const t of closed) {
+      cumPnL += parseFloat(t.finalPnL.percentage);
+      if (cumPnL > peak) {
+        peak = cumPnL;
+      }
+      const dd = peak > 0 ? ((peak - cumPnL) / peak) * 100 : 0;
+      if (dd > maxDrawdownPct) {
+        maxDrawdownPct = dd;
+      }
+    }
+
+    // ── Sharpe ratio (simplified; uses per-trade % returns) ───────────────────
+    let sharpeRatio = 0;
+    if (closed.length >= 5) {
+      const returns = closed.map((t) => parseFloat(t.finalPnL.percentage));
+      const meanReturn = returns.reduce((a, b) => a + b, 0) / returns.length;
+      const variance = returns.reduce((sum, r) => sum + (r - meanReturn) ** 2, 0) / returns.length;
+      const stdDev = Math.sqrt(variance);
+      sharpeRatio = stdDev > 0 ? Number((meanReturn / stdDev).toFixed(3)) : 0;
+    }
+
+    // ── Consecutive win/loss streaks ───────────────────────────────────────────
+    let maxConsecWins = 0,
+      maxConsecLosses = 0;
+    let curWins = 0,
+      curLosses = 0;
+    for (const t of closed) {
+      const pnl = parseFloat(t.finalPnL.percentage);
+      if (pnl > 0) {
+        curWins++;
+        curLosses = 0;
+        if (curWins > maxConsecWins) {
+          maxConsecWins = curWins;
+        }
+      } else if (pnl < 0) {
+        curLosses++;
+        curWins = 0;
+        if (curLosses > maxConsecLosses) {
+          maxConsecLosses = curLosses;
+        }
+      }
+    }
+
     return {
       totalTrades: closed.length,
       activeTrades: this.activeTrades.size,
       wins: wins.length,
       losses: losses.length,
-      winRate: closed.length > 0 ? ((wins.length / closed.length) * 100).toFixed(2) : 0,
+      winRate: (winRate * 100).toFixed(2),
       totalPnL: totalPnL.toFixed(2),
       avgWin: avgWin.toFixed(2),
       avgLoss: avgLoss.toFixed(2),
-      profitFactor: avgLoss !== 0 ? Math.abs(avgWin / avgLoss).toFixed(2) : 0,
+      profitFactor,
+      expectancy,
+      maxDrawdownPct: Number(maxDrawdownPct.toFixed(2)),
+      sharpeRatio,
+      maxConsecWins,
+      maxConsecLosses,
       dailyRiskUsed: (this.dailyRisk * 100).toFixed(2),
     };
   },
