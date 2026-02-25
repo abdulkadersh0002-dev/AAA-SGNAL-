@@ -447,6 +447,12 @@ export const analysisCore = {
           dataQualityPenalty: Number(signalIntelligence.dataQualityPenalty.toFixed(1)),
           regimeAdjustment: Number(signalIntelligence.regimeAdjustment.toFixed(1)),
           volatilityAdjustment: Number(signalIntelligence.volatilityAdjustment.toFixed(1)),
+          divergenceAdjustment: Number(signalIntelligence.divergenceAdjustment.toFixed(1)),
+          volumePressureAdjustment: Number(signalIntelligence.volumePressureAdjustment.toFixed(1)),
+          divergenceAlignment: signalIntelligence.divergenceAlignment,
+          volumePressureAlignment: signalIntelligence.volumePressureAlignment,
+          divergenceBias: signalIntelligence.divergenceBias,
+          volumePressureState: signalIntelligence.volumePressureState,
         },
         marketData: resolvedDataQuality
           ? {
@@ -1333,6 +1339,12 @@ export const analysisCore = {
         dataQualityPenalty: 0,
         regimeAdjustment: 0,
         volatilityAdjustment: 0,
+        divergenceAdjustment: 0,
+        volumePressureAdjustment: 0,
+        divergenceAlignment: 'neutral',
+        volumePressureAlignment: 'neutral',
+        divergenceBias: null,
+        volumePressureState: null,
         assetClass,
       };
     }
@@ -1374,6 +1386,67 @@ export const analysisCore = {
             : volatilityState === 'extreme'
               ? profile.volatilityExtremePenalty
               : 0;
+
+    const divergenceSummary =
+      technical?.divergenceSummary || technical?.divergences || technical?.divergence || null;
+    const bullishDivergences = Array.isArray(divergenceSummary?.bullish)
+      ? divergenceSummary.bullish.length
+      : Number.isFinite(Number(divergenceSummary?.bullish))
+        ? Number(divergenceSummary.bullish)
+        : 0;
+    const bearishDivergences = Array.isArray(divergenceSummary?.bearish)
+      ? divergenceSummary.bearish.length
+      : Number.isFinite(Number(divergenceSummary?.bearish))
+        ? Number(divergenceSummary.bearish)
+        : 0;
+    const divergenceTotal = Number.isFinite(Number(divergenceSummary?.total))
+      ? Number(divergenceSummary.total)
+      : bullishDivergences + bearishDivergences;
+    const divergenceBias =
+      bullishDivergences > bearishDivergences
+        ? 'BUY'
+        : bearishDivergences > bullishDivergences
+          ? 'SELL'
+          : null;
+    const divergenceSupports = divergenceBias && divergenceBias === normalizedDirection;
+    const divergenceOpposes = divergenceBias && divergenceBias !== normalizedDirection;
+    const divergenceWeight = Math.min(1, Math.max(0, divergenceTotal / 3));
+    const divergenceAdjustment = divergenceSupports
+      ? Math.round(6 * divergenceWeight)
+      : divergenceOpposes
+        ? -Math.round(7 * divergenceWeight)
+        : 0;
+    const divergenceAlignment = divergenceSupports
+      ? 'support'
+      : divergenceOpposes
+        ? 'oppose'
+        : 'neutral';
+
+    const volumePressureSummary =
+      technical?.volumePressureSummary || technical?.volumePressure || null;
+    const volumeStateRaw = String(volumePressureSummary?.state || '')
+      .trim()
+      .toLowerCase();
+    const volumePressureState =
+      volumeStateRaw === 'buying' ? 'buying' : volumeStateRaw === 'selling' ? 'selling' : 'neutral';
+    const volumeBias =
+      volumePressureState === 'buying' ? 'BUY' : volumePressureState === 'selling' ? 'SELL' : null;
+    const volumeSupports = volumeBias && volumeBias === normalizedDirection;
+    const volumeOpposes = volumeBias && volumeBias !== normalizedDirection;
+    const averagePressure = Number(volumePressureSummary?.averagePressure);
+    const volumeWeight = Number.isFinite(averagePressure)
+      ? Math.min(1, Math.abs(averagePressure) / 0.6)
+      : 0.4;
+    const volumePressureAdjustment = volumeSupports
+      ? Math.round(4 * volumeWeight)
+      : volumeOpposes
+        ? -Math.round(5 * volumeWeight)
+        : 0;
+    const volumePressureAlignment = volumeSupports
+      ? 'support'
+      : volumeOpposes
+        ? 'oppose'
+        : 'neutral';
 
     const riskReward = Number(entry?.riskReward);
     const rrQuality = Number.isFinite(riskReward)
@@ -1418,6 +1491,8 @@ export const analysisCore = {
       (agreementScore - 50) * profile.agreementWeight +
       regimeAdjustment +
       volatilityAdjustment +
+      divergenceAdjustment +
+      volumePressureAdjustment +
       rrQuality -
       newsRiskPenalty -
       dataQualityPenalty;
@@ -1454,6 +1529,12 @@ export const analysisCore = {
       dataQualityPenalty,
       regimeAdjustment,
       volatilityAdjustment,
+      divergenceAdjustment,
+      volumePressureAdjustment,
+      divergenceAlignment,
+      volumePressureAlignment,
+      divergenceBias,
+      volumePressureState,
       assetClass,
     };
   },

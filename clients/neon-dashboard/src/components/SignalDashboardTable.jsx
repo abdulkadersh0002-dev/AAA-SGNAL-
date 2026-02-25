@@ -81,6 +81,50 @@ const toUpper = (value) =>
     .trim()
     .toUpperCase();
 
+const formatAlignmentTag = (value, prefix) => {
+  const normalized = String(value || '').toLowerCase();
+  if (normalized === 'support') {
+    return `${prefix}↑`;
+  }
+  if (normalized === 'oppose') {
+    return `${prefix}↓`;
+  }
+  if (normalized) {
+    return `${prefix}•`;
+  }
+  return null;
+};
+
+const formatIntelligenceSummary = (intelligence) => {
+  if (!intelligence || typeof intelligence !== 'object') {
+    return { label: '—', title: 'No intelligence data' };
+  }
+  const qualityBand = toUpper(intelligence.qualityBand || '');
+  const qualityIndex = toFinite(intelligence.qualityIndex);
+  const divergenceTag = formatAlignmentTag(intelligence.divergenceAlignment, 'D');
+  const volumeTag = formatAlignmentTag(intelligence.volumePressureAlignment, 'V');
+  const qualityLabel = qualityBand
+    ? qualityIndex != null
+      ? `${qualityBand} ${Math.round(qualityIndex)}`
+      : qualityBand
+    : '—';
+  const alignmentLabel = [divergenceTag, volumeTag].filter(Boolean).join(' ');
+  const titleParts = [
+    qualityBand ? `Quality: ${qualityBand}` : null,
+    qualityIndex != null ? `Index: ${Math.round(qualityIndex)}` : null,
+    intelligence.divergenceAlignment
+      ? `Divergence: ${intelligence.divergenceAlignment}`
+      : null,
+    intelligence.volumePressureAlignment
+      ? `Volume: ${intelligence.volumePressureAlignment}`
+      : null,
+  ].filter(Boolean);
+  return {
+    label: alignmentLabel ? `${qualityLabel} · ${alignmentLabel}` : qualityLabel,
+    title: titleParts.length ? titleParts.join(' | ') : '—',
+  };
+};
+
 const selectPipSize = (pair) => {
   const normalized = toUpper(pair);
   if (!normalized) {
@@ -511,6 +555,8 @@ function SignalDashboardTable({
       const confluenceMinLabel = Number.isFinite(confluenceMin)
         ? `${Math.round(confluenceMin)}%`
         : '—';
+      const intelligence = signal.components?.intelligence || null;
+      const intelligenceSummary = formatIntelligenceSummary(intelligence);
 
       return {
         id: signal.id || `${pair}-${timeframe}-${ts || Math.random()}`,
@@ -560,6 +606,8 @@ function SignalDashboardTable({
             : '—',
         featureRegimeLabel: snapshotRegime ? String(snapshotRegime).toUpperCase() : '—',
         featureVolatilityLabel: snapshotVolatility ? String(snapshotVolatility).toUpperCase() : '—',
+        intelligenceLabel: intelligenceSummary.label,
+        intelligenceTitle: intelligenceSummary.title,
         confluence,
         layeredAnalysis,
         confluenceLabel,
@@ -617,11 +665,12 @@ function SignalDashboardTable({
             <th>Layers</th>
             <th>Conf</th>
             <th>Strength</th>
+            <th>Intel</th>
           </tr>
         </thead>
         <tbody>
           <tr>
-            <td colSpan="11" className="cell--empty">
+            <td colSpan="12" className="cell--empty">
               <div style={{ display: 'grid', gap: 6 }}>
                 <div style={{ fontWeight: 650 }}>
                   {emptyTitle
@@ -661,6 +710,7 @@ function SignalDashboardTable({
           {!isStrongMode && <th>Tech Score</th>}
           <th>Conf</th>
           <th>Strength</th>
+          <th>Intel</th>
           {!isStrongMode && <th>Score</th>}
           {!isStrongMode && <th>Feat Updated</th>}
           {!isStrongMode && <th>Feat Dir</th>}
@@ -717,6 +767,7 @@ function SignalDashboardTable({
                 {!isStrongMode && <td>{row.techScoreLabel}</td>}
                 <td>{row.confidenceLabel}</td>
                 <td>{row.strengthLabel}</td>
+                <td title={row.intelligenceTitle}>{row.intelligenceLabel}</td>
                 {!isStrongMode && <td>{row.scoreLabel}</td>}
                 {!isStrongMode && <td>{row.featureUpdatedLabel}</td>}
                 {!isStrongMode && (
@@ -735,7 +786,7 @@ function SignalDashboardTable({
 
               {isSelected && row.layeredAnalysis && Array.isArray(row.layeredAnalysis.layers) && (
                 <tr className="signal-dashboard__row signal-dashboard__row--details">
-                  <td colSpan={isStrongMode ? 11 : 22} style={{ padding: '10px 12px' }}>
+                  <td colSpan={isStrongMode ? 12 : 23} style={{ padding: '10px 12px' }}>
                     <details open>
                       <summary style={{ cursor: 'pointer', fontWeight: 600 }}>
                         {row.layeredAnalysis.layers.length} Layers — Full Analysis
@@ -782,6 +833,9 @@ function SignalDashboardTable({
                         </div>
                         <div>
                           <strong>Band:</strong> {row.executionConfidenceBand}
+                        </div>
+                        <div>
+                          <strong>Intelligence:</strong> {row.intelligenceLabel}
                         </div>
                       </div>
 

@@ -603,6 +603,17 @@ export const executionEngine = {
       return { action: 'breakeven', reason: 'data_quality_breakeven' };
     }
 
+    const liveDecision = String(trade?.liveContext?.decision || '').toUpperCase();
+    if (liveDecision === 'EXIT') {
+      if (profitPct >= minProfitPct) {
+        return { action: 'close', reason: 'live_context_exit' };
+      }
+      return { action: 'breakeven', reason: 'live_context_exit_breakeven' };
+    }
+    if (liveDecision === 'REDUCE') {
+      return { action: 'breakeven', reason: 'live_context_reduce' };
+    }
+
     return null;
   },
   async syncBrokerProtection(trade, { reason } = {}) {

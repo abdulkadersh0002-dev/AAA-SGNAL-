@@ -159,10 +159,25 @@ class UnifiedSnapshotManager {
    * Update quote data in snapshot
    */
   updateQuote({ broker, symbol, quote }) {
+    const now = Date.now();
+    const normalizedQuote =
+      quote && typeof quote === 'object'
+        ? {
+            ...quote,
+            receivedAt: quote.receivedAt ?? quote.timestamp ?? now,
+          }
+        : quote;
+    const receivedAt = Number(normalizedQuote?.receivedAt ?? normalizedQuote?.timestamp ?? now);
     return this.updateSnapshot({
       broker,
       symbol,
-      updates: { quote },
+      updates: {
+        quote: normalizedQuote,
+        metadata: {
+          lastQuoteAt: Number.isFinite(receivedAt) ? receivedAt : now,
+          lastQuoteSource: normalizedQuote?.source ?? null,
+        },
+      },
     });
   }
 
@@ -172,6 +187,7 @@ class UnifiedSnapshotManager {
   updateBars({ broker, symbol, timeframe, bars }) {
     const existing = this.getSnapshot(broker, symbol);
     const existingBars = existing?.bars || {};
+    const now = Date.now();
 
     return this.updateSnapshot({
       broker,
@@ -180,6 +196,10 @@ class UnifiedSnapshotManager {
         bars: {
           ...existingBars,
           [timeframe]: bars,
+        },
+        metadata: {
+          lastBarsAt: now,
+          lastBarsTimeframe: timeframe || null,
         },
       },
     });

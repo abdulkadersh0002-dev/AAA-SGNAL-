@@ -63,6 +63,49 @@ test('calculateEntryParameters builds coherent trade plan inputs', () => {
   assert.ok(entry.trailingStop.enabled);
 });
 
+test('computeSmartSignalIntelligence rewards aligned divergence and volume pressure', () => {
+  const engine = createEngine();
+  const base = {
+    pair: 'EURUSD',
+    direction: 'BUY',
+    economic: { direction: 'BUY' },
+    news: { direction: 'buy', impact: 25, upcomingEvents: 0 },
+    entry: { riskReward: 2.1 },
+    dataQualityContext: { modifier: 1, shouldBlock: false, stale: false },
+  };
+  const aligned = engine.computeSmartSignalIntelligence({
+    ...base,
+    technical: {
+      direction: 'BUY',
+      regimeSummary: { state: 'trend' },
+      volatilitySummary: { state: 'normal' },
+      divergenceSummary: { bullish: [{ confidence: 72 }], bearish: [], total: 1 },
+      volumePressureSummary: { state: 'buying', averagePressure: 0.4 },
+    },
+  });
+  const opposed = engine.computeSmartSignalIntelligence({
+    ...base,
+    technical: {
+      direction: 'BUY',
+      regimeSummary: { state: 'trend' },
+      volatilitySummary: { state: 'normal' },
+      divergenceSummary: {
+        bullish: [],
+        bearish: [{ confidence: 70 }, { confidence: 68 }],
+        total: 2,
+      },
+      volumePressureSummary: { state: 'selling', averagePressure: 0.35 },
+    },
+  });
+
+  assert.ok(aligned.divergenceAdjustment >= 0);
+  assert.ok(opposed.divergenceAdjustment <= 0);
+  assert.ok(aligned.volumePressureAdjustment > opposed.volumePressureAdjustment);
+  assert.equal(aligned.volumePressureAlignment, 'support');
+  assert.equal(opposed.volumePressureAlignment, 'oppose');
+  assert.equal(opposed.divergenceAlignment, 'oppose');
+});
+
 test('validateSignal enforces gating and reports failures', () => {
   const engine = createEngine();
   const goodSignal = {
