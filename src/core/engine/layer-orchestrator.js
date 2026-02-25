@@ -19,6 +19,7 @@ import {
   detectMACrossover,
   // calculateATR,  // Reserved for future use
 } from '../../lib/utils/technical-analysis.js';
+import { toNumber } from '../../lib/utils/number-utils.js';
 
 class LayerOrchestrator {
   constructor(options = {}) {
@@ -1277,19 +1278,17 @@ class LayerOrchestrator {
     }
   }
 
+  getLayerResult(previousLayers, id) {
+    return previousLayers.find((layer) => layer.layer === id) || null;
+  }
+
   async processLayer18({ previousLayers }) {
     // Final validation with adaptive thresholds derived from real market state.
-    const findLayer = (id) => previousLayers.find((layer) => layer.layer === id) || null;
-    const toNumber = (value) => {
-      const parsed = Number(value);
-      return Number.isFinite(parsed) ? parsed : null;
-    };
-
     const criticalLayers = [1, 2, 3, 4, 6, 11, 12, 14, 16, 17];
     const supportingLayers = [5, 7, 10, 13];
 
     for (const layerId of criticalLayers) {
-      const layer = findLayer(layerId);
+      const layer = this.getLayerResult(previousLayers, layerId);
       if (!layer || layer.status !== 'PASS') {
         return {
           status: 'FAIL',
@@ -1305,14 +1304,19 @@ class LayerOrchestrator {
     }
 
     const supportFailures = supportingLayers.filter((id) => {
-      const layer = findLayer(id);
+      const layer = this.getLayerResult(previousLayers, id);
       return !layer || layer.status !== 'PASS';
     });
 
-    const l2Spread = toNumber(findLayer(2)?.metrics?.spreadPoints);
-    const l3Volatility = toNumber(findLayer(3)?.metrics?.volatility);
-    const l11Confluence = toNumber(findLayer(11)?.metrics?.confluenceScore ?? findLayer(11)?.score);
-    const l16RiskReward = toNumber(findLayer(16)?.metrics?.riskRewardRatio);
+    const l2Spread = toNumber(this.getLayerResult(previousLayers, 2)?.metrics?.spreadPoints);
+    const l3Volatility = toNumber(this.getLayerResult(previousLayers, 3)?.metrics?.volatility);
+    const l11Confluence = toNumber(
+      this.getLayerResult(previousLayers, 11)?.metrics?.confluenceScore ??
+        this.getLayerResult(previousLayers, 11)?.score
+    );
+    const l16RiskReward = toNumber(
+      this.getLayerResult(previousLayers, 16)?.metrics?.riskRewardRatio
+    );
 
     let minCompositeScore = 60;
     if (l3Volatility != null && l3Volatility > 140) {
@@ -1397,13 +1401,7 @@ class LayerOrchestrator {
 
   async processLayer19({ previousLayers }) {
     // Execution clearance tied to tradability and slippage/news constraints.
-    const findLayer = (id) => previousLayers.find((layer) => layer.layer === id) || null;
-    const toNumber = (value) => {
-      const parsed = Number(value);
-      return Number.isFinite(parsed) ? parsed : null;
-    };
-
-    const layer18 = findLayer(18);
+    const layer18 = this.getLayerResult(previousLayers, 18);
     if (!layer18 || layer18.status !== 'PASS') {
       return {
         status: 'FAIL',
@@ -1413,12 +1411,17 @@ class LayerOrchestrator {
       };
     }
 
-    const spreadPoints = toNumber(findLayer(2)?.metrics?.spreadPoints);
-    const volatility = toNumber(findLayer(3)?.metrics?.volatility);
-    const confluence = toNumber(findLayer(11)?.metrics?.confluenceScore ?? findLayer(11)?.score);
-    const riskRewardRatio = toNumber(findLayer(16)?.metrics?.riskRewardRatio);
-    const positionSize = toNumber(findLayer(17)?.metrics?.positionSize);
-    const newsIsClear = findLayer(12)?.status === 'PASS';
+    const spreadPoints = toNumber(this.getLayerResult(previousLayers, 2)?.metrics?.spreadPoints);
+    const volatility = toNumber(this.getLayerResult(previousLayers, 3)?.metrics?.volatility);
+    const confluence = toNumber(
+      this.getLayerResult(previousLayers, 11)?.metrics?.confluenceScore ??
+        this.getLayerResult(previousLayers, 11)?.score
+    );
+    const riskRewardRatio = toNumber(
+      this.getLayerResult(previousLayers, 16)?.metrics?.riskRewardRatio
+    );
+    const positionSize = toNumber(this.getLayerResult(previousLayers, 17)?.metrics?.positionSize);
+    const newsIsClear = this.getLayerResult(previousLayers, 12)?.status === 'PASS';
 
     if (!newsIsClear) {
       return {
@@ -1485,21 +1488,21 @@ class LayerOrchestrator {
 
   async processLayer20({ signal, previousLayers }) {
     // Build execution metadata/profile for downstream trade lifecycle management.
-    const findLayer = (id) => previousLayers.find((layer) => layer.layer === id) || null;
-    const toNumber = (value) => {
-      const parsed = Number(value);
-      return Number.isFinite(parsed) ? parsed : null;
-    };
-
     const direction = String(signal?.direction || '').toUpperCase() || 'UNKNOWN';
     const baseConfidence = toNumber(signal?.confidence);
-    const confidence = baseConfidence ?? toNumber(findLayer(18)?.confidence) ?? 70;
+    const confidence =
+      baseConfidence ?? toNumber(this.getLayerResult(previousLayers, 18)?.confidence) ?? 70;
     const strength = toNumber(signal?.strength) ?? 0;
-    const confluence = toNumber(findLayer(11)?.metrics?.confluenceScore ?? findLayer(11)?.score);
-    const spreadPoints = toNumber(findLayer(2)?.metrics?.spreadPoints);
-    const riskRewardRatio = toNumber(findLayer(16)?.metrics?.riskRewardRatio);
-    const positionSize = toNumber(findLayer(17)?.metrics?.positionSize);
-    const clearanceScore = toNumber(findLayer(19)?.score) ?? 75;
+    const confluence = toNumber(
+      this.getLayerResult(previousLayers, 11)?.metrics?.confluenceScore ??
+        this.getLayerResult(previousLayers, 11)?.score
+    );
+    const spreadPoints = toNumber(this.getLayerResult(previousLayers, 2)?.metrics?.spreadPoints);
+    const riskRewardRatio = toNumber(
+      this.getLayerResult(previousLayers, 16)?.metrics?.riskRewardRatio
+    );
+    const positionSize = toNumber(this.getLayerResult(previousLayers, 17)?.metrics?.positionSize);
+    const clearanceScore = toNumber(this.getLayerResult(previousLayers, 19)?.score) ?? 75;
 
     const executionProfile = {
       urgency: clearanceScore >= 92 ? 'immediate' : clearanceScore >= 80 ? 'normal' : 'patient',
