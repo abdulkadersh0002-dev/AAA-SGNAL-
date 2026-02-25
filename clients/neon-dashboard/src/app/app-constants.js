@@ -172,7 +172,7 @@ const CRYPTO_CATALOG_PAIRS = (() => {
 })();
 
 export const TICKER_CATALOG_SYMBOLS = (() => {
-  const all = [...FX_CATALOG_PAIRS, ...METAL_CATALOG_PAIRS];
+  const all = [...FX_CATALOG_PAIRS, ...METAL_CATALOG_PAIRS, ...CRYPTO_CATALOG_PAIRS];
   const unique = new Set(
     all
       .map((s) =>
@@ -308,9 +308,10 @@ export const extractFxCurrencies = (symbolUpper) => {
 };
 
 export const TICKER_CATEGORIES = [
-  { id: 'ALL', label: 'FX + Metals' },
+  { id: 'ALL', label: 'FX + Metals + Crypto' },
   { id: 'FX', label: 'FX' },
   { id: 'METALS', label: 'Metals' },
+  { id: 'CRYPTO', label: 'Crypto' },
 ];
 
 export const isFxSymbol = (symbolUpper) => {

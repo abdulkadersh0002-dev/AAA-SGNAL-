@@ -730,6 +730,38 @@ body::after {
   color: var(--text-secondary);
 }
 
+.market-ticker__col--tag {
+  text-align: center;
+  min-width: 4.5rem;
+}
+
+.market-ticker__type-badge {
+  display: inline-block;
+  padding: 0.1em 0.45em;
+  border-radius: 0.25em;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  background: var(--surface-elevated, #1e2230);
+  color: var(--text-secondary);
+}
+
+.market-ticker__type-badge--fx {
+  background: rgba(var(--accent-primary-rgb, 0,180,255), 0.15);
+  color: var(--accent-primary, #00b4ff);
+}
+
+.market-ticker__type-badge--metals {
+  background: rgba(255, 215, 0, 0.15);
+  color: #ffd700;
+}
+
+.market-ticker__type-badge--crypto {
+  background: rgba(120, 80, 255, 0.18);
+  color: #b49bff;
+}
+
 .market-ticker__item {
   display: inline-flex;
   align-items: center;

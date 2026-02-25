@@ -102,13 +102,19 @@ const DASHBOARD_SNAPSHOT_REQUEST_TTL_MS = (() => {
 })();
 
 const matchesTickerCategory = (symbolUpper, categoryId) => {
-  const allowed = isFxSymbol(symbolUpper) || isMetalSymbol(symbolUpper);
+  const isFx = isFxSymbol(symbolUpper);
+  const isMetal = isMetalSymbol(symbolUpper);
+  const isCrypto = !isFx && !isMetal && isCryptoSymbol(symbolUpper);
+  const allowed = isFx || isMetal || isCrypto;
   if (!allowed) {
     return false;
   }
   const category = String(categoryId || 'ALL').toUpperCase();
   if (category === 'ALL') {
     return true;
+  }
+  if (category === 'CRYPTO') {
+    return isCrypto;
   }
   return classifyTickerSymbol(symbolUpper) === category;
 };
@@ -1040,12 +1046,20 @@ function App() {
     const x = window.scrollX || 0;
     const y = window.scrollY || 0;
     fn();
+    // Double-rAF: first frame React re-renders the DOM, second frame we restore scroll
+    // after the browser has finished painting the new layout.
     requestAnimationFrame(() => {
-      try {
-        window.scrollTo(x, y);
-      } catch (_error) {
-        // best-effort
-      }
+      requestAnimationFrame(() => {
+        try {
+          window.scrollTo({ left: x, top: y, behavior: 'instant' });
+        } catch (_error) {
+          try {
+            window.scrollTo(x, y);
+          } catch (_e2) {
+            // best-effort
+          }
+        }
+      });
     });
   }, []);
 
@@ -2395,12 +2409,9 @@ function App() {
 
   const autoTradingAutostartRef = useRef({ broker: null, startedAt: 0 });
   useEffect(() => {
-    if (!DASHBOARD_AUTOTRADING_AUTOSTART) {
-      return;
-    }
-    if (!SHOW_AUTOTRADING_UI) {
-      return;
-    }
+    // Silent auto-start: runs whenever the bridge connects, regardless of UI visibility.
+    // The autotrading panel is hidden (SHOW_AUTOTRADING_UI=false) but the engine still
+    // auto-starts trading as soon as the EA bridge is online.
     if (!EA_ONLY_UI_MODE) {
       return;
     }
@@ -2431,12 +2442,8 @@ function App() {
         setLastAutoTradingChangeAt(Date.now());
         await loadEngineSnapshot();
         await refreshTradingData();
-      } catch (error) {
-        setAutoTradingAction({
-          loading: false,
-          error: error?.message || 'Failed to auto-start auto trading'
-        });
-        return;
+      } catch (_error) {
+        // Silent: don't surface errors for hidden auto-start
       }
       setAutoTradingAction({ loading: false, error: null });
     })();
@@ -6254,6 +6261,7 @@ function App() {
                       <>
                         <div className="market-ticker__row market-ticker__row--head">
                           <div className="market-ticker__col market-ticker__col--symbol">Symbol</div>
+                          <div className="market-ticker__col market-ticker__col--tag">Type</div>
                           <div className="market-ticker__col market-ticker__col--price">Bid</div>
                           <div className="market-ticker__col market-ticker__col--price">Ask</div>
                           <div className="market-ticker__col market-ticker__col--meta">Spread</div>
@@ -6276,6 +6284,11 @@ function App() {
                             title={`${row.assetClass} · Click to analyze`}
                           >
                             <div className="market-ticker__col market-ticker__col--symbol">{row.symbol}</div>
+                            <div className="market-ticker__col market-ticker__col--tag">
+                              <span className={`market-ticker__type-badge market-ticker__type-badge--${(row.assetClass || 'UNKNOWN').toLowerCase()}`}>
+                                {row.assetClass}
+                              </span>
+                            </div>
                             <div className="market-ticker__col market-ticker__col--price">{row.bidLabel}</div>
                             <div className="market-ticker__col market-ticker__col--price">{row.askLabel}</div>
                             <div className="market-ticker__col market-ticker__col--meta">{row.spreadLabel}</div>
