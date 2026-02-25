@@ -83,6 +83,38 @@ export function evaluateLayeredDecision({ signal, decision, confluence, now = Da
   const confidence = toFinite(signal?.confidence) ?? 0;
   const strength = toFinite(signal?.strength) ?? 0;
   const riskReward = resolveRiskReward(signal);
+  const signalDirection = toUpper(signal?.direction || '');
+
+  const technical = signal?.components?.technical || null;
+  const divergenceSummary =
+    technical?.divergences || technical?.divergenceSummary || technical?.divergence || null;
+  const bullishDivergences = Array.isArray(divergenceSummary?.bullish)
+    ? divergenceSummary.bullish.length
+    : (toFinite(divergenceSummary?.bullish) ?? 0);
+  const bearishDivergences = Array.isArray(divergenceSummary?.bearish)
+    ? divergenceSummary.bearish.length
+    : (toFinite(divergenceSummary?.bearish) ?? 0);
+  const divergenceTotal =
+    toFinite(divergenceSummary?.total) ?? bullishDivergences + bearishDivergences;
+  const divergenceBias =
+    bullishDivergences > bearishDivergences
+      ? 'BUY'
+      : bearishDivergences > bullishDivergences
+        ? 'SELL'
+        : null;
+  const divergenceOpposes = divergenceBias && signalDirection && divergenceBias !== signalDirection;
+
+  const volumePressure = technical?.volumePressure || technical?.volumePressureSummary || null;
+  const volumeState = toUpper(volumePressure?.state || '');
+  const volumeBias = volumeState === 'BUYING' ? 'BUY' : volumeState === 'SELLING' ? 'SELL' : null;
+  const volumeOpposes = volumeBias && signalDirection && volumeBias !== signalDirection;
+  const averagePressure = toFinite(volumePressure?.averagePressure);
+  const volumeIntensity = Number.isFinite(averagePressure) ? Math.abs(averagePressure) : 0;
+
+  const oppositionStrong =
+    (divergenceOpposes && divergenceTotal >= 2) ||
+    (volumeOpposes &&
+      (volumeIntensity >= 0.2 || toFinite(volumePressure?.averageVolumeZScore) >= 1.4));
 
   const liquidityLayer = resolveLayer(layers, [5, 'L5', 'Liquidity Logic', 'Liquidity']);
   const liquidityQuality = liquidityLayer?.metrics?.liquidityQuality || null;
@@ -100,7 +132,7 @@ export function evaluateLayeredDecision({ signal, decision, confluence, now = Da
     Boolean(confluence?.htfPriority?.conflictWithSignal) ||
     false;
 
-  const entryStrong = confidence >= 70 && strength >= 70;
+  const entryStrong = confidence >= 70 && strength >= 70 && !oppositionStrong;
   const entryState =
     decisionState === 'ENTER' ? 'ENTER' : decisionState === 'WAIT_MONITOR' ? 'WAIT' : 'BLOCK';
 
@@ -132,6 +164,8 @@ export function evaluateLayeredDecision({ signal, decision, confluence, now = Da
       htfConflict ? 'HTF conflict' : null,
       liquidityScore != null && liquidityScore < 50 ? 'Liquidity weak' : null,
       confluenceScore != null && confluenceScore < minConfluence ? 'Confluence dropped' : null,
+      divergenceOpposes ? 'Divergence against signal' : null,
+      volumeOpposes ? 'Volume pressure against signal' : null,
     ].filter(Boolean),
   };
 
@@ -156,6 +190,10 @@ export function evaluateLayeredDecision({ signal, decision, confluence, now = Da
     liquidity,
     opposition: {
       htfConflict,
+      divergenceOpposes: Boolean(divergenceOpposes),
+      volumeOpposes: Boolean(volumeOpposes),
+      divergenceBias,
+      volumeBias,
     },
   };
 }
