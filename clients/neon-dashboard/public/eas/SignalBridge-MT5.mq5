@@ -1,5 +1,5 @@
 #property copyright "Neon Trading Stack"
-#property version   "1.12"
+#property version   "1.13"
 #property strict
 
 input string BridgeUrl          = "http://127.0.0.1:4101/api/broker/bridge/mt5";
@@ -211,9 +211,9 @@ input double MaxTotalLots              = 0.0; // 0 = no cap
 // Session filters (server time, HH:MM)
 input bool   EnableSessionFilter       = false;
 input string Session1Start             = "07:00";
-input string Session1End               = "11:30";
+input string Session1End               = "16:30"; // London close
 input string Session2Start             = "13:00";
-input string Session2End               = "17:00";
+input string Session2End               = "21:00"; // New York close
 // News blackout (manual time window, server time)
 input bool   EnableNewsBlackout        = false;
 input string NewsBlackoutStart         = "12:20"; // 20 min before major releases (e.g. NFP 8:30 ET = 12:30 UTC)
@@ -5379,10 +5379,31 @@ bool PostPositionManagement(const bool enqueue)
       double current = (typePos == POSITION_TYPE_BUY) ? tick.bid : tick.ask;
       string dir = (typePos == POSITION_TYPE_BUY) ? "BUY" : "SELL";
 
+      // Use symbol-specific digit precision (JPY=3, Gold=2, FX=5)
+      int symDigits = (int)SymbolInfoInteger(sym, SYMBOL_DIGITS);
+      if(symDigits < 0) symDigits = 5;
+
+      // Compute R-multiple so server can decide partial closes / pullback guard
+      double rMultiple = 0.0;
+      if(sl > 0.0 && entry > 0.0)
+      {
+         double slDist = MathAbs(entry - sl);
+         if(slDist > 0.0)
+         {
+            double profitDist = (typePos == POSITION_TYPE_BUY) ? (current - entry) : (entry - current);
+            rMultiple = profitDist / slDist;
+         }
+      }
+
       if(count > 0) payload += ",";
       payload += StringFormat(
-         "{\"symbol\":\"%s\",\"direction\":\"%s\",\"entryPrice\":%.5f,\"currentPrice\":%.5f,\"stopLoss\":%.5f,\"takeProfit\":%.5f,\"ticket\":%I64d,\"lots\":%.2f,\"managementState\":{\"partialsTaken\":[]}}",
-         sym, dir, entry, current, sl, tp, ticket, volume
+         "{\"symbol\":\"%s\",\"direction\":\"%s\",\"entryPrice\":%s,\"currentPrice\":%s,\"stopLoss\":%s,\"takeProfit\":%s,\"ticket\":%I64d,\"lots\":%.2f,\"rMultiple\":%.3f,\"managementState\":{\"partialsTaken\":[]}}",
+         sym, dir,
+         DoubleToString(entry,   symDigits),
+         DoubleToString(current, symDigits),
+         DoubleToString(sl,      symDigits),
+         DoubleToString(tp,      symDigits),
+         ticket, volume, rMultiple
       );
       count++;
    }
@@ -5529,7 +5550,7 @@ bool BridgeIsStale()
 
 int OnInit()
 {
-   Print("SignalBridge-MT5 v1.11 starting (market quotes + snapshot + bars)");
+   Print("SignalBridge-MT5 v1.13 starting (market quotes + snapshot + bars)");
    // Don't fail init if the bridge is down; keep the EA alive and auto-reconnect.
    if(!SendSessionConnect())
       Print("Bridge not connected yet. EA will keep trying (check URL/token/WebRequest allowlist)." );

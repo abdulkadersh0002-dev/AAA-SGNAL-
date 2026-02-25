@@ -340,6 +340,12 @@ export const executionEngine = {
   },
 
   getCurrentRMultiple(trade, currentPrice) {
+    // Fast-path: use EA-provided rMultiple when available and currentPrice is close to trade's current price
+    // (EA sends rMultiple computed at the time of the position sync heartbeat)
+    if (Number.isFinite(Number(trade?.rMultiple)) && currentPrice == null) {
+      return Number(trade.rMultiple);
+    }
+
     const riskDistance = this.getTradeRiskDistance(trade);
     const entry = Number(trade?.entryPrice);
     const current = Number(currentPrice);

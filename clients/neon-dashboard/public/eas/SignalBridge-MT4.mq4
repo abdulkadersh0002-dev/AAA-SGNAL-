@@ -3,7 +3,7 @@
 //| Features: Dynamic Stop-Loss, Risk Management, Auto-Trading        |
 //+------------------------------------------------------------------+
 #property copyright "Neon Trading Stack - Enhanced EA"
-#property version   "2.10"
+#property version   "2.20"
 #property strict
 
 // === Connection Settings ===
@@ -92,9 +92,9 @@ extern int    SmartCloseCheckIntervalSec    = 30;
 // === Session Filter (server time HH:MM) ===
 extern bool   EnableSessionFilter  = false;
 extern string Session1Start        = "07:00"; // London open
-extern string Session1End          = "11:30"; // London AM
+extern string Session1End          = "16:30"; // London close
 extern string Session2Start        = "13:00"; // New York open
-extern string Session2End          = "17:00"; // NY midday
+extern string Session2End          = "21:00"; // New York close
 
 // === News Blackout (server time HH:MM) ===
 extern bool   EnableNewsBlackout   = false;
@@ -2517,21 +2517,41 @@ bool PostPositionManagement(bool enqueue)
 
       string sym = OrderSymbol();
       double entry = OrderOpenPrice();
-      double current = (OrderType() == OP_BUY) ? Bid : Ask;
+
+      // Use symbol-specific digits (not global Digits which is chart-symbol only)
+      int symDigits = (int)MarketInfo(sym, MODE_DIGITS);
+      if(symDigits <= 0) symDigits = 5;
+
+      double bid = MarketInfo(sym, MODE_BID);
+      double ask = MarketInfo(sym, MODE_ASK);
+      double current = (OrderType() == OP_BUY) ? bid : ask;
       double sl = OrderStopLoss();
       double tp = OrderTakeProfit();
       string dir = (OrderType() == OP_BUY) ? "BUY" : "SELL";
+
+      // Compute R-multiple so server can decide partial closes / pullback guard
+      double rMultiple = 0.0;
+      if(sl > 0.0 && entry > 0.0)
+      {
+         double slDist = MathAbs(entry - sl);
+         if(slDist > 0.0)
+         {
+            double profitDist = (OrderType() == OP_BUY) ? (current - entry) : (entry - current);
+            rMultiple = profitDist / slDist;
+         }
+      }
 
       if(count > 0) payload += ",";
       payload += StringConcatenate(
          "{\"symbol\":\"", sym, "\"",
          ",\"direction\":\"", dir, "\"",
-         ",\"entryPrice\":", DoubleToString(entry, Digits),
-         ",\"currentPrice\":", DoubleToString(current, Digits),
-         ",\"stopLoss\":", DoubleToString(sl, Digits),
-         ",\"takeProfit\":", DoubleToString(tp, Digits),
+         ",\"entryPrice\":", DoubleToString(entry, symDigits),
+         ",\"currentPrice\":", DoubleToString(current, symDigits),
+         ",\"stopLoss\":", DoubleToString(sl, symDigits),
+         ",\"takeProfit\":", DoubleToString(tp, symDigits),
          ",\"ticket\":", OrderTicket(),
          ",\"lots\":", DoubleToString(OrderLots(), 2),
+         ",\"rMultiple\":", DoubleToString(rMultiple, 3),
          ",\"managementState\":{\"partialsTaken\":[]}",
          "}"
       );
