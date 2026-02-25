@@ -79,13 +79,18 @@ class EaBridgeService {
       maxEntries: 10000,
     });
 
+    const barCacheTtlMs = readEnvNumber('EA_BAR_CACHE_TTL_MS', null);
+    const resolvedBarCacheTtlMs = Number.isFinite(barCacheTtlMs)
+      ? Math.max(60_000, Math.trunc(barCacheTtlMs))
+      : 15 * 60 * 1000;
+
     this.cacheCoordinator.registerCache('bars', {
-      ttl: 300000, // 5 minutes for bar data
+      ttl: resolvedBarCacheTtlMs,
       maxEntries: 20000,
     });
 
     this.cacheCoordinator.registerCache('syntheticCandles', {
-      ttl: 300000, // 5 minutes for synthetic candles
+      ttl: resolvedBarCacheTtlMs,
       maxEntries: 20000,
     });
 
