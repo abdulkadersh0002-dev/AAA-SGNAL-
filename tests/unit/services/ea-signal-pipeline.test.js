@@ -110,4 +110,77 @@ describe('EA signal pipeline layered context', () => {
     assert.equal(result.layer20State, 'ENTER');
     assert.equal(result.strongOverride, undefined);
   });
+
+  // ── LayerOrchestrator format tests (status-based, no metrics.verdict) ──
+
+  it('accepts LayerOrchestrator format: status:PASS on L16/L17/L18 with decisionState fallback', () => {
+    // LayerOrchestrator layers use { status: 'PASS', confidence: number } format
+    // (no metrics.verdict, no metrics.isTradeValid)
+    const result = evaluateLayers18Readiness({
+      layeredAnalysis: {
+        layers: [
+          {
+            key: 'L16',
+            status: 'PASS',
+            score: 2.2,
+            confidence: 85,
+            metrics: { riskRewardRatio: 2.2 },
+          },
+          {
+            key: 'L17',
+            status: 'PASS',
+            score: 95,
+            confidence: 90,
+            metrics: { positionSize: 0.01 },
+          },
+          {
+            key: 'L18',
+            status: 'PASS',
+            score: 78,
+            confidence: 88,
+            metrics: { compositeScore: 78 },
+          },
+          {
+            key: 'L20',
+            status: 'PASS',
+            score: 85,
+            confidence: 85,
+            metrics: { executionProfile: { urgency: 'normal' } },
+          },
+        ],
+      },
+      minConfluence: 60,
+      decisionStateFallback: 'ENTER',
+      signal: {
+        direction: 'BUY',
+        confidence: 85,
+        isValid: { isValid: true, decision: { state: 'ENTER' } },
+      },
+    });
+
+    assert.equal(result.ok, true, 'LayerOrchestrator format should pass evaluateLayers18Readiness');
+    assert.equal(result.layer16Pass, true);
+    assert.equal(result.layer17Ok, true);
+    assert.equal(result.layer18Pass, true);
+    assert.equal(result.layer20State, 'ENTER');
+  });
+
+  it('blocks in LayerOrchestrator format when L18 status is FAIL', () => {
+    const result = evaluateLayers18Readiness({
+      layeredAnalysis: {
+        layers: [
+          { key: 'L16', status: 'PASS', confidence: 85, metrics: {} },
+          { key: 'L17', status: 'PASS', confidence: 90, metrics: {} },
+          { key: 'L18', status: 'FAIL', confidence: 60, metrics: { compositeScore: 45 } },
+          { key: 'L20', status: 'PASS', confidence: 80, metrics: {} },
+        ],
+      },
+      minConfluence: 60,
+      decisionStateFallback: 'ENTER',
+      signal: { isValid: { isValid: false, decision: { state: 'ENTER' } } },
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.layer18Pass, false);
+  });
 });

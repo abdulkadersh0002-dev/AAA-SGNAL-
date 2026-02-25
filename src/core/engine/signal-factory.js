@@ -133,6 +133,11 @@ class SignalFactory {
       // Attach layered analysis to signal
       signal.layeredAnalysis = layeredAnalysis;
       signal.layers = layeredAnalysis.layers;
+      // Also store at components.layeredAnalysis so evaluateLayers18Readiness can find it
+      if (typeof signal.components !== 'object' || signal.components === null) {
+        signal.components = {};
+      }
+      signal.components.layeredAnalysis = { layers: layeredAnalysis.layers };
 
       // Step 7: Check Layer 18 readiness (from orchestrator)
       const layer18Ready = layeredAnalysis.layer18Ready;

@@ -565,15 +565,18 @@ export const evaluateLayers18Readiness = ({
   const layer18 = layers.find((l) => String(l?.key || '').toUpperCase() === 'L18') || null;
   const layer20 = layers.find((l) => String(l?.key || '').toUpperCase() === 'L20') || null;
 
+  // Accept both legacy format (metrics.verdict/isTradeValid) and LayerOrchestrator format (status)
   const layer16Pass =
     Boolean(layer16?.metrics?.isTradeValid) ||
-    String(layer16?.metrics?.verdict || '').toUpperCase() === 'PASS';
+    String(layer16?.metrics?.verdict || '').toUpperCase() === 'PASS' ||
+    layer16?.status === 'PASS';
 
   const layer17Conf = Number(layer17?.confidence);
-  const layer17Ok = Number.isFinite(layer17Conf) ? layer17Conf >= min : false;
+  const layer17Ok =
+    (Number.isFinite(layer17Conf) ? layer17Conf >= min : false) || layer17?.status === 'PASS';
 
   const layer18Verdict = String(layer18?.metrics?.verdict || '').toUpperCase();
-  const layer18Pass = layer18Verdict === 'PASS';
+  const layer18Pass = layer18Verdict === 'PASS' || layer18?.status === 'PASS';
 
   const layer20State = String(
     layer20?.metrics?.decision?.state || decisionStateFallback || getDecisionState(signal) || ''
