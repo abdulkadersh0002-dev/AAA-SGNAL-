@@ -1588,19 +1588,115 @@ class LayerOrchestrator {
   }
 
   async processLayer12({ snapshot }) {
-    // News Impact - placeholder
-    const news = snapshot?.news || [];
-    const highImpact = news.filter((n) => n.impact >= 70);
+    // News Impact — time-aware, graduated scoring
+    try {
+      const news = snapshot?.news || [];
+      const now = Date.now();
+      const activeWindowMs = 60 * 60 * 1000; // 1 hour: news released within last hour is "active"
+      const immediateLookAheadMs = 30 * 60 * 1000; // 30 min ahead: imminent events
 
-    if (highImpact.length > 0) {
+      // Helper: extract impact score from various field names
+      const getImpact = (n) => Number(n?.impact ?? n?.importance ?? n?.severity ?? 0);
+      // Helper: extract event time (0 if unknown)
+      const getTime = (n) => Number(n?.time ?? n?.datetime ?? n?.timestamp ?? n?.publishedAt ?? 0);
+
+      // Active high-impact: published within the last 1 hour (market is reacting RIGHT NOW)
+      const activeHigh = news.filter((n) => {
+        const impact = getImpact(n);
+        const eventTime = getTime(n);
+        const isRecent = eventTime > 0 && eventTime >= now - activeWindowMs && eventTime <= now;
+        return impact >= 70 && isRecent;
+      });
+
+      // Imminent high-impact: scheduled in the next 30 minutes (do not trade before release)
+      const imminentHigh = news.filter((n) => {
+        const impact = getImpact(n);
+        const eventTime = getTime(n);
+        const isImminent = eventTime > now && eventTime <= now + immediateLookAheadMs;
+        return impact >= 70 && isImminent;
+      });
+
+      // All high-impact (for metrics reporting)
+      const allHigh = news.filter((n) => getImpact(n) >= 70);
+
+      // Active high-impact event: market is volatile RIGHT NOW — hard fail
+      if (activeHigh.length > 0) {
+        return {
+          status: 'FAIL',
+          score: 10,
+          confidence: 90,
+          reason: `${activeHigh.length} high-impact news event(s) active in last hour`,
+          metrics: {
+            activeHighImpact: activeHigh.length,
+            imminentHighImpact: imminentHigh.length,
+            totalHighImpact: allHigh.length,
+          },
+        };
+      }
+
+      // Imminent high-impact event: release in 30 min — hard fail (too risky to enter)
+      if (imminentHigh.length > 0) {
+        return {
+          status: 'FAIL',
+          score: 20,
+          confidence: 88,
+          reason: `${imminentHigh.length} high-impact event(s) due within 30 minutes`,
+          metrics: {
+            activeHighImpact: 0,
+            imminentHighImpact: imminentHigh.length,
+            totalHighImpact: allHigh.length,
+          },
+        };
+      }
+
+      // Medium-impact events present (impact 45-69) — reduce score but allow trade
+      const mediumImpact = news.filter((n) => {
+        const impact = getImpact(n);
+        const eventTime = getTime(n);
+        const isRecent =
+          eventTime > 0 &&
+          eventTime >= now - activeWindowMs &&
+          eventTime <= now + immediateLookAheadMs;
+        return impact >= 45 && impact < 70 && isRecent;
+      });
+
+      if (mediumImpact.length >= 2) {
+        return {
+          status: 'PASS',
+          score: 70,
+          confidence: 78,
+          reason: `${mediumImpact.length} medium-impact news events — trade with caution`,
+          metrics: {
+            activeHighImpact: 0,
+            imminentHighImpact: 0,
+            mediumImpact: mediumImpact.length,
+            totalHighImpact: allHigh.length,
+          },
+        };
+      }
+
+      // Clear — no significant news risk
       return {
-        status: 'FAIL',
-        reason: 'High-impact news detected',
-        metrics: { newsCount: highImpact.length },
+        status: 'PASS',
+        score: 100,
+        confidence: 95,
+        reason: 'News clear — no active or imminent high-impact events',
+        metrics: {
+          activeHighImpact: 0,
+          imminentHighImpact: 0,
+          mediumImpact: mediumImpact.length,
+          totalHighImpact: allHigh.length,
+        },
+      };
+    } catch (error) {
+      return {
+        status: 'PASS',
+        score: 85,
+        confidence: 70,
+        reason: `News check skipped: ${error.message}`,
+        metrics: {},
       };
     }
-
-    return { status: 'PASS', score: 100, confidence: 95, reason: 'No high-impact news' };
   }
 
   async processLayer13({ snapshot }) {
@@ -2372,6 +2468,8 @@ class LayerOrchestrator {
     const riskRewardRatio = toNumber(findLayer(16)?.metrics?.riskRewardRatio);
     const positionSize = toNumber(findLayer(17)?.metrics?.positionSize);
     const newsIsClear = findLayer(12)?.status === 'PASS';
+    // L14 session quality: 'OVERLAP' (best), 'ACTIVE' (good), 'LOW_LIQUIDITY' (caution)
+    const sessionQuality = findLayer(14)?.metrics?.sessionQuality ?? null;
 
     if (!newsIsClear) {
       return {
@@ -2379,7 +2477,14 @@ class LayerOrchestrator {
         score: 10,
         confidence: 70,
         reason: 'Execution blocked by news-risk layer',
-        metrics: { spreadPoints, volatility, confluence, riskRewardRatio, positionSize },
+        metrics: {
+          spreadPoints,
+          volatility,
+          confluence,
+          riskRewardRatio,
+          positionSize,
+          sessionQuality,
+        },
       };
     }
 
@@ -2389,7 +2494,14 @@ class LayerOrchestrator {
         score: 35,
         confidence: 72,
         reason: `Execution blocked: spread too wide (${spreadPoints} points)`,
-        metrics: { spreadPoints, volatility, confluence, riskRewardRatio, positionSize },
+        metrics: {
+          spreadPoints,
+          volatility,
+          confluence,
+          riskRewardRatio,
+          positionSize,
+          sessionQuality,
+        },
       };
     }
 
@@ -2399,7 +2511,14 @@ class LayerOrchestrator {
         score: 45,
         confidence: 75,
         reason: `Execution blocked: R:R too weak (${riskRewardRatio.toFixed(2)} < 1.60)`,
-        metrics: { spreadPoints, volatility, confluence, riskRewardRatio, positionSize },
+        metrics: {
+          spreadPoints,
+          volatility,
+          confluence,
+          riskRewardRatio,
+          positionSize,
+          sessionQuality,
+        },
       };
     }
 
@@ -2416,6 +2535,14 @@ class LayerOrchestrator {
     if (riskRewardRatio != null && riskRewardRatio >= 2.0) {
       clearanceScore += 4;
     }
+    // Session quality bonus: London/NY overlap = highest liquidity → +5; active session → +2
+    if (sessionQuality === 'OVERLAP') {
+      clearanceScore += 5;
+    } else if (sessionQuality === 'ACTIVE') {
+      clearanceScore += 2;
+    } else if (sessionQuality === 'LOW_LIQUIDITY') {
+      clearanceScore -= 5;
+    }
 
     const score = Math.max(55, Math.min(99, Math.round(clearanceScore)));
     const confidence = Math.max(76, Math.min(97, score - 2));
@@ -2431,6 +2558,7 @@ class LayerOrchestrator {
         confluence,
         riskRewardRatio,
         positionSize,
+        sessionQuality,
         clearanceBand: score >= 90 ? 'HIGH' : score >= 75 ? 'MEDIUM' : 'LOW',
       },
     };

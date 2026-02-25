@@ -653,24 +653,24 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
   // LAYERS 18-20: FINAL VALIDATION / CLEARANCE / METADATA TESTS
   // ============================================================================
 
-  describe('Layers 18-20: Smart Finalization', () => {
-    const buildPassingLayerSet = () => [
-      { layer: 1, status: 'PASS', score: 82, metrics: {} },
-      { layer: 2, status: 'PASS', score: 84, metrics: { spreadPoints: 12 } },
-      { layer: 3, status: 'PASS', score: 80, metrics: { volatility: 95 } },
-      { layer: 4, status: 'PASS', score: 86, metrics: {} },
-      { layer: 5, status: 'PASS', score: 78, metrics: {} },
-      { layer: 6, status: 'PASS', score: 82, metrics: {} },
-      { layer: 7, status: 'PASS', score: 79, metrics: {} },
-      { layer: 10, status: 'PASS', score: 75, metrics: {} },
-      { layer: 11, status: 'PASS', score: 88, metrics: { confluenceScore: 88 } },
-      { layer: 12, status: 'PASS', score: 95, metrics: {} },
-      { layer: 13, status: 'PASS', score: 90, metrics: {} },
-      { layer: 14, status: 'PASS', score: 85, metrics: {} },
-      { layer: 16, status: 'PASS', score: 84, metrics: { riskRewardRatio: 2.1 } },
-      { layer: 17, status: 'PASS', score: 86, metrics: { positionSize: 0.21 } },
-    ];
+  const buildPassingLayerSet = () => [
+    { layer: 1, status: 'PASS', score: 82, metrics: {} },
+    { layer: 2, status: 'PASS', score: 84, metrics: { spreadPoints: 12 } },
+    { layer: 3, status: 'PASS', score: 80, metrics: { volatility: 95 } },
+    { layer: 4, status: 'PASS', score: 86, metrics: {} },
+    { layer: 5, status: 'PASS', score: 78, metrics: {} },
+    { layer: 6, status: 'PASS', score: 82, metrics: {} },
+    { layer: 7, status: 'PASS', score: 79, metrics: {} },
+    { layer: 10, status: 'PASS', score: 75, metrics: {} },
+    { layer: 11, status: 'PASS', score: 88, metrics: { confluenceScore: 88 } },
+    { layer: 12, status: 'PASS', score: 95, metrics: {} },
+    { layer: 13, status: 'PASS', score: 90, metrics: {} },
+    { layer: 14, status: 'PASS', score: 85, metrics: {} },
+    { layer: 16, status: 'PASS', score: 84, metrics: { riskRewardRatio: 2.1 } },
+    { layer: 17, status: 'PASS', score: 86, metrics: { positionSize: 0.21 } },
+  ];
 
+  describe('Layers 18-20: Smart Finalization', () => {
     it('layer 18 passes with adaptive validation on good inputs', async () => {
       const previousLayers = buildPassingLayerSet();
       const result = await orchestrator.processLayer18({ previousLayers });
@@ -748,6 +748,141 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
       assert.ok(
         ['offensive', 'balanced'].includes(result.metrics.executionProfile.riskMode),
         `['offensive', 'balanced'] should contain result.metrics.executionProfile.riskMode`
+      );
+    });
+  });
+
+  // ============================================================================
+  // LAYER 12: NEWS IMPACT (smart time-aware)
+  // ============================================================================
+
+  describe('Layer 12: News Impact', () => {
+    it('passes with no news', async () => {
+      const result = await orchestrator.processLayer12({ snapshot: { news: [] } });
+      assert.equal(result.status, 'PASS');
+      assert.equal(result.score, 100);
+    });
+
+    it('fails when a high-impact news event is currently active (within last hour)', async () => {
+      const now = Date.now();
+      const snapshot = {
+        news: [{ impact: 85, timestamp: now - 5 * 60 * 1000 }], // 5 min ago
+      };
+      const result = await orchestrator.processLayer12({ snapshot });
+      assert.equal(result.status, 'FAIL');
+      assert.match(result.reason, /active/i);
+      assert.equal(result.metrics.activeHighImpact, 1);
+    });
+
+    it('fails when a high-impact news event is imminent (within 30 min)', async () => {
+      const now = Date.now();
+      const snapshot = {
+        news: [{ impact: 90, timestamp: now + 15 * 60 * 1000 }], // 15 min from now
+      };
+      const result = await orchestrator.processLayer12({ snapshot });
+      assert.equal(result.status, 'FAIL');
+      assert.match(result.reason, /within 30 minutes/i);
+      assert.equal(result.metrics.imminentHighImpact, 1);
+    });
+
+    it('passes (with caution score) for medium-impact events', async () => {
+      const now = Date.now();
+      const snapshot = {
+        news: [
+          { impact: 55, timestamp: now - 10 * 60 * 1000 },
+          { impact: 60, timestamp: now - 20 * 60 * 1000 },
+        ],
+      };
+      const result = await orchestrator.processLayer12({ snapshot });
+      assert.equal(result.status, 'PASS');
+      assert.ok(result.score < 100, 'score should be reduced for medium impact');
+    });
+
+    it('passes cleanly when news is old (> 1 hour ago)', async () => {
+      const now = Date.now();
+      const snapshot = {
+        news: [{ impact: 95, timestamp: now - 2 * 60 * 60 * 1000 }], // 2 hours ago
+      };
+      const result = await orchestrator.processLayer12({ snapshot });
+      assert.equal(result.status, 'PASS');
+      assert.equal(result.score, 100);
+    });
+
+    it('supports multiple impact field names (importance, severity)', async () => {
+      const now = Date.now();
+      // active event using 'importance' field
+      const snapshot = {
+        news: [{ importance: 80, timestamp: now - 10 * 60 * 1000 }],
+      };
+      const result = await orchestrator.processLayer12({ snapshot });
+      assert.equal(result.status, 'FAIL');
+      assert.equal(result.metrics.activeHighImpact, 1);
+    });
+  });
+
+  // ============================================================================
+  // LAYER 19: SESSION QUALITY BONUS
+  // ============================================================================
+
+  describe('Layer 19: Session Quality Bonus', () => {
+    it('gives OVERLAP session a higher clearance score than no-session-data', async () => {
+      const buildWithSession = (sessionQuality) => {
+        const layers = buildPassingLayerSet();
+        // inject sessionQuality into the L14 entry
+        const l14idx = layers.findIndex((l) => l.layer === 14);
+        if (l14idx !== -1) {
+          layers[l14idx] = {
+            ...layers[l14idx],
+            metrics: { ...(layers[l14idx].metrics || {}), sessionQuality },
+          };
+        }
+        return layers;
+      };
+
+      const overlapLayers = buildWithSession('OVERLAP');
+      const overlapL18 = await orchestrator.processLayer18({ previousLayers: overlapLayers });
+      overlapLayers.push({ layer: 18, ...overlapL18 });
+      const overlapResult = await orchestrator.processLayer19({ previousLayers: overlapLayers });
+
+      const nullLayers = buildWithSession(null);
+      const nullL18 = await orchestrator.processLayer18({ previousLayers: nullLayers });
+      nullLayers.push({ layer: 18, ...nullL18 });
+      const nullResult = await orchestrator.processLayer19({ previousLayers: nullLayers });
+
+      assert.equal(overlapResult.status, 'PASS');
+      assert.ok(
+        overlapResult.score >= nullResult.score,
+        `OVERLAP session score (${overlapResult.score}) should be >= no-session score (${nullResult.score})`
+      );
+      assert.equal(overlapResult.metrics.sessionQuality, 'OVERLAP');
+    });
+
+    it('reduces clearance score for LOW_LIQUIDITY session', async () => {
+      const buildWithSession = (sessionQuality) => {
+        const layers = buildPassingLayerSet();
+        const l14idx = layers.findIndex((l) => l.layer === 14);
+        if (l14idx !== -1) {
+          layers[l14idx] = {
+            ...layers[l14idx],
+            metrics: { ...(layers[l14idx].metrics || {}), sessionQuality },
+          };
+        }
+        return layers;
+      };
+
+      const lowLiqLayers = buildWithSession('LOW_LIQUIDITY');
+      const lowLiqL18 = await orchestrator.processLayer18({ previousLayers: lowLiqLayers });
+      lowLiqLayers.push({ layer: 18, ...lowLiqL18 });
+      const lowLiqResult = await orchestrator.processLayer19({ previousLayers: lowLiqLayers });
+
+      const activeLayers = buildWithSession('ACTIVE');
+      const activeL18 = await orchestrator.processLayer18({ previousLayers: activeLayers });
+      activeLayers.push({ layer: 18, ...activeL18 });
+      const activeResult = await orchestrator.processLayer19({ previousLayers: activeLayers });
+
+      assert.ok(
+        lowLiqResult.score <= activeResult.score,
+        `LOW_LIQUIDITY score (${lowLiqResult.score}) should be <= ACTIVE score (${activeResult.score})`
       );
     });
   });
