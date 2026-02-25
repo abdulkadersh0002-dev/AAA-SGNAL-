@@ -1813,36 +1813,85 @@ class LayerOrchestrator {
   }
 
   async processLayer16({ snapshot: _snapshot, signal }) {
-    // Risk/Reward Ratio
-    if (!signal || !signal.riskRewardRatio) {
-      return { status: 'SKIP', reason: 'R:R ratio not calculated' };
-    }
+    // Risk/Reward Ratio — compute from entry/SL/TP when pre-computed value is absent
+    try {
+      const entry = Number(signal?.entry ?? signal?.entryPrice ?? signal?.price);
+      const sl = Number(signal?.sl ?? signal?.stopLoss ?? signal?.entry?.stopLoss);
+      const tp = Number(signal?.tp ?? signal?.takeProfit ?? signal?.entry?.takeProfit);
 
-    if (signal.riskRewardRatio < 1.5) {
+      // Try to use a pre-computed R:R first, then fall back to computing it
+      let riskRewardRatio = Number.isFinite(Number(signal?.riskRewardRatio))
+        ? Number(signal.riskRewardRatio)
+        : null;
+
+      if (riskRewardRatio == null) {
+        if (Number.isFinite(entry) && Number.isFinite(sl) && Number.isFinite(tp)) {
+          const riskDist = Math.abs(entry - sl);
+          const rewardDist = Math.abs(tp - entry);
+          riskRewardRatio = riskDist > 0 ? Number((rewardDist / riskDist).toFixed(2)) : null;
+        }
+      }
+
+      if (riskRewardRatio == null || !Number.isFinite(riskRewardRatio)) {
+        return {
+          status: 'SKIP',
+          score: 50,
+          confidence: 40,
+          reason: 'R:R cannot be computed — missing entry/SL/TP',
+        };
+      }
+
+      // Attach computed value back to signal so downstream layers can read it
+      signal.riskRewardRatio = riskRewardRatio;
+
+      const MIN_RR = 1.5;
+      if (riskRewardRatio < MIN_RR) {
+        return {
+          status: 'FAIL',
+          score: Math.max(10, Math.round(riskRewardRatio * 30)),
+          confidence: 85,
+          reason: `R:R too low: ${riskRewardRatio.toFixed(2)} (min ${MIN_RR})`,
+          metrics: {
+            riskRewardRatio,
+            entry,
+            sl,
+            tp,
+            source: signal?.riskRewardRatio != null ? 'signal' : 'computed',
+          },
+        };
+      }
+
+      const score = Math.min(100, Math.round(riskRewardRatio * 38));
       return {
-        status: 'FAIL',
-        reason: `R:R ratio too low: ${signal.riskRewardRatio}`,
-        metrics: { riskRewardRatio: signal.riskRewardRatio },
+        status: 'PASS',
+        score,
+        confidence: 90,
+        reason: `R:R ${riskRewardRatio.toFixed(2)} — acceptable`,
+        metrics: {
+          riskRewardRatio,
+          entry,
+          sl,
+          tp,
+          source: signal?.riskRewardRatio != null ? 'signal' : 'computed',
+        },
       };
+    } catch (error) {
+      return { status: 'ERROR', score: 0, confidence: 0, reason: `R:R error: ${error.message}` };
     }
-
-    return {
-      status: 'PASS',
-      score: Math.min(100, signal.riskRewardRatio * 40),
-      confidence: 90,
-      metrics: { riskRewardRatio: signal.riskRewardRatio },
-      reason: 'R:R ratio acceptable',
-    };
   }
 
   async processLayer17({ snapshot, signal }) {
-    // Position Sizing - Calculate optimal position size
+    // Position Sizing — adaptive per asset class (FX, JPY, metals, crypto)
     try {
-      const entry = signal?.entry;
-      const sl = signal?.sl;
-      const pair = signal?.pair || snapshot?.symbol;
+      // Accept entry/SL from multiple signal shapes
+      const entryRaw = signal?.entry ?? signal?.entryPrice ?? signal?.price;
+      const slRaw = signal?.sl ?? signal?.stopLoss ?? signal?.entry?.stopLoss;
+      const pair = (signal?.pair || snapshot?.symbol || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
-      if (!entry || !sl || !pair) {
+      const entry = Number(entryRaw);
+      const sl = Number(slRaw);
+
+      if (!Number.isFinite(entry) || entry <= 0 || !Number.isFinite(sl) || sl <= 0 || !pair) {
         return {
           status: 'FAIL',
           score: 0,
@@ -1851,67 +1900,167 @@ class LayerOrchestrator {
         };
       }
 
-      // Get account balance (default to 10,000 if not in snapshot)
+      // ── Asset-class-aware pip/point resolution ─────────────────────────────
+      // The "pip divisor" converts a raw price difference into standard pips.
+      // The "pip value" is the $ value per pip per standard lot (100k units).
+      const isJpyPair = pair.endsWith('JPY') || pair.includes('JPY');
+      const isXauPair = pair.startsWith('XAU') || pair === 'GOLD';
+      const isXagPair = pair.startsWith('XAG') || pair === 'SILVER';
+      const isMetal = isXauPair || isXagPair;
+
+      // Crypto detection: base is a known crypto token
+      const CRYPTO_BASES = new Set([
+        'BTC',
+        'ETH',
+        'LTC',
+        'XRP',
+        'BCH',
+        'ADA',
+        'DOT',
+        'SOL',
+        'DOGE',
+        'BNB',
+        'AVAX',
+        'TRX',
+        'XLM',
+        'LINK',
+        'MATIC',
+        'NEAR',
+        'ALGO',
+        'INJ',
+        'APT',
+        'SUI',
+        'ARB',
+        'OP',
+        'TON',
+        'HBAR',
+        'PEPE',
+        'SHIB',
+      ]);
+      const isCrypto = (() => {
+        for (const base of CRYPTO_BASES) {
+          if (pair.startsWith(base)) {
+            return true;
+          }
+        }
+        return false;
+      })();
+
+      let pipDivisor; // divide raw price diff by this to get pip count
+      let pipValue; // $ value per pip per standard lot
+      let minSlPips, maxSlPips;
+
+      if (isCrypto) {
+        // Crypto: 1 pip = 1 USD of price movement; lot = 1 unit
+        // We skip standard pip sizing and just use % of balance
+        const slDist = Math.abs(entry - sl);
+        const slPct = (slDist / entry) * 100;
+        const accountBalance = snapshot?.accountBalance || 10000;
+        const riskPercent = 1.5;
+        const riskAmount = accountBalance * (riskPercent / 100);
+        // positionSize in "units" = riskAmount / slDist
+        let positionSize = slDist > 0 ? riskAmount / slDist : null;
+        const minUnits = 0.0001;
+        const maxUnits = 10;
+        positionSize =
+          positionSize != null
+            ? Math.max(minUnits, Math.min(maxUnits, Number(positionSize.toFixed(4))))
+            : minUnits;
+
+        const actualRisk = positionSize * slDist;
+        const actualRiskPercent = (actualRisk / accountBalance) * 100;
+        const status = slPct < 0.05 || slPct > 30 ? 'FAIL' : 'PASS';
+
+        return {
+          status,
+          score: status === 'PASS' ? 82 : 35,
+          confidence: 78,
+          reason:
+            status === 'PASS'
+              ? `Crypto ${pair}: ${positionSize} units, SL ${slPct.toFixed(2)}%, risk $${actualRisk.toFixed(2)}`
+              : `Crypto SL out of range: ${slPct.toFixed(2)}%`,
+          metrics: {
+            accountBalance,
+            riskPercent,
+            actualRisk: actualRisk.toFixed(2),
+            actualRiskPercent: actualRiskPercent.toFixed(2),
+            positionSize,
+            slPct: slPct.toFixed(2),
+            entry,
+            sl,
+            pair,
+            assetClass: 'CRYPTO',
+          },
+        };
+      } else if (isXauPair) {
+        // Gold: 1 pip = $0.10 price move; standard lot = 100 oz; pip value ≈ $10
+        pipDivisor = 10; // XAUUSD price e.g. 2050.50 → 1 pip = 0.10
+        pipValue = 10;
+        minSlPips = 50; // minimum 50 pips (= $5) on gold
+        maxSlPips = 5000; // 500 USD max SL on gold
+      } else if (isXagPair) {
+        // Silver: 1 pip = $0.001 move; standard lot = 5000 oz; pip value ≈ $5
+        pipDivisor = 1000;
+        pipValue = 5;
+        minSlPips = 100;
+        maxSlPips = 10000;
+      } else if (isJpyPair) {
+        // JPY pairs: 1 pip = 0.01 price move (e.g. USDJPY 150.00 → 1 pip = 0.01)
+        pipDivisor = 100;
+        pipValue = 10;
+        minSlPips = 10;
+        maxSlPips = 300;
+      } else {
+        // Standard FX (EURUSD, GBPUSD, etc.): 1 pip = 0.0001
+        pipDivisor = 10000;
+        pipValue = 10;
+        minSlPips = 10;
+        maxSlPips = 200;
+      }
+
       const accountBalance = snapshot?.accountBalance || 10000;
-
-      // Calculate stop loss distance in pips
-      const slDistance = Math.abs(entry - sl);
-      const slPips = slDistance * 10000; // Approximate for forex
-
-      // Risk percentage (1-2% of balance)
-      const riskPercent = 1.5; // 1.5% risk per trade
+      const riskPercent = 1.5;
       const riskAmount = accountBalance * (riskPercent / 100);
 
-      // Calculate position size
-      // Formula: Position Size = Risk Amount / (SL in Pips * Pip Value)
-      // For forex majors, pip value = 10 for standard lot, 1 for mini lot
+      const slDistance = Math.abs(entry - sl);
+      const slPips = slDistance * pipDivisor;
 
-      const pipValue = 10; // Standard lot pip value for majors
-      let positionSize = riskAmount / (slPips * pipValue);
-
-      // Apply constraints
+      let positionSize = slPips > 0 ? riskAmount / (slPips * pipValue) : null;
       const minLotSize = 0.01;
-      const maxLotSize = 5.0; // Safety limit
-      positionSize = Math.max(minLotSize, Math.min(maxLotSize, positionSize));
+      const maxLotSize = 5.0;
+      positionSize =
+        positionSize != null
+          ? Math.max(minLotSize, Math.min(maxLotSize, Number(positionSize.toFixed(2))))
+          : minLotSize;
 
-      // Round to 2 decimals
-      positionSize = Math.round(positionSize * 100) / 100;
-
-      // Calculate actual risk with this position size
       const actualRisk = positionSize * slPips * pipValue;
       const actualRiskPercent = (actualRisk / accountBalance) * 100;
 
-      // Validate position size is reasonable
       let status = 'PASS';
       let score = 85;
-      let confidence = 80;
-      let reason = `Position: ${positionSize} lots, Risk: $${actualRisk.toFixed(2)} (${actualRiskPercent.toFixed(2)}%)`;
+      let confidence = 82;
+      let reason = `Position: ${positionSize} lots, SL: ${slPips.toFixed(1)} pips, Risk: $${actualRisk.toFixed(2)} (${actualRiskPercent.toFixed(2)}%)`;
+      const assetClass = isMetal ? 'METAL' : isJpyPair ? 'JPY' : 'FX';
 
-      if (positionSize < minLotSize) {
-        status = 'FAIL';
-        score = 0;
-        confidence = 0;
-        reason = `Position size ${positionSize} below minimum ${minLotSize}`;
-      } else if (positionSize >= maxLotSize) {
-        status = 'FAIL';
-        score = 30;
-        confidence = 70;
-        reason = `Position size ${positionSize} at maximum limit ${maxLotSize} (risk too high)`;
+      if (positionSize <= minLotSize && slPips > 0) {
+        // Not a fail — just note it hits the floor
+        score = 75;
+        reason = `Min lot (${positionSize}) applied for ${pair}`;
       } else if (actualRiskPercent > 3) {
         status = 'FAIL';
         score = 40;
         confidence = 75;
         reason = `Risk ${actualRiskPercent.toFixed(2)}% exceeds 3% limit`;
-      } else if (slPips < 10) {
+      } else if (slPips < minSlPips) {
         status = 'FAIL';
         score = 35;
-        confidence = 70;
-        reason = `Stop loss too tight (${slPips.toFixed(1)} pips < 10 pips minimum)`;
-      } else if (slPips > 200) {
+        confidence = 72;
+        reason = `SL too tight for ${assetClass}: ${slPips.toFixed(1)} pips (min ${minSlPips})`;
+      } else if (slPips > maxSlPips) {
         status = 'FAIL';
         score = 40;
-        confidence = 70;
-        reason = `Stop loss too wide (${slPips.toFixed(1)} pips > 200 pips maximum)`;
+        confidence = 72;
+        reason = `SL too wide for ${assetClass}: ${slPips.toFixed(1)} pips (max ${maxSlPips})`;
       }
 
       return {
@@ -1929,6 +2078,9 @@ class LayerOrchestrator {
           entry,
           sl,
           pair,
+          assetClass,
+          pipDivisor,
+          pipValue,
         },
       };
     } catch (error) {

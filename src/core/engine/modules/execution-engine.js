@@ -285,6 +285,13 @@ export const executionEngine = {
 
         if (this.shouldCloseTrade(trade, currentPrice)) {
           await this.closeTrade(tradeId, currentPrice, 'target_hit');
+          continue;
+        }
+
+        // Partial profit taking at 1R and 2R milestones
+        const partial = this.evaluatePartialClose(trade, currentPrice);
+        if (partial?.shouldPartialClose) {
+          await this.applyPartialClose(tradeId, partial.fraction, partial.milestone, currentPrice);
         }
       } catch (error) {
         console.error(`Error managing trade ${tradeId}:`, error.message);
@@ -606,8 +613,10 @@ export const executionEngine = {
     // R-based price-action profit guard:
     // If price has given back more than 0.4R after reaching 1R, lock profit immediately.
     // This prevents turning a winning trade back into a loss after the market reverses.
+    // Declared here so the candle reversal guard can also read the current R-multiple.
+    let rMultiple = null;
     try {
-      const rMultiple = this.getCurrentRMultiple(trade, currentPrice);
+      rMultiple = this.getCurrentRMultiple(trade, currentPrice);
 
       // Track peak R-multiple on the trade object
       if (Number.isFinite(rMultiple)) {
@@ -637,6 +646,63 @@ export const executionEngine = {
       }
     } catch (_e) {
       // best-effort price-action guard
+    }
+
+    // Candle-pattern reversal guard: when a strong counter-direction reversal pattern
+    // forms while the trade is in profit (≥ 0.5R), tighten stop to protect gains.
+    try {
+      if (Number.isFinite(rMultiple) && rMultiple >= 0.5) {
+        const candleAnalysis =
+          typeof this.getMarketCandleAnalysisByTimeframe === 'function'
+            ? this.getMarketCandleAnalysisByTimeframe({
+                broker: trade.broker || trade.brokerRoute || null,
+                symbol: trade.pair,
+                timeframes: ['M15', 'H1'],
+                limit: 30,
+              })
+            : null;
+
+        if (candleAnalysis?.aggregate) {
+          const agg = candleAnalysis.aggregate;
+          const dir = String(trade?.direction || '').toUpperCase();
+          const bias = String(agg?.bias || agg?.signal || '').toUpperCase();
+          const reversalPatterns = Array.isArray(agg?.patterns)
+            ? agg.patterns.filter((p) => {
+                const pName = String(p?.pattern || p?.name || '').toUpperCase();
+                return (
+                  (dir === 'BUY' &&
+                    (pName.includes('BEAR') ||
+                      pName.includes('ENGULF') ||
+                      pName.includes('SHOOT') ||
+                      pName.includes('EVENING') ||
+                      pName.includes('GRAVESTONE'))) ||
+                  (dir === 'SELL' &&
+                    (pName.includes('BULL') ||
+                      pName.includes('HAMMER') ||
+                      pName.includes('MORNING') ||
+                      pName.includes('DRAGONFLY') ||
+                      pName.includes('INVERSE')))
+                );
+              })
+            : [];
+
+          const counterBias =
+            (dir === 'BUY' && (bias === 'BEARISH' || bias === 'SELL')) ||
+            (dir === 'SELL' && (bias === 'BULLISH' || bias === 'BUY'));
+
+          // Strong reversal: counter-bias + at least 1 reversal pattern
+          if (counterBias && reversalPatterns.length >= 1 && !trade.movedToBreakeven) {
+            return {
+              action: 'breakeven',
+              reason: 'candle_reversal_guard',
+              rMultiple,
+              patterns: reversalPatterns.map((p) => p?.pattern || p?.name).slice(0, 3),
+            };
+          }
+        }
+      }
+    } catch (_eCandle) {
+      // best-effort candle reversal guard
     }
 
     return null;
@@ -786,6 +852,87 @@ export const executionEngine = {
       return currentPrice <= trade.stopLoss || currentPrice >= trade.takeProfit;
     }
     return currentPrice >= trade.stopLoss || currentPrice <= trade.takeProfit;
+  },
+
+  /**
+   * Evaluate whether a partial close should be taken at key R milestones.
+   * Returns { shouldPartialClose, milestone, fraction } or null.
+   *
+   * Milestones:
+   *   R1 (1.0R): close 25% of remaining position — bank first profit safely
+   *   R2 (2.0R): close another 25% — let final 50% run with trailing stop
+   */
+  evaluatePartialClose(trade, currentPrice) {
+    const rMultiple = this.getCurrentRMultiple(trade, currentPrice);
+    if (!Number.isFinite(rMultiple) || rMultiple < 1.0) {
+      return null;
+    }
+    // Prevent double-triggering the same milestone
+    const r1Done = Boolean(trade._partialCloseR1);
+    const r2Done = Boolean(trade._partialCloseR2);
+
+    if (!r2Done && rMultiple >= 2.0) {
+      return { shouldPartialClose: true, milestone: 'R2', fraction: 0.25, rMultiple };
+    }
+    if (!r1Done && rMultiple >= 1.0) {
+      return { shouldPartialClose: true, milestone: 'R1', fraction: 0.25, rMultiple };
+    }
+    return null;
+  },
+
+  async applyPartialClose(tradeId, fraction, milestone, closePrice) {
+    const trade = this.activeTrades.get(tradeId);
+    if (!trade || !Number.isFinite(Number(trade.positionSize)) || trade.positionSize <= 0) {
+      return { success: false, reason: 'trade not found or invalid size' };
+    }
+    const closeUnits = Number((Number(trade.positionSize) * fraction).toFixed(4));
+    if (closeUnits <= 0) {
+      return { success: false, reason: 'closeUnits zero' };
+    }
+
+    // Mark milestone so we don't re-trigger it
+    if (milestone === 'R1') {
+      trade._partialCloseR1 = true;
+    }
+    if (milestone === 'R2') {
+      trade._partialCloseR2 = true;
+    }
+
+    // Reduce remaining position size
+    trade.positionSize = Number(Math.max(0.01, Number(trade.positionSize) - closeUnits).toFixed(4));
+
+    // Best-effort broker partial close
+    if (this.brokerRouter?.closePosition) {
+      try {
+        await this.brokerRouter.closePosition({
+          broker: trade.broker || trade.brokerRoute || null,
+          symbol: trade.pair,
+          tradeId: trade.id,
+          ticket: trade.brokerOrder?.id || trade.brokerOrder?.ticket || null,
+          units: closeUnits,
+          price: closePrice,
+          reason: `partial_close_${milestone.toLowerCase()}`,
+          comment: `partial:${trade.id}:${milestone}`,
+        });
+      } catch (_err) {
+        // best-effort — don't block trade continuation
+      }
+    }
+
+    this.logger?.info?.(
+      {
+        module: 'ExecutionEngine',
+        tradeId: trade.id,
+        pair: trade.pair,
+        milestone,
+        closeUnits,
+        remaining: trade.positionSize,
+        price: closePrice,
+      },
+      `Partial close at ${milestone}`
+    );
+
+    return { success: true, milestone, closeUnits, remaining: trade.positionSize };
   },
 
   async closeTrade(tradeId, closePrice, reason) {
