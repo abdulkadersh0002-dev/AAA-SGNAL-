@@ -422,27 +422,44 @@ export const attachLayeredAnalysisToSignal = ({
       ];
 
   try {
-    const { quote: effectiveQuote } = getBestEffortQuote({
-      eaBridgeService,
-      broker,
-      symbol,
-      quoteMaxAgeMs,
-      barFallback,
-      now,
-    });
+    const existingLayered =
+      rawSignal.components?.layeredAnalysis &&
+      Array.isArray(rawSignal.components.layeredAnalysis.layers) &&
+      rawSignal.components.layeredAnalysis.layers.length > 0
+        ? rawSignal.components.layeredAnalysis
+        : rawSignal.layeredAnalysis &&
+            Array.isArray(rawSignal.layeredAnalysis.layers) &&
+            rawSignal.layeredAnalysis.layers.length > 0
+          ? rawSignal.layeredAnalysis
+          : null;
 
-    const barsCoverage = getBarsCoverage({ eaBridgeService, broker, symbol, now });
+    let normalizedLayers;
+    if (existingLayered) {
+      const normalizedExisting = normalizeLayeredAnalysis(existingLayered.layers);
+      normalizedLayers = { ...existingLayered, ...normalizedExisting };
+    } else {
+      const { quote: effectiveQuote } = getBestEffortQuote({
+        eaBridgeService,
+        broker,
+        symbol,
+        quoteMaxAgeMs,
+        barFallback,
+        now,
+      });
 
-    const scenario = buildScenarioForLayeredAnalysis({
-      rawSignal,
-      symbol,
-      effectiveQuote,
-      barFallback,
-      barsCoverage,
-      now,
-    });
-    const layers = buildLayeredAnalysis({ scenario, signal: rawSignal });
-    const normalizedLayers = normalizeLayeredAnalysis(layers);
+      const barsCoverage = getBarsCoverage({ eaBridgeService, broker, symbol, now });
+
+      const scenario = buildScenarioForLayeredAnalysis({
+        rawSignal,
+        symbol,
+        effectiveQuote,
+        barFallback,
+        barsCoverage,
+        now,
+      });
+      const layers = buildLayeredAnalysis({ scenario, signal: rawSignal });
+      normalizedLayers = normalizeLayeredAnalysis(layers);
+    }
     rawSignal.components.layeredAnalysis = normalizedLayers;
 
     const layerList = Array.isArray(normalizedLayers?.layers) ? normalizedLayers.layers : [];

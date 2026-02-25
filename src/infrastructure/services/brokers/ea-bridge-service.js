@@ -128,6 +128,7 @@ class EaBridgeService {
     this.signalFactory = new SignalFactory({
       logger: this.logger,
       tradingEngine: this.tradingEngine,
+      orchestrationCoordinator: this.tradingEngine,
       eaBridgeService: this,
       snapshotManager: this.snapshotManager,
       cacheCoordinator: this.cacheCoordinator,
@@ -1967,9 +1968,30 @@ class EaBridgeService {
     }
 
     const limit = Number.isFinite(Number(options.limit)) ? Math.max(1, Number(options.limit)) : 200;
+    const defaultMaxAgeMs = (() => {
+      const tf = String(timeframe || '')
+        .trim()
+        .toUpperCase();
+      const tfMs = {
+        M1: 60 * 1000,
+        M5: 5 * 60 * 1000,
+        M15: 15 * 60 * 1000,
+        M30: 30 * 60 * 1000,
+        H1: 60 * 60 * 1000,
+        H4: 4 * 60 * 60 * 1000,
+        D1: 24 * 60 * 60 * 1000,
+        W1: 7 * 24 * 60 * 60 * 1000,
+        MN1: 30 * 24 * 60 * 60 * 1000,
+      };
+      const base = tfMs[tf];
+      if (!Number.isFinite(base)) {
+        return 10 * 60 * 1000;
+      }
+      return Math.max(10 * 60 * 1000, base * 3);
+    })();
     const maxAgeMs = Number.isFinite(Number(options.maxAgeMs))
       ? Math.max(0, Number(options.maxAgeMs))
-      : 10 * 60 * 1000;
+      : defaultMaxAgeMs;
 
     const tryKey = (sym) => {
       const key = `${broker}:${sym}:${timeframe}`;
@@ -4826,12 +4848,26 @@ class EaBridgeService {
         }
       }
 
-      const signal = await this.tradingEngine?.generateSignal(
-        symbol,
-        broker
-          ? { broker, eaOnly: true, eaBridgeService: this }
-          : { eaOnly: true, eaBridgeService: this }
-      );
+      const signalFactory = this.getSignalFactory?.();
+      let signal = null;
+      if (signalFactory?.generateSignal) {
+        const result = await signalFactory.generateSignal({
+          broker,
+          symbol,
+          analysisMode: 'ea',
+          eaOnly: true,
+          source: 'ea-bridge-snapshot',
+          requestedBy: 'ea-bridge-snapshot',
+        });
+        signal = result?.signal || null;
+      } else {
+        signal = await this.tradingEngine?.generateSignal(
+          symbol,
+          broker
+            ? { broker, eaOnly: true, eaBridgeService: this }
+            : { eaOnly: true, eaBridgeService: this }
+        );
+      }
 
       const hydratedSignal = snapshotForHydration
         ? hydrateTechnicalFromSnapshot(signal, snapshotForHydration)
@@ -4849,7 +4885,7 @@ class EaBridgeService {
                   : {},
             }
           : hydratedSignal;
-      const isTradeValid = Boolean(signal?.isValid?.isValid);
+      const isTradeValid = signal?.tradeValid ?? Boolean(signal?.isValid?.isValid);
 
       // Always attach the canonical 18-layer explainability payload for the dashboard.
       // This is best-effort and uses EA quote + M1 bars to enrich Layer 1 (raw market physics).

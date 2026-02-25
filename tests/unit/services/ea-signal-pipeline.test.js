@@ -34,6 +34,38 @@ describe('EA signal pipeline layered context', () => {
     );
   });
 
+  it('reuses existing layeredAnalysis when already provided', () => {
+    const rawSignal = {
+      pair: 'EURUSD',
+      direction: 'BUY',
+      confidence: 72,
+      finalScore: 66,
+      isValid: { isValid: true, decision: { state: 'ENTER', score: 70 } },
+      components: {
+        layeredAnalysis: {
+          layer18Ready: true,
+          layers: [
+            {
+              key: 'L1',
+              layer: 1,
+              status: 'PASS',
+              metrics: { spreadPoints: 12 },
+            },
+          ],
+        },
+      },
+    };
+
+    const result = attachLayeredAnalysisToSignal({ rawSignal, symbol: 'EURUSD', now: Date.now() });
+
+    const layer1 = result.components.layeredAnalysis.layers.find(
+      (layer) => String(layer?.key || '').toUpperCase() === 'L1'
+    );
+    assert.equal(layer1?.metrics?.spreadPoints, 12);
+    assert.equal(result.components.layeredAnalysis.layer18Ready, true);
+    assert.equal(result.components.layeredAnalysis.layers.length, 20);
+  });
+
   it('blocks execution readiness when layers are missing (no overrides)', () => {
     const result = evaluateLayers18Readiness({
       layeredAnalysis: { layers: [] },
