@@ -45,6 +45,31 @@ const formatDirection = (direction) => {
 const safeObj = (value) => (value && typeof value === 'object' ? value : null);
 const safeArray = (value) => (Array.isArray(value) ? value : []);
 
+const resolveLayerNumber = (value) => {
+  const numeric = Number(value);
+  if (Number.isFinite(numeric)) {
+    return numeric;
+  }
+  const match = String(value || '').match(/L(\d+)/i);
+  if (match) {
+    return Number(match[1]);
+  }
+  return null;
+};
+
+const resolveLayerDirection = (layer, fallbackDirection) => {
+  const candidate =
+    layer?.direction ??
+    layer?.metrics?.direction ??
+    layer?.metrics?.bias ??
+    layer?.metrics?.trend ??
+    layer?.metrics?.trendDirection ??
+    layer?.metrics?.trendBias ??
+    layer?.metrics?.signalDirection ??
+    fallbackDirection;
+  return normalizeDirection(candidate);
+};
+
 const confluenceIndex = (confluence) => {
   const layers = safeArray(confluence?.layers);
   const byId = new Map();
@@ -255,6 +280,7 @@ const buildLayer = ({
   evidence,
   warnings,
   availability,
+  status,
 }) => {
   const { dir, arrow } = formatDirection(direction);
   return {
@@ -266,6 +292,7 @@ const buildLayer = ({
     arrow,
     confidence: pct(confidence),
     score: toFiniteNumber(score),
+    status: status || null,
     availability: availability || 'best_effort',
     summaryEn: summaryEn || null,
     summaryAr: summaryAr || null,
@@ -275,9 +302,116 @@ const buildLayer = ({
   };
 };
 
+const formatPrecomputedLayers = ({ layers, fallbackDirection } = {}) => {
+  const list = safeArray(layers);
+  if (!list.length) {
+    return null;
+  }
+
+  const formatted = [];
+  const extras = [];
+
+  for (const layer of list) {
+    if (!layer || typeof layer !== 'object') {
+      continue;
+    }
+    const number = resolveLayerNumber(layer.layer ?? layer.id ?? layer.key);
+    const nameEn = layer.nameEn || layer.name || layer.title || (number ? `Layer ${number}` : '—');
+    const nameAr = layer.nameAr || null;
+    const direction = resolveLayerDirection(layer, fallbackDirection);
+    const score = toFiniteNumber(layer.score ?? layer.metrics?.score);
+    const confidence = toFiniteNumber(layer.confidence ?? layer.metrics?.confidence);
+    const summaryEn = layer.summaryEn || layer.reason || layer.description || null;
+    const summaryAr = layer.summaryAr || null;
+    const metrics = safeObj(layer.metrics) || {};
+    const evidence = safeArray(layer.evidence);
+    const warnings = safeArray(layer.warnings);
+    const availability = layer.availability || 'precomputed';
+    const status = layer.status || layer.state || null;
+
+    if (number != null) {
+      formatted.push(
+        buildLayer({
+          number,
+          nameEn,
+          nameAr,
+          direction,
+          confidence,
+          score,
+          summaryEn,
+          summaryAr,
+          metrics,
+          evidence,
+          warnings,
+          availability,
+          status,
+        })
+      );
+    } else {
+      extras.push({
+        ...layer,
+        nameEn,
+        nameAr,
+        summaryEn,
+        summaryAr,
+      });
+    }
+  }
+
+  const byKey = new Map(formatted.map((layer) => [layer.key, layer]));
+  const normalized = [];
+  for (let i = 1; i <= 20; i += 1) {
+    const key = `L${i}`;
+    if (byKey.has(key)) {
+      normalized.push(byKey.get(key));
+      continue;
+    }
+    normalized.push(
+      buildLayer({
+        number: i,
+        nameEn: `Layer ${i}`,
+        nameAr: null,
+        direction: 'NEUTRAL',
+        confidence: null,
+        score: null,
+        summaryEn: 'Awaiting layer data.',
+        summaryAr: null,
+        metrics: { pending: true },
+        evidence: [],
+        warnings: [],
+        availability: 'missing',
+        status: 'PENDING',
+      })
+    );
+  }
+
+  for (const extra of extras) {
+    normalized.push(extra);
+  }
+
+  return normalized;
+};
+
 export function buildLayeredAnalysis({ scenario, signal } = {}) {
   const scn = safeObj(scenario) || {};
   const sig = safeObj(signal) || {};
+
+  const precomputedLayers =
+    safeArray(sig?.components?.layeredAnalysis?.layers).length > 0
+      ? sig.components.layeredAnalysis.layers
+      : safeArray(sig?.layeredAnalysis?.layers).length > 0
+        ? sig.layeredAnalysis.layers
+        : safeArray(sig?.layers).length > 0
+          ? sig.layers
+          : null;
+  const fallbackDirection = normalizeDirection(sig?.direction);
+  const formattedPrecomputed = formatPrecomputedLayers({
+    layers: precomputedLayers,
+    fallbackDirection,
+  });
+  if (formattedPrecomputed) {
+    return formattedPrecomputed;
+  }
 
   const pair = scn.pair || sig.pair || null;
   const market = safeObj(scn.market) || {};
