@@ -139,6 +139,10 @@ const resolveSmartExecution = ({ signal, snapshot, pair, direction }) => {
     toFinite(quote.mid) ??
     (bid != null && ask != null ? Number(((bid + ask) / 2).toFixed(selectPricePrecision(pair))) : null);
 
+  const directionKey = toUpper(direction);
+  const isBuy = directionKey === 'BUY';
+  const isSell = directionKey === 'SELL';
+
   const entryRaw = toFinite(signal?.entryPrice ?? signal?.entry?.price);
   const stopRaw = toFinite(signal?.stopLoss ?? signal?.entry?.stopLoss);
   const takeRaw = toFinite(signal?.takeProfit ?? signal?.entry?.takeProfit);
@@ -150,11 +154,29 @@ const resolveSmartExecution = ({ signal, snapshot, pair, direction }) => {
       ? Math.abs(ask - bid) / selectPipSize(pair)
       : null);
 
-  let smartEntry = entryRaw;
+  const entryValid = entryRaw != null && entryRaw > 0;
+  const stopValid =
+    entryValid && stopRaw != null
+      ? isBuy
+        ? stopRaw < entryRaw
+        : isSell
+          ? stopRaw > entryRaw
+          : false
+      : false;
+  const takeValid =
+    entryValid && takeRaw != null
+      ? isBuy
+        ? takeRaw > entryRaw
+        : isSell
+          ? takeRaw < entryRaw
+          : false
+      : false;
+
+  let smartEntry = entryValid ? entryRaw : null;
   if (smartEntry == null) {
-    if (direction === 'BUY' && ask != null) {
+    if (directionKey === 'BUY' && ask != null) {
       smartEntry = ask;
-    } else if (direction === 'SELL' && bid != null) {
+    } else if (directionKey === 'SELL' && bid != null) {
       smartEntry = bid;
     } else {
       smartEntry = mid;
@@ -164,16 +186,21 @@ const resolveSmartExecution = ({ signal, snapshot, pair, direction }) => {
   const pipSize = selectPipSize(pair);
   const minStopPips = Math.max(8, Number.isFinite(spreadPips) ? spreadPips * 1.8 : 0);
   const atrPips = Number.isFinite(atr) ? Math.max(0, atr / pipSize) : null;
-  const stopDistancePips =
+  const baseStopDistancePips =
     atrPips != null ? Math.max(minStopPips, atrPips * 1.1) : minStopPips;
-  const stopDistancePrice = stopDistancePips * pipSize;
+  const slMultiplierRaw =
+    toFinite(execution?.stopLossMultiplier) ??
+    toFinite(signal?.execution?.stopLossMultiplier) ??
+    toFinite(signal?.riskManagement?.stopLossMultiplier);
+  const slMultiplier = slMultiplierRaw != null && slMultiplierRaw > 0 ? slMultiplierRaw : 1;
+  const stopDistancePrice = baseStopDistancePips * slMultiplier * pipSize;
 
-  let smartStop = stopRaw;
+  let smartStop = stopValid ? stopRaw : null;
   if (smartStop == null && smartEntry != null) {
     smartStop =
-      direction === 'BUY'
+      directionKey === 'BUY'
         ? Number((smartEntry - stopDistancePrice).toFixed(selectPricePrecision(pair)))
-        : direction === 'SELL'
+        : directionKey === 'SELL'
           ? Number((smartEntry + stopDistancePrice).toFixed(selectPricePrecision(pair)))
           : null;
   }
@@ -192,27 +219,40 @@ const resolveSmartExecution = ({ signal, snapshot, pair, direction }) => {
             ? 1.8
             : 2.0;
 
-  let smartTake = takeRaw;
+  let smartTake = takeValid ? takeRaw : null;
   if (smartTake == null && smartEntry != null && riskDistance != null && riskDistance > 0) {
     smartTake =
-      direction === 'BUY'
+      directionKey === 'BUY'
         ? Number((smartEntry + riskDistance * rrTarget).toFixed(selectPricePrecision(pair)))
-        : direction === 'SELL'
+        : directionKey === 'SELL'
           ? Number((smartEntry - riskDistance * rrTarget).toFixed(selectPricePrecision(pair)))
           : null;
   }
 
-  const directionValid = direction === 'BUY' || direction === 'SELL';
+  const entrySelected = smartEntry;
+  const stopSelected = smartStop;
+  const takeSelected = smartTake;
+
+  const directionValid = directionKey === 'BUY' || directionKey === 'SELL';
   const sideValid =
-    direction === 'BUY'
-      ? smartStop != null && smartTake != null && smartStop < smartEntry && smartTake > smartEntry
-      : direction === 'SELL'
-        ? smartStop != null && smartTake != null && smartStop > smartEntry && smartTake < smartEntry
+    directionKey === 'BUY'
+      ? stopSelected != null &&
+        takeSelected != null &&
+        entrySelected != null &&
+        stopSelected < entrySelected &&
+        takeSelected > entrySelected
+      : directionKey === 'SELL'
+        ? stopSelected != null &&
+          takeSelected != null &&
+          entrySelected != null &&
+          stopSelected > entrySelected &&
+          takeSelected < entrySelected
         : false;
 
   const rrEffective =
-    smartEntry != null && smartStop != null && smartTake != null
-      ? Math.abs(smartTake - smartEntry) / Math.max(Math.abs(smartEntry - smartStop), 1e-9)
+    entrySelected != null && stopSelected != null && takeSelected != null
+      ? Math.abs(takeSelected - entrySelected) /
+        Math.max(Math.abs(entrySelected - stopSelected), 1e-9)
       : null;
 
   const lotRaw =
@@ -229,10 +269,16 @@ const resolveSmartExecution = ({ signal, snapshot, pair, direction }) => {
       ? String(execution.blockedReasons[0].code)
       : null) ||
     null;
+  const decisionState = toUpper(gates?.decisionState || signal?.isValid?.decision?.state || '');
+  const enterState = decisionState ? decisionState === 'ENTER' : signal?.isValid?.isValid === true;
 
   const mt5Ready =
     backendApproved ||
-    (Boolean(pair) && directionValid && smartEntry != null && sideValid && signal?.isValid?.isValid === true);
+    (Boolean(pair) &&
+      directionValid &&
+      sideValid &&
+      enterState &&
+      signal?.isValid?.isValid === true);
 
   return {
     profile: {
@@ -241,9 +287,9 @@ const resolveSmartExecution = ({ signal, snapshot, pair, direction }) => {
       protectionBias: protectionBias || 'STANDARD',
       confidenceBand: toUpper(profile?.confidenceBand || 'MEDIUM'),
     },
-    entry: smartEntry,
-    stopLoss: smartStop,
-    takeProfit: smartTake,
+    entry: entrySelected,
+    stopLoss: stopSelected,
+    takeProfit: takeSelected,
     lot,
     rr: rrEffective,
     spreadPips,
@@ -413,6 +459,10 @@ function SignalDashboardTable({
       const snapshotFeatures = snapshot?.features || {};
       const snapshotTs = snapshot?.ts ?? snapshot?.timestamp ?? snapshot?.updatedAt ?? null;
       const smartExecution = resolveSmartExecution({ signal, snapshot, pair, direction });
+      const entryDisplay = smartExecution.entry ?? entry;
+      const stopDisplay = smartExecution.stopLoss ?? stopLoss;
+      const takeDisplay = smartExecution.takeProfit ?? takeProfit;
+      const rrDisplay = smartExecution.rr ?? riskReward;
       const executionDebug = resolveExecutionDebugChain(signal);
 
       const signalTechnical = signal.components?.technical || {};
@@ -478,10 +528,10 @@ function SignalDashboardTable({
         ageLabel,
         direction,
         dirClass,
-        entryLabel: formatNumber(entry, precision),
-        takeProfitLabel: formatNumber(takeProfit, precision),
-        stopLossLabel: formatNumber(stopLoss, precision),
-        riskRewardLabel: formatRiskReward(riskReward),
+        entryLabel: formatNumber(entryDisplay, precision),
+        takeProfitLabel: formatNumber(takeDisplay, precision),
+        stopLossLabel: formatNumber(stopDisplay, precision),
+        riskRewardLabel: formatRiskReward(rrDisplay),
         atrLabel:
           atr !== undefined && atr !== null && !Number.isNaN(Number(atr))
             ? formatNumber(atr, 4)

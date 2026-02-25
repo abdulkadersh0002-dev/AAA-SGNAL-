@@ -52,7 +52,9 @@ import {
  * @returns {number} Extracted number or fallback
  */
 export function extractNumber(obj, key, fallback = null) {
-  if (!obj || typeof obj !== 'object') return fallback;
+  if (!obj || typeof obj !== 'object') {
+    return fallback;
+  }
   return toNumber(obj[key], fallback);
 }
 
@@ -64,7 +66,9 @@ export function extractNumber(obj, key, fallback = null) {
  * @returns {number} Extracted positive number or fallback
  */
 export function extractPositiveNumber(obj, key, fallback = null) {
-  if (!obj || typeof obj !== 'object') return fallback;
+  if (!obj || typeof obj !== 'object') {
+    return fallback;
+  }
   return toPositiveNumber(obj[key], fallback);
 }
 
@@ -77,7 +81,9 @@ export function extractPositiveNumber(obj, key, fallback = null) {
  * @returns {number} Extracted price or fallback
  */
 export function extractPrice(obj, key, decimals = 5, fallback = null) {
-  if (!obj || typeof obj !== 'object') return fallback;
+  if (!obj || typeof obj !== 'object') {
+    return fallback;
+  }
   return toPrice(obj[key], decimals, fallback);
 }
 
@@ -89,7 +95,9 @@ export function extractPrice(obj, key, decimals = 5, fallback = null) {
  * @returns {number} Extracted percentage or fallback
  */
 export function extractPercent(obj, key, fallback = null) {
-  if (!obj || typeof obj !== 'object') return fallback;
+  if (!obj || typeof obj !== 'object') {
+    return fallback;
+  }
   return toPercent(obj[key], fallback);
 }
 
@@ -104,10 +112,12 @@ export function calculateSpreadPips(bid, ask, pair) {
   if (!isValidNumber(bid) || !isValidNumber(ask) || !pair) {
     return null;
   }
-  
+
   const spread = ask - bid;
-  if (spread <= 0) return null;
-  
+  if (spread <= 0) {
+    return null;
+  }
+
   return priceToPips(spread, pair);
 }
 
@@ -180,7 +190,9 @@ export function calculateRiskRewardRatio(entry, stopLoss, takeProfit, direction)
     return null;
   }
 
-  if (risk <= 0 || reward <= 0) return null;
+  if (risk <= 0 || reward <= 0) {
+    return null;
+  }
 
   return safeDivide(reward, risk, null);
 }
@@ -200,9 +212,7 @@ export function validateRiskReward(rrRatio, minRR = 1.5) {
   }
 
   const valid = rrRatio >= minRR;
-  const reason = valid
-    ? null
-    : `R:R ratio ${rrRatio.toFixed(2)} below minimum ${minRR.toFixed(2)}`;
+  const reason = valid ? null : `R:R ratio ${rrRatio.toFixed(2)} below minimum ${minRR.toFixed(2)}`;
 
   return { valid, reason };
 }
@@ -221,7 +231,7 @@ export function checkNewsAvoidance(newsEvents, pair, minutesBefore = 30, minutes
   }
 
   const result = shouldAvoidDueToNews(newsEvents, pair, minutesBefore, minutesAfter);
-  
+
   return {
     shouldAvoid: result.shouldAvoid,
     reason: result.reason || null,
@@ -235,12 +245,18 @@ export function checkNewsAvoidance(newsEvents, pair, minutesBefore = 30, minutes
  * @returns {string|null} 'buy' or 'sell' or null
  */
 export function normalizeDirection(direction) {
-  if (!direction || typeof direction !== 'string') return null;
-  
+  if (!direction || typeof direction !== 'string') {
+    return null;
+  }
+
   const normalized = direction.toLowerCase().trim();
-  if (normalized === 'buy' || normalized === 'long') return 'buy';
-  if (normalized === 'sell' || normalized === 'short') return 'sell';
-  
+  if (normalized === 'buy' || normalized === 'long') {
+    return 'buy';
+  }
+  if (normalized === 'sell' || normalized === 'short') {
+    return 'sell';
+  }
+
   return null;
 }
 
@@ -258,13 +274,7 @@ export function validateSignalStructure(signal) {
     };
   }
 
-  const requiredFields = [
-    'symbol',
-    'direction',
-    'entryPrice',
-    'stopLoss',
-    'takeProfit',
-  ];
+  const requiredFields = ['symbol', 'direction', 'entryPrice', 'stopLoss', 'takeProfit'];
 
   const missingFields = requiredFields.filter((field) => {
     const value = signal[field];
@@ -278,9 +288,7 @@ export function validateSignalStructure(signal) {
   });
 
   const valid = missingFields.length === 0;
-  const reason = valid
-    ? null
-    : `Missing or invalid required fields: ${missingFields.join(', ')}`;
+  const reason = valid ? null : `Missing or invalid required fields: ${missingFields.join(', ')}`;
 
   return { valid, missingFields, reason };
 }
@@ -295,13 +303,7 @@ export function validateSignalStructure(signal) {
  * @param {string} params.pair - Currency pair
  * @returns {number|null} Position size in lots or null if invalid
  */
-export function calculatePositionSize({
-  accountBalance,
-  riskPercent,
-  entry,
-  stopLoss,
-  pair,
-}) {
+export function calculatePositionSize({ accountBalance, riskPercent, entry, stopLoss, pair }) {
   if (
     !isValidNumber(accountBalance) ||
     !isValidNumber(riskPercent) ||
@@ -317,7 +319,9 @@ export function calculatePositionSize({
 
   // Calculate stop distance in price
   const stopDistance = Math.abs(entry - stopLoss);
-  if (stopDistance <= 0) return null;
+  if (stopDistance <= 0) {
+    return null;
+  }
 
   // Get standard lot size for pair
   const lotSize = getStandardLotSize(pair);
@@ -327,9 +331,15 @@ export function calculatePositionSize({
   const positionSize = safeDivide(riskAmount, stopDistance * lotSize, null);
 
   // Ensure minimum and maximum lot sizes
-  if (!positionSize || positionSize <= 0) return null;
-  if (positionSize < 0.01) return 0.01; // Minimum lot size
-  if (positionSize > 100) return 100; // Maximum lot size for safety
+  if (!positionSize || positionSize <= 0) {
+    return null;
+  }
+  if (positionSize < 0.01) {
+    return 0.01;
+  } // Minimum lot size
+  if (positionSize > 100) {
+    return 100;
+  } // Maximum lot size for safety
 
   // Round to 2 decimal places
   return Math.round(positionSize * 100) / 100;

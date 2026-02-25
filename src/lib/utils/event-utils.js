@@ -1,9 +1,9 @@
 /**
  * Event Utilities
- * 
+ *
  * Provides utilities for parsing and handling market events,
  * economic calendar data, and news impact analysis.
- * 
+ *
  * Consolidates duplicate event parsing logic found throughout the codebase.
  */
 
@@ -12,12 +12,14 @@ import { toNumber } from './number-utils.js';
 /**
  * Parse event time to milliseconds
  * Handles various input formats consistently
- * 
+ *
  * @param {any} eventTime - Event time (string, number, Date)
  * @returns {number|null} Time in milliseconds or null
  */
 export function parseEventTimeMs(eventTime) {
-  if (!eventTime) return null;
+  if (!eventTime) {
+    return null;
+  }
 
   // Already a number (timestamp)
   if (typeof eventTime === 'number') {
@@ -46,7 +48,9 @@ export function parseEventTimeMs(eventTime) {
  */
 export function minutesUntilEvent(eventTime, currentTime = Date.now()) {
   const eventMs = parseEventTimeMs(eventTime);
-  if (eventMs === null) return null;
+  if (eventMs === null) {
+    return null;
+  }
 
   const diffMs = eventMs - currentTime;
   return diffMs / (1000 * 60); // Convert to minutes
@@ -61,8 +65,10 @@ export function minutesUntilEvent(eventTime, currentTime = Date.now()) {
  */
 export function isUpcomingEvent(eventTime, withinMinutes = 30, currentTime = Date.now()) {
   const minutes = minutesUntilEvent(eventTime, currentTime);
-  if (minutes === null) return false;
-  
+  if (minutes === null) {
+    return false;
+  }
+
   return minutes >= 0 && minutes <= withinMinutes;
 }
 
@@ -75,8 +81,10 @@ export function isUpcomingEvent(eventTime, withinMinutes = 30, currentTime = Dat
  */
 export function isRecentEvent(eventTime, withinMinutes = 30, currentTime = Date.now()) {
   const minutes = minutesUntilEvent(eventTime, currentTime);
-  if (minutes === null) return false;
-  
+  if (minutes === null) {
+    return false;
+  }
+
   return minutes < 0 && minutes >= -withinMinutes;
 }
 
@@ -86,7 +94,9 @@ export function isRecentEvent(eventTime, withinMinutes = 30, currentTime = Date.
  * @returns {string} Normalized impact level (high, medium, low, none)
  */
 export function parseImpactLevel(impact) {
-  if (!impact) return 'none';
+  if (!impact) {
+    return 'none';
+  }
 
   const str = String(impact).toLowerCase().trim();
 
@@ -98,7 +108,7 @@ export function parseImpactLevel(impact) {
   };
 
   for (const [level, variations] of Object.entries(impactMap)) {
-    if (variations.some(v => str.includes(v))) {
+    if (variations.some((v) => str.includes(v))) {
       return level;
     }
   }
@@ -122,7 +132,9 @@ export function isHighImpact(impact) {
  * @returns {Array} Filtered events
  */
 export function filterByImpact(events, minImpact = 'high') {
-  if (!Array.isArray(events)) return [];
+  if (!Array.isArray(events)) {
+    return [];
+  }
 
   const impactLevels = {
     high: 3,
@@ -133,7 +145,7 @@ export function filterByImpact(events, minImpact = 'high') {
 
   const minLevel = impactLevels[minImpact] || 0;
 
-  return events.filter(event => {
+  return events.filter((event) => {
     const level = parseImpactLevel(event.impact);
     return impactLevels[level] >= minLevel;
   });
@@ -147,18 +159,24 @@ export function filterByImpact(events, minImpact = 'high') {
  * @returns {Array} Filtered events
  */
 export function findUpcomingHighImpactEvents(events, currency, withinMinutes = 60) {
-  if (!Array.isArray(events)) return [];
+  if (!Array.isArray(events)) {
+    return [];
+  }
 
   const currencyUpper = currency?.toUpperCase();
   const now = Date.now();
 
-  return events.filter(event => {
+  return events.filter((event) => {
     // Check impact level
-    if (!isHighImpact(event.impact)) return false;
+    if (!isHighImpact(event.impact)) {
+      return false;
+    }
 
     // Check currency match
     const eventCurrency = event.currency?.toUpperCase();
-    if (eventCurrency !== currencyUpper) return false;
+    if (eventCurrency !== currencyUpper) {
+      return false;
+    }
 
     // Check time window
     return isUpcomingEvent(event.time || event.eventTime, withinMinutes, now);
@@ -185,13 +203,19 @@ export function shouldAvoidDueToNews(events, pair, beforeMinutes = 30, afterMinu
   const relevantEvents = [];
 
   for (const event of events) {
-    if (!isHighImpact(event.impact)) continue;
+    if (!isHighImpact(event.impact)) {
+      continue;
+    }
 
     const eventCurrency = event.currency?.toUpperCase();
-    if (!currencies.includes(eventCurrency)) continue;
+    if (!currencies.includes(eventCurrency)) {
+      continue;
+    }
 
     const minutes = minutesUntilEvent(event.time || event.eventTime, now);
-    if (minutes === null) continue;
+    if (minutes === null) {
+      continue;
+    }
 
     // Check if event is within avoidance window
     if (minutes >= -afterMinutes && minutes <= beforeMinutes) {
@@ -200,7 +224,7 @@ export function shouldAvoidDueToNews(events, pair, beforeMinutes = 30, afterMinu
   }
 
   if (relevantEvents.length > 0) {
-    const eventNames = relevantEvents.map(e => e.title || e.name || 'Unknown').join(', ');
+    const eventNames = relevantEvents.map((e) => e.title || e.name || 'Unknown').join(', ');
     return {
       shouldAvoid: true,
       reason: `High-impact news upcoming: ${eventNames}`,
@@ -218,7 +242,9 @@ export function shouldAvoidDueToNews(events, pair, beforeMinutes = 30, afterMinu
  * @returns {Array} Sorted events
  */
 export function sortEventsByTime(events, ascending = true) {
-  if (!Array.isArray(events)) return [];
+  if (!Array.isArray(events)) {
+    return [];
+  }
 
   return [...events].sort((a, b) => {
     const timeA = parseEventTimeMs(a.time || a.eventTime) || 0;

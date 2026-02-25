@@ -13,10 +13,47 @@ const deriveEntryPrice = (trade) => {
   if (!trade) {
     return null;
   }
-  return trade.entryPrice ?? trade.entry?.price ?? trade.signal?.entry?.price ?? null;
+  return (
+    trade.entryPrice ??
+    trade.entry?.price ??
+    trade.signal?.entryPrice ??
+    trade.signal?.entry?.price ??
+    trade.plan?.entryPrice ??
+    null
+  );
 };
 
 const derivePositionSize = (trade) => trade.positionSize ?? trade.size ?? trade.volume ?? null;
+
+const deriveStopLoss = (trade) => {
+  if (!trade) {
+    return null;
+  }
+  return (
+    trade.stopLoss ??
+    trade.sl ??
+    trade.entry?.stopLoss ??
+    trade.signal?.stopLoss ??
+    trade.signal?.entry?.stopLoss ??
+    trade.plan?.stopLoss ??
+    null
+  );
+};
+
+const deriveTakeProfit = (trade) => {
+  if (!trade) {
+    return null;
+  }
+  return (
+    trade.takeProfit ??
+    trade.tp ??
+    trade.entry?.takeProfit ??
+    trade.signal?.takeProfit ??
+    trade.signal?.entry?.takeProfit ??
+    trade.plan?.takeProfit ??
+    null
+  );
+};
 
 const deriveUnrealized = (trade) => {
   if (!trade) {
@@ -34,8 +71,24 @@ const deriveFinalPnL = (trade) => {
   return value ?? null;
 };
 
+const deriveExitPrice = (trade) => {
+  if (!trade) {
+    return null;
+  }
+  return (
+    trade.exit?.price ??
+    trade.closePrice ??
+    trade.exitPrice ??
+    trade.signal?.exitPrice ??
+    trade.close?.price ??
+    null
+  );
+};
+
 const renderActiveRow = (trade) => {
   const entry = deriveEntryPrice(trade);
+  const stopLoss = deriveStopLoss(trade);
+  const takeProfit = deriveTakeProfit(trade);
   const size = derivePositionSize(trade);
   const pnl = deriveUnrealized(trade);
   const openedAt = trade.openedAt || trade.openTime || trade.createdAt;
@@ -45,6 +98,8 @@ const renderActiveRow = (trade) => {
       <td>{trade.pair || 'N/A'}</td>
       <td><StatusPill state={trade.direction || trade.side} label={formatDirection(trade.direction || trade.side)} /></td>
       <td>{formatNumber(entry, 5)}</td>
+      <td>{formatNumber(stopLoss, 5)}</td>
+      <td>{formatNumber(takeProfit, 5)}</td>
       <td>{formatNumber(trade.currentPrice ?? trade.price ?? trade.marketPrice, 5)}</td>
       <td className={pnl > 0 ? 'cell--positive' : pnl < 0 ? 'cell--negative' : ''}>{formatSignedPercent(pnl)}</td>
       <td>{formatNumber(size, 2)}</td>
@@ -56,13 +111,24 @@ const renderActiveRow = (trade) => {
 const renderHistoryRow = (trade) => {
   const pnl = deriveFinalPnL(trade);
   const closedAt = trade.closedAt || trade.closeTime || trade.completedAt;
+  const entry = deriveEntryPrice(trade);
+  const fallbackExit = deriveExitPrice(trade);
+  const stopLoss = deriveStopLoss(trade);
+  const takeProfit = deriveTakeProfit(trade);
+  const exit =
+    fallbackExit ??
+    (pnl != null
+      ? pnl >= 0
+        ? takeProfit ?? stopLoss
+        : stopLoss ?? takeProfit
+      : takeProfit ?? stopLoss);
 
   return (
     <tr key={trade.id || `${trade.pair}-${closedAt || Math.random()}`}>
       <td>{trade.pair || 'N/A'}</td>
       <td><StatusPill state={pnl > 0 ? 'success' : pnl < 0 ? 'error' : 'neutral'} label={formatDirection(trade.direction || trade.side)} /></td>
-      <td>{formatNumber(trade.entry?.price ?? trade.entryPrice, 5)}</td>
-      <td>{formatNumber(trade.exit?.price ?? trade.closePrice, 5)}</td>
+      <td>{formatNumber(entry, 5)}</td>
+      <td>{formatNumber(exit, 5)}</td>
       <td className={pnl > 0 ? 'cell--positive' : pnl < 0 ? 'cell--negative' : ''}>{formatSignedPercent(pnl)}</td>
       <td>{formatDateTime(closedAt)}</td>
     </tr>
@@ -109,6 +175,8 @@ const TradesTable = ({ activeTrades = [], tradeHistory = [] }) => {
                 <th>Pair</th>
                 <th>Side</th>
                 <th>Entry</th>
+                <th>SL</th>
+                <th>TP</th>
                 <th>Last</th>
                 <th>PnL</th>
                 <th>Size</th>
@@ -118,7 +186,7 @@ const TradesTable = ({ activeTrades = [], tradeHistory = [] }) => {
             <tbody>
               {activeTrades.length === 0 && (
                 <tr>
-                  <td colSpan="7" className="cell--empty">No open trades</td>
+                  <td colSpan="9" className="cell--empty">No open trades</td>
                 </tr>
               )}
               {activeTrades.map(renderActiveRow)}

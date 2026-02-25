@@ -51,7 +51,8 @@ class SignalFactory {
         };
       }
 
-      const { broker, symbol, timeframe, source } = validatedRequest;
+      const { broker, symbol, timeframe, source, analysisMode, eaOnly, requestedBy } =
+        validatedRequest;
 
       // Step 2: Get or create snapshot
       let snapshot = this.snapshotManager ? this.snapshotManager.getSnapshot(broker, symbol) : null;
@@ -82,12 +83,23 @@ class SignalFactory {
       }
 
       // Step 4: Generate signal through orchestration coordinator
-      const orchestrationResult = await this.orchestrationCoordinator.generateSignal({
+      if (!this.orchestrationCoordinator?.generateSignal) {
+        this.metrics.rejected += 1;
+        return {
+          success: false,
+          error: 'Orchestration coordinator unavailable',
+          reason: 'ORCHESTRATION_UNAVAILABLE',
+        };
+      }
+
+      const orchestrationResult = await this.orchestrationCoordinator.generateSignal(symbol, {
         broker,
-        symbol,
         timeframe,
         source,
-        requestedBy: request.requestedBy || 'signal-factory',
+        analysisMode,
+        eaOnly,
+        eaBridgeService: this.eaBridgeService,
+        requestedBy: requestedBy || 'signal-factory',
       });
 
       if (!orchestrationResult || !orchestrationResult.success) {
@@ -133,6 +145,9 @@ class SignalFactory {
       // Attach layered analysis to signal
       signal.layeredAnalysis = layeredAnalysis;
       signal.layers = layeredAnalysis.layers;
+      signal.components =
+        signal.components && typeof signal.components === 'object' ? signal.components : {};
+      signal.components.layeredAnalysis = layeredAnalysis;
 
       // Step 7: Check Layer 18 readiness (from orchestrator)
       const layer18Ready = layeredAnalysis.layer18Ready;
@@ -234,6 +249,9 @@ class SignalFactory {
 
     const broker = request.broker || request.brokerId || 'mt5';
     const symbol = request.symbol || request.pair || null;
+    const analysisMode = request.analysisMode ?? request.options?.analysisMode ?? null;
+    const eaOnly = request.eaOnly === true || request.options?.eaOnly === true;
+    const requestedBy = request.requestedBy ?? request.options?.requestedBy ?? null;
 
     if (!symbol || typeof symbol !== 'string') {
       return { valid: false, error: 'Symbol is required' };
@@ -248,6 +266,9 @@ class SignalFactory {
       symbol: symbol.toUpperCase(),
       timeframe,
       source,
+      analysisMode,
+      eaOnly,
+      requestedBy,
     };
   }
 
@@ -259,18 +280,15 @@ class SignalFactory {
       return { valid: false, error: 'Signal is null or not an object' };
     }
 
-    // Check required fields
-    const requiredFields = ['symbol', 'timeframe', 'signal', 'confidence'];
-    for (const field of requiredFields) {
-      if (signal[field] == null) {
-        return { valid: false, error: `Missing required field: ${field}` };
-      }
+    const pair = signal.pair || signal.symbol || null;
+    if (!pair) {
+      return { valid: false, error: 'Missing required field: pair' };
     }
 
-    // Validate signal direction
+    const direction = String(signal.direction || signal.signal || '').toUpperCase();
     const validDirections = ['BUY', 'SELL', 'HOLD', 'NEUTRAL'];
-    if (!validDirections.includes(signal.signal)) {
-      return { valid: false, error: `Invalid signal direction: ${signal.signal}` };
+    if (!validDirections.includes(direction)) {
+      return { valid: false, error: `Invalid signal direction: ${direction}` };
     }
 
     // Validate confidence range
@@ -279,10 +297,8 @@ class SignalFactory {
     }
 
     // Validate entry price if present
-    if (
-      signal.entryPrice != null &&
-      (typeof signal.entryPrice !== 'number' || signal.entryPrice <= 0)
-    ) {
+    const entryPrice = signal.entryPrice ?? signal.entry?.price ?? null;
+    if (entryPrice != null && (typeof entryPrice !== 'number' || entryPrice <= 0)) {
       return { valid: false, error: 'Entry price must be a positive number' };
     }
 
@@ -300,7 +316,8 @@ class SignalFactory {
     }
 
     // Signal must not be HOLD or NEUTRAL
-    if (signal.signal === 'HOLD' || signal.signal === 'NEUTRAL') {
+    const direction = String(signal.signal || signal.direction || '').toUpperCase();
+    if (direction === 'HOLD' || direction === 'NEUTRAL') {
       return false;
     }
 
@@ -310,17 +327,20 @@ class SignalFactory {
     }
 
     // Must have entry price
-    if (!signal.entryPrice || signal.entryPrice <= 0) {
+    const entryPrice = signal.entryPrice ?? signal.entry?.price ?? null;
+    if (!entryPrice || entryPrice <= 0) {
       return false;
     }
 
     // Must have stop loss
-    if (!signal.stopLoss || signal.stopLoss <= 0) {
+    const stopLoss = signal.stopLoss ?? signal.entry?.stopLoss ?? null;
+    if (!stopLoss || stopLoss <= 0) {
       return false;
     }
 
     // Risk/reward must be favorable
-    if (signal.riskRewardRatio != null && signal.riskRewardRatio < 1.5) {
+    const riskRewardRatio = signal.riskRewardRatio ?? signal.entry?.riskReward ?? null;
+    if (riskRewardRatio != null && riskRewardRatio < 1.5) {
       return false;
     }
 
