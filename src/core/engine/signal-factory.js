@@ -81,25 +81,31 @@ class SignalFactory {
         }
       }
 
-      // Step 4: Generate signal through orchestration coordinator
-      const orchestrationResult = await this.orchestrationCoordinator.generateSignal({
+      // Step 4: Generate signal through trading engine (has orchestrationCoordinator mixed in).
+      // The orchestrationCoordinator.generateSignal(pair, options) signature takes the symbol
+      // as the first positional argument and an options object as the second.
+      const signalRaw = await this.tradingEngine.generateSignal(symbol, {
         broker,
-        symbol,
-        timeframe,
-        source,
+        analysisMode: 'ea',
+        eaOnly: true,
+        eaBridgeService: this.eaBridgeService,
         requestedBy: request.requestedBy || 'signal-factory',
       });
 
-      if (!orchestrationResult || !orchestrationResult.success) {
+      // generateSignal may return the signal directly or { signal, execution }
+      const signal =
+        signalRaw && typeof signalRaw === 'object' && 'signal' in signalRaw
+          ? signalRaw.signal
+          : signalRaw;
+
+      if (!signal || typeof signal !== 'object') {
         this.metrics.rejected += 1;
         return {
           success: false,
-          error: orchestrationResult?.message || 'Signal generation failed',
+          error: 'Signal generation returned empty result',
           reason: 'ORCHESTRATION_FAILED',
         };
       }
-
-      const signal = orchestrationResult.signal;
 
       // Step 5: Validate signal structure and data quality
       const qualityCheck = this.validateSignalQuality(signal);
@@ -257,33 +263,36 @@ class SignalFactory {
   }
 
   /**
-   * Validate signal quality and data completeness
+   * Validate signal quality and data completeness.
+   * Supports both the legacy schema (signal.symbol, signal.signal) and the current
+   * analysis-core schema (signal.pair, signal.direction) so this gate never rejects
+   * a valid signal due to a field-name mismatch.
    */
   validateSignalQuality(signal) {
     if (!signal || typeof signal !== 'object') {
       return { valid: false, error: 'Signal is null or not an object' };
     }
 
-    // Check required fields
-    const requiredFields = ['symbol', 'timeframe', 'signal', 'confidence'];
-    for (const field of requiredFields) {
-      if (signal[field] == null) {
-        return { valid: false, error: `Missing required field: ${field}` };
-      }
+    // Accept either 'pair' or 'symbol' as the instrument identifier.
+    const identifier = signal.symbol ?? signal.pair;
+    if (identifier == null) {
+      return { valid: false, error: 'Missing required field: symbol/pair' };
     }
 
-    // Validate signal direction
+    // Accept either 'signal' (legacy) or 'direction' (current analysis-core) as direction field.
+    const rawDirection = signal.signal ?? signal.direction;
     const validDirections = ['BUY', 'SELL', 'HOLD', 'NEUTRAL'];
-    if (!validDirections.includes(signal.signal)) {
-      return { valid: false, error: `Invalid signal direction: ${signal.signal}` };
+    if (!validDirections.includes(String(rawDirection || '').toUpperCase())) {
+      return { valid: false, error: `Invalid signal direction: ${rawDirection}` };
     }
 
-    // Validate confidence range
-    if (typeof signal.confidence !== 'number' || signal.confidence < 0 || signal.confidence > 100) {
+    // Validate confidence range.
+    const conf = Number(signal.confidence);
+    if (!Number.isFinite(conf) || conf < 0 || conf > 100) {
       return { valid: false, error: 'Confidence must be a number between 0-100' };
     }
 
-    // Validate entry price if present
+    // Validate entry price if present.
     if (
       signal.entryPrice != null &&
       (typeof signal.entryPrice !== 'number' || signal.entryPrice <= 0)
@@ -304,8 +313,9 @@ class SignalFactory {
       return false;
     }
 
-    // Signal must not be HOLD or NEUTRAL
-    if (signal.signal === 'HOLD' || signal.signal === 'NEUTRAL') {
+    // Signal must not be HOLD or NEUTRAL (check both field names).
+    const dir = String(signal.signal ?? signal.direction ?? '').toUpperCase();
+    if (dir === 'HOLD' || dir === 'NEUTRAL') {
       return false;
     }
 

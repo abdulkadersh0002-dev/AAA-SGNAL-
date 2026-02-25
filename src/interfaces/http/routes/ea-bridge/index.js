@@ -20,6 +20,7 @@ import {
   resolveLiquidityGuardThresholds,
   resolveNewsGuardThresholds,
 } from '../../../../core/policy/trading-policy.js';
+import { listTargetPairs } from '../../../../config/pair-catalog.js';
 
 export default function eaBridgeRoutes({
   eaBridgeService,
@@ -487,7 +488,33 @@ export default function eaBridgeRoutes({
               return quoteSymbols;
             })();
 
-            const total = allSymbols.length;
+            // Fallback seed: always include configured catalog pairs so every pair gets
+            // scanned at least once per cycle, even when the EA hasn't sent quotes for
+            // them yet (e.g. right after connection or for less-traded crosses).
+            const catalogSeeded = (() => {
+              try {
+                const catalogPairs = listTargetPairs().filter((s) =>
+                  isAllowedScanSymbol(broker, s)
+                );
+                if (catalogPairs.length === 0) {
+                  return allSymbols;
+                }
+                const merged = [...allSymbols];
+                const seen = new Set(allSymbols);
+                for (const s of catalogPairs) {
+                  if (!seen.has(s)) {
+                    seen.add(s);
+                    merged.push(s);
+                  }
+                }
+                return merged;
+              } catch (_e) {
+                return allSymbols;
+              }
+            })();
+            const symbolsToScan = catalogSeeded.length > 0 ? catalogSeeded : allSymbols;
+
+            const total = symbolsToScan.length;
             if (total <= 0) {
               continue;
             }
@@ -496,7 +523,7 @@ export default function eaBridgeRoutes({
             const batchSize = Math.min(scanBatchSize, total);
             const batch = [];
             for (let i = 0; i < batchSize; i += 1) {
-              batch.push(allSymbols[(cursor + i) % total]);
+              batch.push(symbolsToScan[(cursor + i) % total]);
             }
 
             scanCursorByBroker.set(broker, (cursor + batchSize) % Math.max(1, total));

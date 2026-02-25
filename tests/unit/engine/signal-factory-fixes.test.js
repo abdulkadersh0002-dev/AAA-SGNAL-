@@ -1,0 +1,200 @@
+/**
+ * Tests for 3 critical signal-factory bugs fixed in this session:
+ * 1. orchestrationCoordinator undefined → fixed by using tradingEngine directly
+ * 2. validateSignalQuality field mismatch (symbol vs pair, signal vs direction)
+ * 3. isTradeable direction check uses signal.signal vs signal.direction
+ */
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import SignalFactory from '../../../src/core/engine/signal-factory.js';
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+
+function makeFactory(tradingEngineOverrides = {}) {
+  const tradingEngine = {
+    generateSignal: async (_symbol, _opts) => ({
+      pair: 'EURUSD',
+      direction: 'BUY',
+      confidence: 72,
+      strength: 65,
+      estimatedWinRate: 78,
+      entryPrice: 1.1,
+      stopLoss: 1.09,
+      takeProfit: 1.12,
+      isValid: { isValid: true, checks: {} },
+      components: {},
+    }),
+    ...tradingEngineOverrides,
+  };
+
+  const layerOrchestrator = {
+    processSignal: async () => ({
+      layers: new Array(20).fill({ status: 'PASS', score: 80 }),
+      layer18Ready: true,
+      finalScore: 80,
+    }),
+  };
+
+  const factory = new SignalFactory({
+    tradingEngine,
+    eaBridgeService: null,
+    snapshotManager: null,
+    logger: { info: () => {}, warn: () => {}, error: () => {} },
+  });
+  // Replace layerOrchestrator to avoid heavy dependency
+  factory.layerOrchestrator = layerOrchestrator;
+  return factory;
+}
+
+// ── validateSignalQuality ─────────────────────────────────────────────────────
+
+test('validateSignalQuality: accepts signal.direction (current analysis-core format)', () => {
+  const factory = makeFactory();
+  const result = factory.validateSignalQuality({
+    pair: 'EURUSD',
+    direction: 'BUY',
+    confidence: 75,
+  });
+  assert.equal(result.valid, true);
+});
+
+test('validateSignalQuality: accepts signal.signal (legacy format)', () => {
+  const factory = makeFactory();
+  const result = factory.validateSignalQuality({
+    symbol: 'EURUSD',
+    signal: 'SELL',
+    confidence: 70,
+  });
+  assert.equal(result.valid, true);
+});
+
+test('validateSignalQuality: rejects when neither pair nor symbol is present', () => {
+  const factory = makeFactory();
+  const result = factory.validateSignalQuality({
+    direction: 'BUY',
+    confidence: 75,
+  });
+  assert.equal(result.valid, false);
+  assert.match(result.error, /symbol\/pair/);
+});
+
+test('validateSignalQuality: rejects invalid direction', () => {
+  const factory = makeFactory();
+  const result = factory.validateSignalQuality({
+    pair: 'EURUSD',
+    direction: 'LONG', // invalid
+    confidence: 75,
+  });
+  assert.equal(result.valid, false);
+  assert.match(result.error, /direction/i);
+});
+
+test('validateSignalQuality: rejects confidence out of range', () => {
+  const factory = makeFactory();
+  const result = factory.validateSignalQuality({
+    pair: 'EURUSD',
+    direction: 'BUY',
+    confidence: 150, // >100
+  });
+  assert.equal(result.valid, false);
+});
+
+// ── isTradeable ───────────────────────────────────────────────────────────────
+
+test('isTradeable: accepts signal.direction (current format)', () => {
+  const factory = makeFactory();
+  const signal = {
+    direction: 'BUY',
+    confidence: 70,
+    entryPrice: 1.1,
+    stopLoss: 1.09,
+  };
+  const layered = { layer18Ready: true };
+  assert.equal(factory.isTradeable(signal, layered), true);
+});
+
+test('isTradeable: rejects NEUTRAL via signal.direction', () => {
+  const factory = makeFactory();
+  const signal = {
+    direction: 'NEUTRAL',
+    confidence: 70,
+    entryPrice: 1.1,
+    stopLoss: 1.09,
+  };
+  const layered = { layer18Ready: true };
+  assert.equal(factory.isTradeable(signal, layered), false);
+});
+
+test('isTradeable: rejects when layer18Ready is false', () => {
+  const factory = makeFactory();
+  const signal = { direction: 'BUY', confidence: 70, entryPrice: 1.1, stopLoss: 1.09 };
+  assert.equal(factory.isTradeable(signal, { layer18Ready: false }), false);
+});
+
+// ── generateSignal integration ────────────────────────────────────────────────
+
+test('generateSignal: uses tradingEngine.generateSignal (not undefined orchestrationCoordinator)', async () => {
+  let calledWith = null;
+  const factory = makeFactory({
+    generateSignal: async (symbol, opts) => {
+      calledWith = { symbol, opts };
+      return {
+        pair: symbol,
+        direction: 'BUY',
+        confidence: 72,
+        strength: 65,
+        estimatedWinRate: 78,
+        entryPrice: 1.1,
+        stopLoss: 1.09,
+        takeProfit: 1.12,
+        isValid: { isValid: true, checks: {} },
+        components: {},
+      };
+    },
+  });
+
+  const result = await factory.generateSignal({ broker: 'mt5', symbol: 'EURUSD' });
+
+  // Must NOT throw TypeError on orchestrationCoordinator
+  assert.equal(result.success, true);
+  assert.notEqual(calledWith, null, 'tradingEngine.generateSignal should be called');
+  assert.equal(calledWith.symbol, 'EURUSD');
+  assert.equal(calledWith.opts.broker, 'mt5');
+  assert.equal(calledWith.opts.analysisMode, 'ea');
+});
+
+test('generateSignal: handles tradingEngine returning { signal, execution } shape', async () => {
+  const factory = makeFactory({
+    generateSignal: async (symbol) => ({
+      signal: {
+        pair: symbol,
+        direction: 'SELL',
+        confidence: 68,
+        strength: 60,
+        estimatedWinRate: 76,
+        entryPrice: 1.1,
+        stopLoss: 1.11,
+        takeProfit: 1.08,
+        isValid: { isValid: true, checks: {} },
+        components: {},
+      },
+      execution: null,
+    }),
+  });
+
+  const result = await factory.generateSignal({ broker: 'mt5', symbol: 'GBPUSD' });
+  assert.equal(result.success, true);
+  assert.equal(result.signal.direction, 'SELL');
+});
+
+test('generateSignal: records error when tradingEngine throws', async () => {
+  const factory = makeFactory({
+    generateSignal: async () => {
+      throw new Error('connection lost');
+    },
+  });
+
+  const result = await factory.generateSignal({ broker: 'mt5', symbol: 'EURUSD' });
+  assert.equal(result.success, false);
+  assert.equal(result.reason, 'PIPELINE_ERROR');
+});
