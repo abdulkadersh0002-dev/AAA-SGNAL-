@@ -4264,7 +4264,7 @@ class EaBridgeService {
         return true;
       };
 
-      const isEnter = decisionState === 'ENTER' && Boolean(signal?.isValid?.isValid);
+      let isEnter = decisionState === 'ENTER' && Boolean(signal?.isValid?.isValid);
 
       const adjustedSignal = this.adjustSignalWithLearning(signal);
 
@@ -4325,12 +4325,66 @@ class EaBridgeService {
         layersStatus = computedLayersStatus;
 
         if (!computedLayersStatus.ok) {
-          // Keep WAIT_MONITOR visible (for UI/EA logging) but never executable.
+          // Keep WAIT_MONITOR visible (for UI/EA logging) but never executable —
+          // unless EA_SIGNAL_ALLOW_WAIT_MONITOR is enabled and structural layers pass.
           if (decisionState === 'WAIT_MONITOR') {
+            const allowWaitMonitor = readEnvBool('EA_SIGNAL_ALLOW_WAIT_MONITOR', false) === true;
+            const structuralLayersPass =
+              computedLayersStatus.layer16Pass &&
+              computedLayersStatus.layer17Ok &&
+              computedLayersStatus.layer18Pass;
+
+            if (allowWaitMonitor && structuralLayersPass) {
+              // Promote WAIT_MONITOR → ENTER: update signal state and fall through to execution
+              isEnter = true;
+              if (adjustedSignal.isValid?.decision) {
+                adjustedSignal.isValid.decision.state = 'ENTER';
+              }
+              if (adjustedSignal.components?.normalizedDecision) {
+                adjustedSignal.components.normalizedDecision.state = 'ENTER';
+              }
+              if (adjustedSignal.components) {
+                adjustedSignal.components.waitMonitorPromotion = true;
+              }
+              layersStatus = { ...computedLayersStatus, ok: true };
+              // Don't early-return; continue to normal execution path below
+            } else {
+              cacheSignalEntryContext();
+              return {
+                success: true,
+                message: 'Signal is monitoring (not executable yet)',
+                signal: adjustedSignal,
+                snapshotPending,
+                shouldExecute: false,
+                execution: {
+                  shouldExecute: false,
+                  riskMultiplier: this.riskAdjustmentFactor,
+                  stopLossMultiplier: this.stopLossAdjustmentFactor,
+                  managementPlan,
+                  sessionGuard,
+                  liquidityGuard,
+                  newsGuard,
+                  dataQualityGuard,
+                  gates: {
+                    tradingEnabled: false,
+                    requireLayers18,
+                    layersStatus: computedLayersStatus,
+                    decisionState,
+                    layer18Verdict,
+                    minConfluence: layers18MinConfluence,
+                    minConfidence,
+                    minStrength,
+                    confidence,
+                    strength,
+                  },
+                },
+              };
+            }
+          } else {
             cacheSignalEntryContext();
             return {
               success: true,
-              message: 'Signal is monitoring (not executable yet)',
+              message: 'Signal missing/failed 18-layer readiness',
               signal: adjustedSignal,
               snapshotPending,
               shouldExecute: false,
@@ -4344,7 +4398,6 @@ class EaBridgeService {
                 newsGuard,
                 dataQualityGuard,
                 gates: {
-                  tradingEnabled: false,
                   requireLayers18,
                   layersStatus: computedLayersStatus,
                   decisionState,
@@ -4352,39 +4405,10 @@ class EaBridgeService {
                   minConfluence: layers18MinConfluence,
                   minConfidence,
                   minStrength,
-                  confidence,
-                  strength,
                 },
               },
             };
           }
-          cacheSignalEntryContext();
-          return {
-            success: true,
-            message: 'Signal missing/failed 18-layer readiness',
-            signal: adjustedSignal,
-            snapshotPending,
-            shouldExecute: false,
-            execution: {
-              shouldExecute: false,
-              riskMultiplier: this.riskAdjustmentFactor,
-              stopLossMultiplier: this.stopLossAdjustmentFactor,
-              managementPlan,
-              sessionGuard,
-              liquidityGuard,
-              newsGuard,
-              dataQualityGuard,
-              gates: {
-                requireLayers18,
-                layersStatus: computedLayersStatus,
-                decisionState,
-                layer18Verdict,
-                minConfluence: layers18MinConfluence,
-                minConfidence,
-                minStrength,
-              },
-            },
-          };
         }
       }
 
