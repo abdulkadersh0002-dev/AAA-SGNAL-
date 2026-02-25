@@ -187,7 +187,9 @@ const normalizeSignal = (payload = {}, fallbackTimestamp) => {
     ) || Date.now();
 
   const id = payload.id || payload.signalId || `${pair}-${direction}-${timestamp}`;
-  const primaryTechnical = payload.components?.technical?.signals?.[0] || null;
+  const components =
+    payload?.components && typeof payload.components === 'object' ? payload.components : null;
+  const primaryTechnical = components?.technical?.signals?.[0] || null;
   const tradeRef = payload.tradeReference || payload.trade || null;
   const entry = payload.entry || payload.entryPlan || payload.orderPlan || tradeRef?.entry || {};
 
@@ -266,6 +268,17 @@ const normalizeSignal = (payload = {}, fallbackTimestamp) => {
     return `${pair}:${direction}:${timeframeKey}:${strategyKey}`;
   })();
 
+  const layeredAnalysis = components?.layeredAnalysis || payload?.layeredAnalysis || null;
+  const normalizedComponents = (() => {
+    if (!components) {
+      return layeredAnalysis ? { layeredAnalysis } : null;
+    }
+    if (layeredAnalysis && components.layeredAnalysis !== layeredAnalysis) {
+      return { ...components, layeredAnalysis };
+    }
+    return components;
+  })();
+
   return {
     id,
     mergeKey,
@@ -299,7 +312,8 @@ const normalizeSignal = (payload = {}, fallbackTimestamp) => {
             decision: payload.decision
           }
         : null),
-    layeredAnalysis: payload?.components?.layeredAnalysis || payload?.layeredAnalysis || null,
+    components: normalizedComponents,
+    layeredAnalysis,
     shouldExecute: payload?.shouldExecute ?? payload?.execution?.shouldExecute ?? payload?.tradeReference?.shouldExecute,
     timestamp,
     sortTimestamp: openedAt || timestamp,
