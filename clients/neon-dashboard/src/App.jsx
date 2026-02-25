@@ -7,6 +7,7 @@ import React, {
   useRef,
   useState
 } from 'react';
+import { flushSync } from 'react-dom';
 import { useLiveClock } from './hooks/useLiveClock.js';
 import { useWebSocketFeed } from './hooks/useWebSocketFeed.js';
 import { SystemHealthHeaderIndicator } from './components/SystemHealthSummary.jsx';
@@ -1045,22 +1046,16 @@ function App() {
   const preserveScrollPosition = useCallback((fn) => {
     const x = window.scrollX || 0;
     const y = window.scrollY || 0;
-    fn();
-    // Double-rAF: first frame React re-renders the DOM, second frame we restore scroll
-    // after the browser has finished painting the new layout.
-    requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        try {
-          window.scrollTo({ left: x, top: y, behavior: 'instant' });
-        } catch (_error) {
-          try {
-            window.scrollTo(x, y);
-          } catch (_e2) {
-            // best-effort
-          }
-        }
-      });
+    // flushSync forces React to flush state updates synchronously to the DOM,
+    // so we can restore scroll position before the browser gets a chance to repaint.
+    flushSync(() => {
+      fn();
     });
+    try {
+      window.scrollTo({ left: x, top: y, behavior: 'instant' });
+    } catch (_error) {
+      window.scrollTo(x, y);
+    }
   }, []);
 
   const openAnalyzerForSymbol = useCallback((symbolValue) => {
@@ -6210,8 +6205,9 @@ function App() {
                   type="text"
                   value={tickerSearch}
                   onChange={(event) => {
-                    const next = event.target.value;
-                    startTransition(() => setTickerSearch(next));
+                    // Direct state update (not deferred) so the controlled input responds instantly.
+                    // useDeferredValue(tickerSearch) already defers the expensive downstream filter.
+                    setTickerSearch(event.target.value);
                   }}
                   onKeyDown={(event) => {
                     if (event.key === 'Enter') {
