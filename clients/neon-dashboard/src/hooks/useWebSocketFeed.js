@@ -1,13 +1,19 @@
 import { useEffect, useRef } from 'react';
 import { getApiConfig } from '../utils/api.js';
 
-const RECONNECT_DELAY_MS = 5000;
+const BASE_RECONNECT_DELAY_MS = 2500;
+const MAX_RECONNECT_DELAY_MS = 20000;
 const CLOSE_IF_IDLE_DELAY_MS = 250;
+const HEARTBEAT_INTERVAL_MS = 15000;
+const STALE_CONNECTION_MS = 45000;
 
 const listeners = new Set();
 let socket = null;
 let reconnectTimer = null;
 let closeIfIdleTimer = null;
+let heartbeatTimer = null;
+let reconnectAttempts = 0;
+let lastMessageAt = null;
 let currentConfig = null;
 
 const toEventPayload = (raw) => {
@@ -44,6 +50,10 @@ const closeSocket = () => {
     clearTimeout(closeIfIdleTimer);
     closeIfIdleTimer = null;
   }
+  if (heartbeatTimer) {
+    clearInterval(heartbeatTimer);
+    heartbeatTimer = null;
+  }
   if (socket && typeof globalThis !== 'undefined') {
     try {
       socket.close();
@@ -52,6 +62,7 @@ const closeSocket = () => {
     }
   }
   socket = null;
+  lastMessageAt = null;
 };
 
 const scheduleCloseIfIdle = () => {
@@ -71,10 +82,15 @@ const scheduleReconnect = () => {
   if (reconnectTimer || listeners.size === 0) {
     return;
   }
+  const delay = Math.min(
+    BASE_RECONNECT_DELAY_MS * Math.pow(2, Math.min(reconnectAttempts, 4)),
+    MAX_RECONNECT_DELAY_MS
+  );
+  reconnectAttempts += 1;
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
     ensureSocket();
-  }, RECONNECT_DELAY_MS);
+  }, delay);
 };
 
 const ensureSocket = () => {
@@ -109,11 +125,34 @@ const ensureSocket = () => {
 
   socket.onopen = () => {
     // connection established
+    reconnectAttempts = 0;
+    lastMessageAt = Date.now();
+    if (heartbeatTimer) {
+      clearInterval(heartbeatTimer);
+    }
+    heartbeatTimer = setInterval(() => {
+      if (!socket) {
+        return;
+      }
+      const now = Date.now();
+      if (lastMessageAt && now - lastMessageAt > STALE_CONNECTION_MS) {
+        closeSocket();
+        scheduleReconnect();
+        return;
+      }
+      try {
+        socket.send(JSON.stringify({ type: 'ping', timestamp: now }));
+      } catch (_error) {
+        closeSocket();
+        scheduleReconnect();
+      }
+    }, HEARTBEAT_INTERVAL_MS);
   };
 
   socket.onmessage = (event) => {
     try {
       const parsed = JSON.parse(event.data);
+      lastMessageAt = Date.now();
       notifyListeners(toEventPayload(parsed));
     } catch (error) {
       console.warn('Failed to parse WebSocket payload', error);

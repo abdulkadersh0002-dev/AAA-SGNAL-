@@ -371,7 +371,13 @@ class LayerOrchestrator {
       return { status: 'FAIL', reason: 'No quote data available' };
     }
 
-    const age = Date.now() - (quote.receivedAt || quote.timestamp || 0);
+    const quoteTimestamp = Number(
+      quote.receivedAt || quote.timestamp || snapshot?.metadata?.lastQuoteAt || 0
+    );
+    if (!Number.isFinite(quoteTimestamp) || quoteTimestamp <= 0) {
+      return { status: 'FAIL', reason: 'Quote timestamp missing' };
+    }
+    const age = Date.now() - quoteTimestamp;
     if (age > 60000) {
       // Quote older than 60 seconds
       return { status: 'FAIL', reason: `Quote too old: ${age}ms`, metrics: { ageMs: age } };
@@ -393,12 +399,23 @@ class LayerOrchestrator {
   async processLayer2({ snapshot }) {
     // Spread Analysis
     const quote = snapshot?.quote;
-    if (!quote || !quote.spreadPoints) {
+    if (!quote) {
+      return { status: 'SKIP', reason: 'Spread data not available' };
+    }
+
+    const spreadRaw = Number(quote.spreadPoints ?? quote.spread);
+    const spreadPoints = Number.isFinite(spreadRaw)
+      ? spreadRaw
+      : Number.isFinite(Number(quote.ask)) && Number.isFinite(Number(quote.bid))
+        ? (Number(quote.ask) - Number(quote.bid)) / (Number(quote.pipSize) || 0.0001)
+        : null;
+
+    if (!Number.isFinite(spreadPoints)) {
       return { status: 'SKIP', reason: 'Spread data not available' };
     }
 
     // Acceptable spread: < 30 points for major pairs
-    const spread = quote.spreadPoints;
+    const spread = spreadPoints;
     if (spread > 30) {
       return {
         status: 'FAIL',

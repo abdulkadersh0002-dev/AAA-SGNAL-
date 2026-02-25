@@ -26,6 +26,51 @@ const toFinite = (value) => {
   return Number.isFinite(numeric) ? numeric : null;
 };
 
+const formatAlignmentTag = (value, prefix) => {
+  const normalized = String(value || '').toLowerCase();
+  if (normalized === 'support') {
+    return `${prefix}↑`;
+  }
+  if (normalized === 'oppose') {
+    return `${prefix}↓`;
+  }
+  if (normalized) {
+    return `${prefix}•`;
+  }
+  return null;
+};
+
+const formatIntelligenceSummary = (signal) => {
+  const intelligence = signal?.components?.intelligence;
+  if (!intelligence || typeof intelligence !== 'object') {
+    return { label: '—', title: 'No intelligence data' };
+  }
+  const qualityBand = toUpper(intelligence.qualityBand || '');
+  const qualityIndex = toFinite(intelligence.qualityIndex);
+  const divergenceTag = formatAlignmentTag(intelligence.divergenceAlignment, 'D');
+  const volumeTag = formatAlignmentTag(intelligence.volumePressureAlignment, 'V');
+  const qualityLabel = qualityBand
+    ? qualityIndex != null
+      ? `${qualityBand} ${Math.round(qualityIndex)}`
+      : qualityBand
+    : '—';
+  const alignmentLabel = [divergenceTag, volumeTag].filter(Boolean).join(' ');
+  const titleParts = [
+    qualityBand ? `Quality: ${qualityBand}` : null,
+    qualityIndex != null ? `Index: ${Math.round(qualityIndex)}` : null,
+    intelligence.divergenceAlignment
+      ? `Divergence: ${intelligence.divergenceAlignment}`
+      : null,
+    intelligence.volumePressureAlignment
+      ? `Volume: ${intelligence.volumePressureAlignment}`
+      : null,
+  ].filter(Boolean);
+  return {
+    label: alignmentLabel ? `${qualityLabel} · ${alignmentLabel}` : qualityLabel,
+    title: titleParts.length ? titleParts.join(' | ') : '—',
+  };
+};
+
 const selectPipSize = (pair) => {
   const normalized = toUpper(pair);
   if (!normalized) {
@@ -433,6 +478,7 @@ export default function CandidateSignalTable({
           const strength = Number.isFinite(Number(signal?.strength))
             ? `${Math.round(Number(signal.strength))}`
             : '—';
+          const intelligence = formatIntelligenceSummary(signal);
           const decision = formatDecision(signal);
           const details = formatBlockers(signal);
           const timeframes = pickCandidateTimeframes(signal);
@@ -453,6 +499,8 @@ export default function CandidateSignalTable({
             conf,
             strength,
             details,
+            intelligenceLabel: intelligence.label,
+            intelligenceTitle: intelligence.title,
             layeredAnalysis
           }));
         })
@@ -492,6 +540,7 @@ export default function CandidateSignalTable({
                 <th>Decision</th>
                 <th>Conf</th>
                 <th>Strength</th>
+                <th>Intel</th>
                 <th>Why not ENTER</th>
               </tr>
             </thead>
@@ -520,15 +569,16 @@ export default function CandidateSignalTable({
                       <td>{row.decision}</td>
                       <td>{row.conf}</td>
                       <td>{row.strength}</td>
+                      <td title={row.intelligenceTitle}>{row.intelligenceLabel}</td>
                       <td title={row.details}>{row.details}</td>
                     </tr>
 
                     {isSelected && layers && (
                       <tr className="signal-table__row signal-table__row--details">
-                        <td colSpan={8} style={{ padding: '10px 12px' }}>
+                        <td colSpan={9} style={{ padding: '10px 12px' }}>
                           <details open>
                             <summary style={{ cursor: 'pointer', fontWeight: 600 }}>
-                              18 Layers — Full Analysis
+                              {layers.length} Layers — Full Analysis
                             </summary>
                             <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
                               {layers.map((layer) => {
