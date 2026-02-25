@@ -661,11 +661,14 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
     { layer: 5, status: 'PASS', score: 78, metrics: {} },
     { layer: 6, status: 'PASS', score: 82, metrics: {} },
     { layer: 7, status: 'PASS', score: 79, metrics: {} },
+    { layer: 8, status: 'PASS', score: 74, metrics: { adx: 28 } },
+    { layer: 9, status: 'PASS', score: 72, metrics: {} },
     { layer: 10, status: 'PASS', score: 75, metrics: {} },
     { layer: 11, status: 'PASS', score: 88, metrics: { confluenceScore: 88 } },
     { layer: 12, status: 'PASS', score: 95, metrics: {} },
     { layer: 13, status: 'PASS', score: 90, metrics: {} },
     { layer: 14, status: 'PASS', score: 85, metrics: {} },
+    { layer: 15, status: 'PASS', score: 85, metrics: { correlatedCount: 0 } },
     { layer: 16, status: 'PASS', score: 84, metrics: { riskRewardRatio: 2.1 } },
     { layer: 17, status: 'PASS', score: 86, metrics: { positionSize: 0.21 } },
   ];
@@ -883,6 +886,150 @@ describe('LayerOrchestrator - Reimplemented Layers', () => {
       assert.ok(
         lowLiqResult.score <= activeResult.score,
         `LOW_LIQUIDITY score (${lowLiqResult.score}) should be <= ACTIVE score (${activeResult.score})`
+      );
+    });
+  });
+
+  // ============================================================================
+  // LAYER 18: SUPPORTING LAYER EXPANSION (L8, L9, L15)
+  // ============================================================================
+
+  describe('Layer 18: Expanded Supporting Layers (L8, L9, L15)', () => {
+    it('passes when L8, L9, L15 all pass', async () => {
+      const previousLayers = buildPassingLayerSet(); // already includes L8, L9, L15
+      const result = await orchestrator.processLayer18({ previousLayers });
+      assert.equal(result.status, 'PASS');
+    });
+
+    it('still passes when only L8 fails (1 supporting failure)', async () => {
+      const layers = buildPassingLayerSet();
+      const idx = layers.findIndex((l) => l.layer === 8);
+      layers[idx] = { ...layers[idx], status: 'FAIL' };
+      const result = await orchestrator.processLayer18({ previousLayers: layers });
+      assert.equal(result.status, 'PASS');
+    });
+
+    it('still passes when L8 and L9 both fail (2 supporting failures)', async () => {
+      const layers = buildPassingLayerSet();
+      layers[layers.findIndex((l) => l.layer === 8)] = {
+        ...layers[layers.findIndex((l) => l.layer === 8)],
+        status: 'FAIL',
+      };
+      layers[layers.findIndex((l) => l.layer === 9)] = {
+        ...layers[layers.findIndex((l) => l.layer === 9)],
+        status: 'FAIL',
+      };
+      const result = await orchestrator.processLayer18({ previousLayers: layers });
+      assert.equal(result.status, 'PASS');
+    });
+
+    it('fails when L8, L9, L10, L15 all fail (4 supporting failures > threshold)', async () => {
+      const layers = buildPassingLayerSet();
+      for (const id of [8, 9, 10, 15]) {
+        const idx = layers.findIndex((l) => l.layer === id);
+        if (idx !== -1) {
+          layers[idx] = { ...layers[idx], status: 'FAIL' };
+        }
+      }
+      const result = await orchestrator.processLayer18({ previousLayers: layers });
+      assert.equal(result.status, 'FAIL');
+      assert.match(result.reason, /supporting-layer failures/i);
+    });
+  });
+
+  // ============================================================================
+  // LAYER 19: CORRELATION BLOCK (L15)
+  // ============================================================================
+
+  describe('Layer 19: Correlation Over-Exposure Block', () => {
+    it('blocks execution when L15 (correlation) failed', async () => {
+      const layers = buildPassingLayerSet();
+      // Mark L15 as FAIL (over-exposure)
+      const idx = layers.findIndex((l) => l.layer === 15);
+      layers[idx] = { ...layers[idx], status: 'FAIL', reason: 'High correlation exposure' };
+      const l18 = await orchestrator.processLayer18({ previousLayers: layers });
+      // L18 should still pass (L15 is supporting, only 1 failure)
+      assert.equal(l18.status, 'PASS');
+      layers.push({ layer: 18, ...l18 });
+
+      // L19 must block due to correlation failure
+      const result = await orchestrator.processLayer19({ previousLayers: layers });
+      assert.equal(result.status, 'FAIL');
+      assert.match(result.reason, /correlated over-exposure/i);
+      assert.equal(result.metrics.correlationBlocked, true);
+    });
+
+    it('allows execution when L15 passed (no correlated over-exposure)', async () => {
+      const layers = buildPassingLayerSet(); // L15 = PASS, correlatedCount: 0
+      const l18 = await orchestrator.processLayer18({ previousLayers: layers });
+      assert.equal(l18.status, 'PASS');
+      layers.push({ layer: 18, ...l18 });
+
+      const result = await orchestrator.processLayer19({ previousLayers: layers });
+      assert.equal(result.status, 'PASS');
+      assert.ok(result.metrics.correlationBlocked == null || !result.metrics.correlationBlocked);
+    });
+  });
+
+  // ============================================================================
+  // LAYER 20: DIAMOND SIGNAL QUALITY
+  // ============================================================================
+
+  describe('Layer 20: Diamond Signal Quality', () => {
+    it('flags diamond signal when R:R >= 2.5, confluence >= 90, ADX >= 30', async () => {
+      const layers = buildPassingLayerSet();
+      // Set up diamond conditions
+      layers[layers.findIndex((l) => l.layer === 16)] = {
+        layer: 16,
+        status: 'PASS',
+        score: 95,
+        metrics: { riskRewardRatio: 2.8 },
+      };
+      layers[layers.findIndex((l) => l.layer === 11)] = {
+        layer: 11,
+        status: 'PASS',
+        score: 92,
+        metrics: { confluenceScore: 92 },
+      };
+      layers[layers.findIndex((l) => l.layer === 8)] = {
+        layer: 8,
+        status: 'PASS',
+        score: 88,
+        metrics: { adx: 35 },
+      };
+      const l18 = await orchestrator.processLayer18({ previousLayers: layers });
+      layers.push({ layer: 18, ...l18 });
+      const l19 = await orchestrator.processLayer19({ previousLayers: layers });
+      layers.push({ layer: 19, ...l19 });
+
+      const result = await orchestrator.processLayer20({
+        signal: { direction: 'BUY', confidence: 85 },
+        previousLayers: layers,
+      });
+
+      assert.equal(result.status, 'PASS');
+      assert.equal(result.metrics.isDiamondSignal, true);
+      assert.equal(result.metrics.executionProfile.signalQuality, 'DIAMOND');
+      assert.match(result.reason, /diamond/i);
+    });
+
+    it('returns NORMAL signal quality when conditions are ordinary', async () => {
+      const layers = buildPassingLayerSet();
+      const l18 = await orchestrator.processLayer18({ previousLayers: layers });
+      layers.push({ layer: 18, ...l18 });
+      const l19 = await orchestrator.processLayer19({ previousLayers: layers });
+      layers.push({ layer: 19, ...l19 });
+
+      const result = await orchestrator.processLayer20({
+        signal: { direction: 'BUY', confidence: 72 },
+        previousLayers: layers,
+      });
+
+      assert.equal(result.status, 'PASS');
+      assert.equal(result.metrics.isDiamondSignal, false);
+      assert.ok(
+        ['NORMAL', 'STRONG'].includes(result.metrics.executionProfile.signalQuality),
+        `signalQuality should be NORMAL or STRONG, got ${result.metrics.executionProfile.signalQuality}`
       );
     });
   });

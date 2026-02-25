@@ -2335,7 +2335,10 @@ class LayerOrchestrator {
     };
 
     const criticalLayers = [1, 2, 3, 4, 6, 11, 12, 14, 16, 17];
-    const supportingLayers = [5, 7, 10, 13];
+    // Supporting layers include momentum (L8), volume (L9), and correlation (L15)
+    // in addition to the original 4: patterns (L10), S/R (L5), MA (L7), calendar (L13).
+    // Threshold raised to > 3 (tolerates 3 of 7 failures) to account for the expanded set.
+    const supportingLayers = [5, 7, 8, 9, 10, 13, 15];
 
     for (const layerId of criticalLayers) {
       const layer = findLayer(layerId);
@@ -2379,7 +2382,7 @@ class LayerOrchestrator {
       .map((layer) => Number(layer.score));
     const avgScore = scores.length > 0 ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
 
-    if (supportFailures.length > 2) {
+    if (supportFailures.length > 3) {
       return {
         status: 'FAIL',
         score: Math.max(20, Math.round(avgScore * 0.7)),
@@ -2470,6 +2473,9 @@ class LayerOrchestrator {
     const newsIsClear = findLayer(12)?.status === 'PASS';
     // L14 session quality: 'OVERLAP' (best), 'ACTIVE' (good), 'LOW_LIQUIDITY' (caution)
     const sessionQuality = findLayer(14)?.metrics?.sessionQuality ?? null;
+    // L15 correlation: FAIL means dangerous over-exposure on correlated pairs
+    const correlationLayer = findLayer(15);
+    const correlationFailed = correlationLayer != null && correlationLayer.status === 'FAIL';
 
     if (!newsIsClear) {
       return {
@@ -2484,6 +2490,25 @@ class LayerOrchestrator {
           riskRewardRatio,
           positionSize,
           sessionQuality,
+        },
+      };
+    }
+
+    // Block execution if correlation analysis detected dangerous over-exposure
+    if (correlationFailed) {
+      return {
+        status: 'FAIL',
+        score: 25,
+        confidence: 78,
+        reason: 'Execution blocked: correlated over-exposure detected (L15)',
+        metrics: {
+          spreadPoints,
+          volatility,
+          confluence,
+          riskRewardRatio,
+          positionSize,
+          sessionQuality,
+          correlationBlocked: true,
         },
       };
     }
@@ -2581,6 +2606,17 @@ class LayerOrchestrator {
     const riskRewardRatio = toNumber(findLayer(16)?.metrics?.riskRewardRatio);
     const positionSize = toNumber(findLayer(17)?.metrics?.positionSize);
     const clearanceScore = toNumber(findLayer(19)?.score) ?? 75;
+    // L8 ADX: strong trending market boosts execution quality
+    const adx = toNumber(findLayer(8)?.metrics?.adx);
+
+    // "Diamond Signal" bonus: R:R ≥ 2.5 + confluence ≥ 90 + ADX ≥ 30 = highest-quality setup
+    const isDiamondSignal =
+      riskRewardRatio != null &&
+      riskRewardRatio >= 2.5 &&
+      confluence != null &&
+      confluence >= 90 &&
+      adx != null &&
+      adx >= 30;
 
     const executionProfile = {
       urgency: clearanceScore >= 92 ? 'immediate' : clearanceScore >= 80 ? 'normal' : 'patient',
@@ -2592,12 +2628,22 @@ class LayerOrchestrator {
             ? 'adaptive'
             : 'standard',
       confidenceBand: confidence >= 80 ? 'HIGH' : confidence >= 60 ? 'MEDIUM' : 'LOW',
+      signalQuality: isDiamondSignal ? 'DIAMOND' : clearanceScore >= 88 ? 'STRONG' : 'NORMAL',
     };
+
+    // Diamond signal: boost final score by up to 5 points
+    const diamondBonus = isDiamondSignal ? 5 : 0;
 
     return {
       status: 'PASS',
-      score: Math.max(70, Math.min(100, Math.round((clearanceScore + confidence) / 2))),
-      confidence: Math.max(70, Math.min(99, Math.round((confidence + clearanceScore) / 2))),
+      score: Math.max(
+        70,
+        Math.min(100, Math.round((clearanceScore + confidence) / 2) + diamondBonus)
+      ),
+      confidence: Math.max(
+        70,
+        Math.min(99, Math.round((confidence + clearanceScore) / 2) + diamondBonus)
+      ),
       metrics: {
         metadataPrepared: true,
         direction,
@@ -2607,9 +2653,13 @@ class LayerOrchestrator {
         spreadPoints,
         riskRewardRatio,
         positionSize,
+        adx,
+        isDiamondSignal,
         executionProfile,
       },
-      reason: 'Trade metadata prepared with smart execution profile',
+      reason: isDiamondSignal
+        ? 'Diamond signal: exceptional R:R + confluence + momentum (highest quality setup)'
+        : 'Trade metadata prepared with smart execution profile',
     };
   }
 
