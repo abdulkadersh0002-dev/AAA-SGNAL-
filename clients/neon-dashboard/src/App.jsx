@@ -1511,69 +1511,8 @@ function App() {
             return;
           }
 
-          if (msg.type === 'signal') {
-            const payloadBroker = normalizeBrokerId(msg.payload?.broker || '');
-            if (payloadBroker && payloadBroker !== effectivePlatformId) {
-              return;
-            }
-            const normalized = normalizeSignal(msg.payload || {}, msg.timestamp);
-            if (normalized) {
-              startTransition(() => mergeSignals([normalized]));
-            }
-            return;
-          }
-
-          if (msg.type === 'signal_candidate') {
-            const payloadBroker = normalizeBrokerId(msg.payload?.broker || '');
-            if (payloadBroker && payloadBroker !== effectivePlatformId) {
-              return;
-            }
-            const normalized = normalizeSignal(msg.payload || {}, msg.timestamp);
-            if (normalized) {
-              startTransition(() => mergeCandidateSignals([normalized]));
-            }
-            return;
-          }
-
-          if (msg.type === 'signal_candidates') {
-            const payload = msg.payload || {};
-            const items = Array.isArray(payload?.items)
-              ? payload.items
-              : Array.isArray(payload)
-                ? payload
-                : [];
-            const normalized = items
-              .filter((s) => {
-                const b = normalizeBrokerId(s?.broker || '');
-                return !b || b === effectivePlatformId;
-              })
-              .map((s) => normalizeSignal(s, msg.timestamp))
-              .filter(Boolean);
-            if (normalized.length) {
-              startTransition(() => mergeCandidateSignals(normalized));
-            }
-            return;
-          }
-
-          if (msg.type === 'signals') {
-            const payload = msg.payload || {};
-            const items = Array.isArray(payload?.items)
-              ? payload.items
-              : Array.isArray(payload)
-                ? payload
-                : [];
-            const normalized = items
-              .filter((s) => {
-                const b = normalizeBrokerId(s?.broker || '');
-                return !b || b === effectivePlatformId;
-              })
-              .map((s) => normalizeSignal(s, msg.timestamp))
-              .filter(Boolean);
-            if (normalized.length) {
-              startTransition(() => mergeSignals(normalized));
-            }
-            return;
-          }
+          // Signal types (signal, signal_candidate, signal_candidates, signals) are handled
+          // exclusively by handleEngineEvent via useWebSocketFeed to avoid double processing.
         } catch (_error) {
           // ignore
         }
@@ -3304,8 +3243,13 @@ function App() {
         });
       }
 
-      if (normalizedType.includes('signal')) {
+      // Single signal (ENTER-ready or candidate) — route based on executability.
+      if (normalizedType === 'signal') {
         if (!payload) {
+          return;
+        }
+        const payloadBroker = normalizeBrokerId(payload?.broker || '');
+        if (payloadBroker && payloadBroker !== effectivePlatformId) {
           return;
         }
         const normalized = normalizeSignal(payload, event.timestamp);
@@ -3315,14 +3259,75 @@ function App() {
             decisionState === 'ENTER' ||
             decisionState === 'ENTER_STRONG' ||
             decisionState === 'ENTER_TRADE';
-
           // Only treat ENTER as "entry-ready" when it is actually executable now.
-          // Otherwise, keep it in Candidates so the user can see it with reasons.
+          // Otherwise show in Candidates so the user can see it with reasons.
           if (isEnter && normalized.shouldExecute === true) {
-            mergeSignals([normalized]);
+            startTransition(() => mergeSignals([normalized]));
           } else {
-            mergeCandidateSignals([normalized]);
+            startTransition(() => mergeCandidateSignals([normalized]));
           }
+        }
+        return;
+      }
+
+      // Single candidate signal — always goes to candidate pool.
+      if (normalizedType === 'signal_candidate') {
+        if (!payload) {
+          return;
+        }
+        const payloadBroker = normalizeBrokerId(payload?.broker || '');
+        if (payloadBroker && payloadBroker !== effectivePlatformId) {
+          return;
+        }
+        const normalized = normalizeSignal(payload, event.timestamp);
+        if (normalized?.id) {
+          startTransition(() => mergeCandidateSignals([normalized]));
+        }
+        return;
+      }
+
+      // Bulk candidate signals — normalise array and route all to candidate pool.
+      if (normalizedType === 'signal_candidates') {
+        if (!payload) {
+          return;
+        }
+        const items = Array.isArray(payload?.items)
+          ? payload.items
+          : Array.isArray(payload)
+            ? payload
+            : [];
+        const normalized = items
+          .filter((s) => {
+            const b = normalizeBrokerId(s?.broker || '');
+            return !b || b === effectivePlatformId;
+          })
+          .map((s) => normalizeSignal(s, event.timestamp))
+          .filter((s) => s?.id);
+        if (normalized.length) {
+          startTransition(() => mergeCandidateSignals(normalized));
+        }
+        return;
+      }
+
+      // Bulk entry-ready signals — normalise array and route all to signals pool.
+      if (normalizedType === 'signals') {
+        if (!payload) {
+          return;
+        }
+        const items = Array.isArray(payload?.items)
+          ? payload.items
+          : Array.isArray(payload)
+            ? payload
+            : [];
+        const normalized = items
+          .filter((s) => {
+            const b = normalizeBrokerId(s?.broker || '');
+            return !b || b === effectivePlatformId;
+          })
+          .map((s) => normalizeSignal(s, event.timestamp))
+          .filter((s) => s?.id);
+        if (normalized.length) {
+          startTransition(() => mergeSignals(normalized));
         }
         return;
       }
