@@ -1585,6 +1585,23 @@ export class RealtimeEaSignalRunner {
       ) {
         return { event: 'signal', keySuffix: '' };
       }
+
+      // Broadcast near-miss signals as candidates for dashboard visibility.
+      // Conditions: directional + meets minimum confidence/strength + has layered analysis
+      // + decision state is ENTER or WAIT_MONITOR (watchlist-worthy).
+      const isWatchState =
+        decisionState === 'ENTER' || decisionState === 'WAIT_MONITOR' || decisionState === 'WATCH';
+      const canPublishCandidate =
+        directional &&
+        isWatchState &&
+        analyzedReady &&
+        confidence >= this.dashboardMinConfidence &&
+        strength >= this.dashboardMinStrength;
+
+      if (canPublishCandidate) {
+        return { event: 'signal_candidate', keySuffix: ':candidate' };
+      }
+
       return null;
     })();
 

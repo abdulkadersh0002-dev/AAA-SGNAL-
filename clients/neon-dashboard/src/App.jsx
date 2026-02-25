@@ -482,7 +482,7 @@ function App() {
     if (!Array.isArray(incomingSignals) || incomingSignals.length === 0) {
       return;
     }
-    setSignals((current) => mergeSignalLists(incomingSignals, current, MAX_CANDIDATE_ITEMS));
+    setSignals((current) => mergeSignalLists(incomingSignals, current, MAX_SIGNAL_ITEMS));
   }, []);
 
   const mergeCandidateSignals = useCallback((incomingSignals = []) => {
@@ -3223,7 +3223,7 @@ function App() {
       const normalizedType = type.toLowerCase();
       const payload = event.payload ?? null;
 
-      if (normalizedType !== 'connected') {
+      if (normalizedType !== 'connected' && !normalizedType.startsWith('ea.market.')) {
         setEventFeed((current) => {
           const combined = [{ ...event, type }, ...current];
           const deduped = [];
@@ -3438,13 +3438,20 @@ function App() {
       }
       const normalized = normalizeSignal(signal, signal.generatedAt || signal.createdAt);
       if (normalized?.id) {
-        mergeSignals([normalized]);
+        const ds = String(getDecisionState(normalized) || '').toUpperCase();
+        const isEnterReady =
+          ds === 'ENTER' || ds === 'ENTER_STRONG' || ds === 'ENTER_TRADE';
+        if (isEnterReady) {
+          mergeSignals([normalized]);
+        } else {
+          mergeCandidateSignals([normalized]);
+        }
       }
       refreshFeatureSnapshots();
       loadEngineSnapshot();
       refreshModuleHealth?.();
     },
-    [loadEngineSnapshot, mergeSignals, refreshFeatureSnapshots, refreshModuleHealth]
+    [loadEngineSnapshot, mergeSignals, mergeCandidateSignals, refreshFeatureSnapshots, refreshModuleHealth]
   );
 
   const formatters = useMemo(
