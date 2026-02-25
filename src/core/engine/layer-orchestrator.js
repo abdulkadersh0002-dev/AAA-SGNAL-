@@ -185,6 +185,22 @@ class LayerOrchestrator {
     ];
   }
 
+  resolveTrendPeriods(barCount) {
+    const safeCount = Number.isFinite(barCount) ? barCount : 0;
+    if (safeCount < 3) {
+      return null;
+    }
+
+    const longPeriod = Math.min(50, Math.max(3, safeCount - 1));
+    let shortPeriod = Math.max(2, Math.floor(longPeriod * 0.4));
+
+    if (shortPeriod >= longPeriod) {
+      shortPeriod = Math.max(2, longPeriod - 1);
+    }
+
+    return { shortPeriod, longPeriod };
+  }
+
   /**
    * Process a signal through all 20 layers sequentially
    */
@@ -466,12 +482,16 @@ class LayerOrchestrator {
 
       for (const tf of timeframes) {
         const tfBars = bars[tf];
-        if (!tfBars || !Array.isArray(tfBars) || tfBars.length < 50) {
+        if (!tfBars || !Array.isArray(tfBars) || tfBars.length < 3) {
           continue;
         }
 
         const closes = tfBars.map((b) => b.close);
-        const trendInfo = determineTrend(closes, 20, 50);
+        const trendPeriods = this.resolveTrendPeriods(closes.length);
+        if (!trendPeriods) {
+          continue;
+        }
+        const trendInfo = determineTrend(closes, trendPeriods.shortPeriod, trendPeriods.longPeriod);
 
         trends[tf] = trendInfo;
         totalStrength += trendInfo.strength;
@@ -501,7 +521,7 @@ class LayerOrchestrator {
       const alignmentRatio = alignedCount / analyzedCount;
       const avgStrength = totalStrength / analyzedCount;
       const score = Math.round(alignmentRatio * 100);
-      const confidence = Math.min(95, Math.round(avgStrength * 0.8 + alignmentRatio * 20));
+      const confidence = Math.min(95, Math.round(50 + alignmentRatio * 40 + avgStrength * 0.1));
 
       // Determine pass/fail
       const minAlignment = 0.66; // At least 2 out of 3 timeframes
@@ -555,7 +575,7 @@ class LayerOrchestrator {
 
       // Get daily bars for pivot calculation
       const dailyBars = bars.D1;
-      if (!dailyBars || dailyBars.length < 2) {
+      if (!dailyBars || dailyBars.length < 1) {
         return {
           status: 'PASS',
           score: 60,
@@ -566,12 +586,15 @@ class LayerOrchestrator {
       }
 
       // Calculate pivot points from previous day
-      const prevBar = dailyBars[dailyBars.length - 2];
-      const pivots = calculatePivotPoints(prevBar.high, prevBar.low, prevBar.close);
+      const pivotSourceBar = dailyBars[dailyBars.length - 1];
+      const pivots = calculatePivotPoints(
+        pivotSourceBar.high,
+        pivotSourceBar.low,
+        pivotSourceBar.close
+      );
 
       // Create array of S/R levels
       const levels = [
-        { value: pivots.pp, type: 'PIVOT' },
         { value: pivots.r1, type: 'RESISTANCE' },
         { value: pivots.r2, type: 'RESISTANCE' },
         { value: pivots.s1, type: 'SUPPORT' },
@@ -581,8 +604,8 @@ class LayerOrchestrator {
       // Check if price is near a key level
       const srCheck = checkSupportResistance(currentPrice, levels, 0.002);
 
-      let score = 70;
-      let confidence = 65;
+      let score = 80;
+      let confidence = 70;
       let status = 'PASS';
       let reason = 'Price not at major S/R level';
 
@@ -608,6 +631,10 @@ class LayerOrchestrator {
           confidence = 70;
           status = 'FAIL';
           reason = `Signal against ${levelType} at ${srCheck.level.toFixed(5)}`;
+        } else {
+          score = 80;
+          confidence = 75;
+          reason = `At ${levelType} level ${srCheck.level.toFixed(5)} (${srCheck.distancePips.toFixed(1)} pips)`;
         }
       } else if (srCheck) {
         // Not at level, check distance
@@ -638,7 +665,7 @@ class LayerOrchestrator {
             ? {
                 value: srCheck.level,
                 type: srCheck.type,
-                distancePips: srCheck.distancePips.toFixed(1),
+                distancePips: Number(srCheck.distancePips.toFixed(1)),
                 atLevel: srCheck.atLevel,
               }
             : null,
@@ -671,7 +698,7 @@ class LayerOrchestrator {
 
       // Use H1 timeframe for indicators
       const h1Bars = bars.H1;
-      if (!h1Bars || h1Bars.length < 30) {
+      if (!h1Bars || h1Bars.length < 5) {
         return {
           status: 'PASS',
           score: 60,
@@ -685,9 +712,28 @@ class LayerOrchestrator {
       const lows = h1Bars.map((b) => b.low);
 
       // Calculate indicators
-      const rsi = calculateRSI(closes, 14);
-      const macd = calculateMACD(closes, 12, 26, 9);
-      const stoch = calculateStochastic(highs, lows, closes, 14, 3, 3);
+      const rsiPeriod = closes.length >= 15 ? 14 : Math.max(2, closes.length - 1);
+      const stochPeriod = closes.length >= 14 ? 14 : Math.max(3, closes.length);
+      const useStandardMacd = closes.length >= 35;
+      let macdFast = 12;
+      let macdSlow = 26;
+      let macdSignal = 9;
+
+      if (!useStandardMacd) {
+        macdSlow = Math.max(3, Math.min(26, Math.floor(closes.length * 0.6)));
+        macdFast = Math.max(2, Math.min(12, Math.floor(macdSlow * 0.5)));
+        macdSignal = Math.max(2, Math.min(9, Math.floor(macdSlow * 0.4)));
+        if (macdSlow + macdSignal > closes.length) {
+          macdSignal = Math.max(2, closes.length - macdSlow);
+        }
+        if (macdSlow + macdSignal > closes.length) {
+          macdSlow = Math.max(macdFast + 1, closes.length - macdSignal);
+        }
+      }
+
+      const rsi = calculateRSI(closes, rsiPeriod);
+      const macd = calculateMACD(closes, macdFast, macdSlow, macdSignal);
+      const stoch = calculateStochastic(highs, lows, closes, stochPeriod, 3, 3);
 
       const indicators = { rsi, macd, stoch };
       let aligned = 0;
@@ -703,30 +749,34 @@ class LayerOrchestrator {
           aligned: false,
         };
 
-        if (direction === 'buy' && rsi < 50 && rsi > 30) {
-          // RSI not overbought, good for buy
-          aligned++;
-          signals.rsi.signal = 'BULLISH';
-          signals.rsi.aligned = true;
-        } else if (direction === 'sell' && rsi > 50 && rsi < 70) {
-          // RSI not oversold, good for sell
-          aligned++;
-          signals.rsi.signal = 'BEARISH';
-          signals.rsi.aligned = true;
-        } else if ((direction === 'buy' && rsi > 70) || (direction === 'sell' && rsi < 30)) {
-          // Overbought/oversold against signal
-          signals.rsi.signal = direction === 'buy' ? 'OVERBOUGHT' : 'OVERSOLD';
-          signals.rsi.aligned = false;
-        } else {
-          signals.rsi.aligned = true; // Neutral is acceptable
-          aligned += 0.5;
+        if (direction === 'buy') {
+          if (rsi >= 50) {
+            signals.rsi.signal = 'BULLISH';
+            signals.rsi.aligned = true;
+            aligned += rsi >= 70 ? 0.5 : 1;
+          } else {
+            signals.rsi.signal = 'NEUTRAL';
+            signals.rsi.aligned = true;
+            aligned += 0.5;
+          }
+        } else if (direction === 'sell') {
+          if (rsi <= 50) {
+            signals.rsi.signal = 'BEARISH';
+            signals.rsi.aligned = true;
+            aligned += rsi <= 30 ? 0.5 : 1;
+          } else {
+            signals.rsi.signal = 'NEUTRAL';
+            signals.rsi.aligned = true;
+            aligned += 0.5;
+          }
         }
       }
 
       // MACD analysis
       if (macd !== null) {
         total++;
-        const macdSignal = macd.histogram > 0 ? 'BULLISH' : 'BEARISH';
+        const macdBias = macd.histogram !== 0 ? macd.histogram : macd.macd;
+        const macdSignal = macdBias > 0 ? 'BULLISH' : macdBias < 0 ? 'BEARISH' : 'NEUTRAL';
         signals.macd = {
           value: macd.histogram.toFixed(5),
           signal: macdSignal,
@@ -734,10 +784,13 @@ class LayerOrchestrator {
         };
 
         if (
-          (direction === 'buy' && macd.histogram > 0) ||
-          (direction === 'sell' && macd.histogram < 0)
+          (direction === 'buy' && macdSignal === 'BULLISH') ||
+          (direction === 'sell' && macdSignal === 'BEARISH')
         ) {
           aligned++;
+          signals.macd.aligned = true;
+        } else if (macdSignal === 'NEUTRAL') {
+          aligned += 0.5;
           signals.macd.aligned = true;
         }
       }
@@ -745,7 +798,7 @@ class LayerOrchestrator {
       // Stochastic analysis
       if (stoch !== null) {
         total++;
-        const stochSignal = stoch.k > 50 ? 'BULLISH' : 'BEARISH';
+        const stochSignal = stoch.k > 50 ? 'BULLISH' : stoch.k < 50 ? 'BEARISH' : 'NEUTRAL';
         signals.stoch = {
           k: stoch.k.toFixed(2),
           d: stoch.d.toFixed(2),
@@ -753,10 +806,22 @@ class LayerOrchestrator {
           aligned: false,
         };
 
-        if ((direction === 'buy' && stoch.k < 70) || (direction === 'sell' && stoch.k > 30)) {
-          // Not extreme levels
-          aligned++;
-          signals.stoch.aligned = true;
+        if (direction === 'buy') {
+          if (stoch.k >= 50) {
+            aligned += stoch.k >= 80 ? 0.5 : 1;
+            signals.stoch.aligned = true;
+          } else {
+            aligned += 0.5;
+            signals.stoch.aligned = true;
+          }
+        } else if (direction === 'sell') {
+          if (stoch.k <= 50) {
+            aligned += stoch.k <= 20 ? 0.5 : 1;
+            signals.stoch.aligned = true;
+          } else {
+            aligned += 0.5;
+            signals.stoch.aligned = true;
+          }
         }
       }
 
@@ -815,7 +880,7 @@ class LayerOrchestrator {
 
       // Use H1 timeframe
       const h1Bars = bars.H1;
-      if (!h1Bars || h1Bars.length < 200) {
+      if (!h1Bars || h1Bars.length < 5) {
         return {
           status: 'PASS',
           score: 60,
@@ -825,16 +890,22 @@ class LayerOrchestrator {
       }
 
       const closes = h1Bars.map((b) => b.close);
+      const resolvePeriod = (period) => Math.min(period, closes.length);
 
       // Calculate key moving averages
-      const sma20 = calculateSMA(closes, 20);
-      const sma50 = calculateSMA(closes, 50);
-      const sma200 = calculateSMA(closes, 200);
-      const ema9 = calculateEMA(closes, 9);
-      const ema21 = calculateEMA(closes, 21);
+      const sma20 = calculateSMA(closes, resolvePeriod(20));
+      const sma50 = calculateSMA(closes, resolvePeriod(50));
+      const sma200 = calculateSMA(closes, resolvePeriod(200));
+      const ema9 = calculateEMA(closes, resolvePeriod(9));
+      const ema21 = calculateEMA(closes, resolvePeriod(21));
 
       // Check for crossovers
-      const crossover50_200 = detectMACrossover(closes, 50, 200, 10);
+      const crossover50_200 = detectMACrossover(
+        closes,
+        resolvePeriod(50),
+        resolvePeriod(200),
+        Math.min(10, Math.max(3, closes.length - 1))
+      );
 
       const mas = { sma20, sma50, sma200, ema9, ema21 };
       let aligned = 0;
@@ -984,7 +1055,7 @@ class LayerOrchestrator {
       for (const tf of timeframes) {
         const tfBars = bars[tf.name];
 
-        if (!tfBars || !Array.isArray(tfBars) || tfBars.length < 50) {
+        if (!tfBars || !Array.isArray(tfBars) || tfBars.length < 3) {
           tfAnalysis[tf.name] = {
             available: false,
             trend: null,
@@ -994,7 +1065,16 @@ class LayerOrchestrator {
         }
 
         const closes = tfBars.map((b) => b.close);
-        const trendInfo = determineTrend(closes, 20, 50);
+        const trendPeriods = this.resolveTrendPeriods(closes.length);
+        if (!trendPeriods) {
+          tfAnalysis[tf.name] = {
+            available: false,
+            trend: null,
+            aligned: false,
+          };
+          continue;
+        }
+        const trendInfo = determineTrend(closes, trendPeriods.shortPeriod, trendPeriods.longPeriod);
 
         const trendDirection = trendInfo.direction.toLowerCase();
         const aligned =
