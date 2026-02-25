@@ -3,7 +3,7 @@
 //| Features: Dynamic Stop-Loss, Risk Management, Auto-Trading        |
 //+------------------------------------------------------------------+
 #property copyright "Neon Trading Stack - Enhanced EA"
-#property version   "2.00"
+#property version   "2.10"
 #property strict
 
 // === Connection Settings ===
@@ -49,7 +49,8 @@ extern int    MaxConsecutiveFailures = 3;
 extern int    ReconnectBackoffSec    = 5;
 
 // === Auto-Trading Settings ===
-extern bool   EnableAutoTrading = false;
+extern bool   EnableAutoTrading = true;
+extern int    SignalCheckIntervalSec = 15; // how often to poll for signals (seconds)
 extern int    SymbolsToCheckPerSignalPoll = 8;
 // Prevent repeated entries on the same server signal (common when polling fast)
 extern bool   EnableSignalDedupe = true;
@@ -74,8 +75,8 @@ extern int    MaxTradesPerDay            = 0;
 // === SMART STRONG Mode (recommended) ===
 extern bool   SmartStrongMode               = true;
 extern bool   EnforceSmartStrongThresholds  = true;
-extern double SmartStrongMinStrengthTrade   = 60.0;
-extern double SmartStrongMinConfidenceTrade = 75.0;
+extern double SmartStrongMinStrengthTrade   = 25.0;
+extern double SmartStrongMinConfidenceTrade = 55.0;
 extern int    ServerPolicyRefreshSec        = 300;
 extern int    SmartMaxTickAgeSec            = 6;
 extern double SmartMinAtrPips               = 4.0;
@@ -87,6 +88,18 @@ extern bool   SmartStrongCloseOnOpposite    = true;
 extern double SmartCloseMinStrength         = 60.0;
 extern double SmartCloseMinConfidence       = 75.0;
 extern int    SmartCloseCheckIntervalSec    = 30;
+
+// === Session Filter (server time HH:MM) ===
+extern bool   EnableSessionFilter  = false;
+extern string Session1Start        = "07:00"; // London open
+extern string Session1End          = "11:30"; // London AM
+extern string Session2Start        = "13:00"; // New York open
+extern string Session2End          = "17:00"; // NY midday
+
+// === News Blackout (server time HH:MM) ===
+extern bool   EnableNewsBlackout   = false;
+extern string NewsBlackoutStart    = "12:20"; // 20 min pre-release (e.g. NFP 8:30 ET = 12:30 UTC)
+extern string NewsBlackoutEnd      = "13:10"; // 40 min post-release to let volatility settle
 
 // === EA Smart Management (Server-Guided) ===
 extern bool   EnableServerPositionSync = true;   // Send open positions for smart management
@@ -102,7 +115,8 @@ extern bool   OverlayRespectServerExecution = false;
 // === Intelligent Features ===
 extern bool   UseDynamicStopLoss = true;    // Adjust SL based on volatility
 extern bool   EnableLearning     = true;     // Learn from trade results
-extern bool   TradeMajorsAndMetalsOnly = true;
+extern bool   TradeForexAndMetalsOnly = true; // Allow all FX pairs + metals (excludes crypto/indices)
+extern bool   TradeMajorsAndMetalsOnly = false; // Legacy: restrict to majors only (kept false to allow crosses)
 extern bool   CloseLosingTrades = false;
 extern double MaxLossPerTradePips = 0.0;
 extern double MaxLossPerTradeCurrency = 0.0;
@@ -295,6 +309,15 @@ bool IsMajorCurrency(const string code)
    return(c == "USD" || c == "EUR" || c == "GBP" || c == "JPY" || c == "CHF" || c == "CAD" || c == "AUD" || c == "NZD");
 }
 
+bool IsFxCurrency(const string code)
+{
+   string c = code;
+   StringToUpper(c);
+   return(c == "USD" || c == "EUR" || c == "GBP" || c == "JPY" || c == "CHF" || c == "CAD" || c == "AUD" || c == "NZD" ||
+          c == "SEK" || c == "NOK" || c == "DKK" || c == "PLN" || c == "CZK" || c == "HUF" || c == "MXN" || c == "ZAR" ||
+          c == "TRY" || c == "CNH" || c == "CNY" || c == "SGD" || c == "HKD");
+}
+
 bool IsMetalSymbol(const string sym)
 {
    string c = CanonicalSymbol(sym);
@@ -317,13 +340,85 @@ bool IsMajorsForexPair(const string sym)
    return(IsMajorCurrency(base) && IsMajorCurrency(quote));
 }
 
+bool IsForexPair(const string sym)
+{
+   string c = CanonicalSymbol(sym);
+   if(StringLen(c) < 6)
+      return(false);
+   string base = StringSubstr(c, 0, 3);
+   string quote = StringSubstr(c, 3, 3);
+   StringToUpper(base);
+   StringToUpper(quote);
+   return(IsFxCurrency(base) && IsFxCurrency(quote));
+}
+
 bool IsTradeSymbolEligible(const string sym)
 {
+   if(TradeForexAndMetalsOnly)
+   {
+      if(IsMetalSymbol(sym))
+         return(true);
+      return(IsForexPair(sym));
+   }
    if(!TradeMajorsAndMetalsOnly)
       return(true);
    if(IsMetalSymbol(sym))
       return(true);
    return(IsMajorsForexPair(sym));
+}
+
+int ParseTimeMinutes(const string hhmm)
+{
+   int sep = StringFind(hhmm, ":");
+   if(sep < 0)
+      return(-1);
+   int h = (int)StringToInteger(StringSubstr(hhmm, 0, sep));
+   int m = (int)StringToInteger(StringSubstr(hhmm, sep + 1));
+   if(h < 0 || h > 23 || m < 0 || m > 59)
+      return(-1);
+   return(h * 60 + m);
+}
+
+int TimeToMinutes(const datetime t)
+{
+   int hour = TimeHour(t);
+   int min  = TimeMinute(t);
+   return(hour * 60 + min);
+}
+
+bool IsTimeInWindow(const int nowMin, const int startMin, const int endMin)
+{
+   if(startMin < 0 || endMin < 0)
+      return(true);
+   if(startMin == endMin)
+      return(true);
+   if(startMin < endMin)
+      return(nowMin >= startMin && nowMin <= endMin);
+   return(nowMin >= startMin || nowMin <= endMin);
+}
+
+bool IsWithinTradingSessions()
+{
+   if(!EnableSessionFilter)
+      return(true);
+   int nowMin = TimeToMinutes(TimeCurrent());
+   int s1 = ParseTimeMinutes(Session1Start);
+   int e1 = ParseTimeMinutes(Session1End);
+   int s2 = ParseTimeMinutes(Session2Start);
+   int e2 = ParseTimeMinutes(Session2End);
+   bool in1 = IsTimeInWindow(nowMin, s1, e1);
+   bool in2 = IsTimeInWindow(nowMin, s2, e2);
+   return(in1 || in2);
+}
+
+bool IsNewsBlackoutNow()
+{
+   if(!EnableNewsBlackout)
+      return(false);
+   int nowMin = TimeToMinutes(TimeCurrent());
+   int s = ParseTimeMinutes(NewsBlackoutStart);
+   int e = ParseTimeMinutes(NewsBlackoutEnd);
+   return(IsTimeInWindow(nowMin, s, e));
 }
 
 void ClampStopsForOrder(const string sym, const int cmd, const double price, double &sl, double &tp)
@@ -2151,9 +2246,10 @@ void OnTimer()
    // Check for new signals if auto-trading is enabled
    if(EnableAutoTrading && g_autoTradingActive)
    {
-      if(TimeCurrent() - g_lastSignalCheck >= g_signalCheckInterval)
+      int checkInterval = SignalCheckIntervalSec > 0 ? SignalCheckIntervalSec : 15;
+      if(TimeCurrent() - g_lastSignalCheck >= checkInterval)
       {
-         if(IsDailyTradingAllowed())
+         if(IsDailyTradingAllowed() && IsWithinTradingSessions() && !IsNewsBlackoutNow())
             CheckAndExecuteSignals();
          g_lastSignalCheck = TimeCurrent();
       }
@@ -2473,60 +2569,70 @@ void CheckAndExecuteSignals()
    string candidates[];
    ArrayResize(candidates, 0);
 
-   int activeN = ArraySize(g_activeSymbols);
-   if(activeN > 0)
-   {
-      for(int i = 0; i < activeN && ArraySize(candidates) < MaxActiveSymbols; i++)
-      {
-         string raw = g_activeSymbols[i];
-         if(StringLen(raw) <= 0)
-            continue;
-         string resolved = ResolveBrokerSymbol(raw);
-         if(StringLen(resolved) <= 0)
-            continue;
-         if(!IsTradeSymbolEligible(resolved))
-            continue;
-         int n = ArraySize(candidates);
-         ArrayResize(candidates, n + 1);
-         candidates[n] = resolved;
+   // Helper: add symbol if not already present and eligible
+   #define ADD_CAND4(symToAdd) \
+      { \
+         string _s = ResolveBrokerSymbol(symToAdd); \
+         if(StringLen(_s) > 0 && IsTradeSymbolEligible(_s)) \
+         { \
+            bool _exists = false; \
+            for(int _j = 0; _j < ArraySize(candidates); _j++) \
+               if(candidates[_j] == _s) { _exists = true; break; } \
+            if(!_exists) \
+            { \
+               int _newN = ArraySize(candidates) + 1; \
+               ArrayResize(candidates, _newN); \
+               candidates[_newN - 1] = _s; \
+            } \
+         } \
       }
+
+   // 1) Active symbols from dashboard/server
+   int activeN = ArraySize(g_activeSymbols);
+   for(int i = 0; i < activeN && ArraySize(candidates) < MaxActiveSymbols; i++)
+   {
+      string raw = g_activeSymbols[i];
+      if(StringLen(raw) <= 0)
+         continue;
+      ADD_CAND4(raw);
    }
-   else
+
+   // 2) Core liquid set — all 30 FX pairs + metals
+   string core[];
+   ArrayResize(core, 30);
+   core[0]  = "EURUSD";  core[1]  = "GBPUSD";  core[2]  = "USDJPY";
+   core[3]  = "USDCHF";  core[4]  = "USDCAD";  core[5]  = "AUDUSD";
+   core[6]  = "NZDUSD";  core[7]  = "EURJPY";  core[8]  = "GBPJPY";
+   core[9]  = "AUDJPY";  core[10] = "NZDJPY";  core[11] = "CADJPY";
+   core[12] = "EURGBP";  core[13] = "EURCHF";  core[14] = "EURAUD";
+   core[15] = "EURCAD";  core[16] = "EURNZD";  core[17] = "GBPAUD";
+   core[18] = "GBPCAD";  core[19] = "GBPNZD";  core[20] = "GBPCHF";
+   core[21] = "AUDCAD";  core[22] = "AUDCHF";  core[23] = "AUDNZD";
+   core[24] = "NZDCAD";  core[25] = "NZDCHF";  core[26] = "CADCHF";
+   core[27] = "CHFJPY";  core[28] = "XAUUSD";  core[29] = "XAGUSD";
+   for(int c = 0; c < ArraySize(core); c++)
+      ADD_CAND4(core[c]);
+
+   // 3) Chart symbol fallback
+   if(ArraySize(candidates) == 0)
+      ADD_CAND4(Symbol());
+
+   #undef ADD_CAND4
+
+   // Also scan MarketWatch if active list was empty
+   if(ArraySize(candidates) == 0)
    {
       int total = SymbolsTotal(true);
       int cap = MaxActiveSymbols;
-      if(cap <= 0)
-         cap = 40;
+      if(cap <= 0) cap = 40;
       for(int i = 0; i < total && ArraySize(candidates) < cap; i++)
       {
          string name = SymbolName(i, true);
-         if(StringLen(name) <= 0)
-            continue;
-         if(!IsTradeSymbolEligible(name))
-            continue;
+         if(StringLen(name) <= 0) continue;
+         if(!IsTradeSymbolEligible(name)) continue;
          int n = ArraySize(candidates);
          ArrayResize(candidates, n + 1);
          candidates[n] = name;
-      }
-   }
-
-   string chartSym = Symbol();
-   if(StringLen(chartSym) > 0 && IsTradeSymbolEligible(chartSym))
-   {
-      bool exists = false;
-      for(int j = 0; j < ArraySize(candidates); j++)
-      {
-         if(candidates[j] == chartSym)
-         {
-            exists = true;
-            break;
-         }
-      }
-      if(!exists)
-      {
-         int n = ArraySize(candidates);
-         ArrayResize(candidates, n + 1);
-         candidates[n] = chartSym;
       }
    }
 

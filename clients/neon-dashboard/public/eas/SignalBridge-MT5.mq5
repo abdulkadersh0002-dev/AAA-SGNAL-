@@ -1,5 +1,5 @@
 #property copyright "Neon Trading Stack"
-#property version   "1.11"
+#property version   "1.12"
 #property strict
 
 input string BridgeUrl          = "http://127.0.0.1:4101/api/broker/bridge/mt5";
@@ -216,8 +216,8 @@ input string Session2Start             = "13:00";
 input string Session2End               = "17:00";
 // News blackout (manual time window, server time)
 input bool   EnableNewsBlackout        = false;
-input string NewsBlackoutStart         = "12:25";
-input string NewsBlackoutEnd           = "12:45";
+input string NewsBlackoutStart         = "12:20"; // 20 min before major releases (e.g. NFP 8:30 ET = 12:30 UTC)
+input string NewsBlackoutEnd           = "13:10"; // 40 min post-release to let volatility settle
 input int    MagicNumber            = 87001;
 input double DefaultLots            = 0.01;
 input double MinLotSize             = 0.01;
@@ -1741,8 +1741,8 @@ bool ParseSignalForExecution(const string json,
          }
       }
 
-      // Global rule: WAIT_MONITOR is visibility only and must never execute.
-      if(AllowStrongWaitMonitorExecution)
+      // Global rule: WAIT_MONITOR is visibility only — only execute when explicitly unlocked.
+      if(!AllowStrongWaitMonitorExecution)
       {
          string decision = ToUpperStr(decisionState);
          if(decision == "WAIT_MONITOR")
@@ -4274,7 +4274,7 @@ void CheckAndExecuteSignals()
 
    // 3) Core liquid set (keeps EA effective even if active list is narrow)
    string core[];
-   ArrayResize(core, 18);
+   ArrayResize(core, 30);
    core[0]  = "EURUSD";
    core[1]  = "GBPUSD";
    core[2]  = "USDJPY";
@@ -4286,13 +4286,25 @@ void CheckAndExecuteSignals()
    core[8]  = "GBPJPY";
    core[9]  = "AUDJPY";
    core[10] = "NZDJPY";
-   core[11] = "EURGBP";
-   core[12] = "EURAUD";
-   core[13] = "EURNZD";
-   core[14] = "GBPAUD";
-   core[15] = "GBPNZD";
-   core[16] = "XAUUSD";
-   core[17] = "XAGUSD";
+   core[11] = "CADJPY";
+   core[12] = "EURGBP";
+   core[13] = "EURCHF";
+   core[14] = "EURAUD";
+   core[15] = "EURCAD";
+   core[16] = "EURNZD";
+   core[17] = "GBPAUD";
+   core[18] = "GBPCAD";
+   core[19] = "GBPNZD";
+   core[20] = "GBPCHF";
+   core[21] = "AUDCAD";
+   core[22] = "AUDCHF";
+   core[23] = "AUDNZD";
+   core[24] = "NZDCAD";
+   core[25] = "NZDCHF";
+   core[26] = "CADCHF";
+   core[27] = "CHFJPY";
+   core[28] = "XAUUSD";
+   core[29] = "XAGUSD";
 
    for(int c = 0; c < ArraySize(core); c++)
    {
