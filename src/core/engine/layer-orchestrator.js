@@ -185,18 +185,14 @@ class LayerOrchestrator {
     ];
   }
 
-  resolveTrendPeriods(barCount) {
+  resolveTrendPeriods(barCount, minBars = 3) {
     const safeCount = Number.isFinite(barCount) ? barCount : 0;
-    if (safeCount < 3) {
+    if (safeCount < minBars) {
       return null;
     }
 
-    const longPeriod = Math.min(50, Math.max(3, safeCount - 1));
-    let shortPeriod = Math.max(2, Math.floor(longPeriod * 0.4));
-
-    if (shortPeriod >= longPeriod) {
-      shortPeriod = Math.max(2, longPeriod - 1);
-    }
+    const shortPeriod = Math.min(20, Math.max(3, Math.floor(safeCount / 2)));
+    const longPeriod = Math.min(50, Math.max(shortPeriod + 1, safeCount - 1));
 
     return { shortPeriod, longPeriod };
   }
@@ -476,18 +472,19 @@ class LayerOrchestrator {
 
       // Analyze trend across multiple timeframes
       const timeframes = ['H1', 'H4', 'D1'];
+      const minBars = 3;
       const trends = {};
       let totalStrength = 0;
       let alignedCount = 0;
 
       for (const tf of timeframes) {
         const tfBars = bars[tf];
-        if (!tfBars || !Array.isArray(tfBars) || tfBars.length < 3) {
+        if (!tfBars || !Array.isArray(tfBars) || tfBars.length < minBars) {
           continue;
         }
 
         const closes = tfBars.map((b) => b.close);
-        const trendPeriods = this.resolveTrendPeriods(closes.length);
+        const trendPeriods = this.resolveTrendPeriods(closes.length, minBars);
         if (!trendPeriods) {
           continue;
         }
@@ -1047,6 +1044,7 @@ class LayerOrchestrator {
         { name: 'H4', weight: 3 },
         { name: 'D1', weight: 4 },
       ];
+      const minBars = 3;
 
       let totalWeight = 0;
       let alignedWeight = 0;
@@ -1055,7 +1053,7 @@ class LayerOrchestrator {
       for (const tf of timeframes) {
         const tfBars = bars[tf.name];
 
-        if (!tfBars || !Array.isArray(tfBars) || tfBars.length < 3) {
+        if (!tfBars || !Array.isArray(tfBars) || tfBars.length < minBars) {
           tfAnalysis[tf.name] = {
             available: false,
             trend: null,
@@ -1065,7 +1063,7 @@ class LayerOrchestrator {
         }
 
         const closes = tfBars.map((b) => b.close);
-        const trendPeriods = this.resolveTrendPeriods(closes.length);
+        const trendPeriods = this.resolveTrendPeriods(closes.length, minBars);
         if (!trendPeriods) {
           tfAnalysis[tf.name] = {
             available: false,
