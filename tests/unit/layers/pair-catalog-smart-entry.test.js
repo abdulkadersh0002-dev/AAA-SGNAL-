@@ -61,12 +61,17 @@ describe('Pair Catalog — all FX pairs and metals enabled', () => {
     'NZDCHF',
     'GBPCHF',
     'CHFJPY',
+    'NZDJPY',
+    'EURNZD',
+    'GBPNZD',
+    'AUDCHF',
+    'CADCHF',
   ];
   const EXPECTED_METALS = ['XAUUSD', 'XAGUSD'];
 
-  it('has at least 25 enabled pairs', () => {
+  it('has at least 30 enabled pairs', () => {
     const pairs = listTargetPairs();
-    assert.ok(pairs.length >= 25, `Expected ≥ 25 enabled pairs, got ${pairs.length}`);
+    assert.ok(pairs.length >= 30, `Expected ≥ 30 enabled pairs, got ${pairs.length}`);
   });
 
   for (const pair of EXPECTED_MAJORS) {

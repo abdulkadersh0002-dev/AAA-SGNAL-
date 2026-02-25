@@ -18,6 +18,11 @@ const FX_BASE_PRICES = {
   GBPCAD: 1.726,
   AUDCAD: 0.894,
   AUDNZD: 1.082,
+  NZDJPY: 90.5,
+  EURNZD: 1.795,
+  GBPNZD: 2.09,
+  AUDCHF: 0.578,
+  CADCHF: 0.649,
 };
 
 const FX_VOLATILITY = {
@@ -44,6 +49,11 @@ const FX_VOLATILITY = {
   NZDCHF: 0.0007,
   GBPCHF: 0.001,
   CHFJPY: 0.17,
+  NZDJPY: 0.12,
+  EURNZD: 0.0015,
+  GBPNZD: 0.0018,
+  AUDCHF: 0.0009,
+  CADCHF: 0.0008,
 };
 
 function createFxInstrument(config) {
@@ -397,6 +407,62 @@ const forexInstruments = [
     sessions: [
       { label: 'Tokyo', start: '23:00', end: '07:00', weight: 1.4 },
       { label: 'Zurich', start: '07:00', end: '16:00', weight: 1.4 },
+    ],
+    timeframes: ['M15', 'H1', 'H4'],
+  }),
+  // ── Minor/Exotic Crosses ────────────────────────────────────────────────────
+  createFxInstrument({
+    pair: 'NZDJPY',
+    region: 'New Zealand/Japan',
+    volatilityTier: 'medium',
+    liquidityNotes: 'Risk-sensitive cross; active during Asia-Pacific session',
+    sessions: [
+      { label: 'Tokyo', start: '23:00', end: '07:00', weight: 1.4 },
+      { label: 'Wellington', start: '21:00', end: '04:00', weight: 1.3 },
+    ],
+    timeframes: ['M15', 'H1', 'H4'],
+  }),
+  createFxInstrument({
+    pair: 'EURNZD',
+    region: 'Eurozone/New Zealand',
+    volatilityTier: 'medium',
+    liquidityNotes: 'Active during European hours; RBNZ-sensitive',
+    sessions: [
+      { label: 'London', start: '07:00', end: '16:00', weight: 1.4 },
+      { label: 'Wellington', start: '21:00', end: '04:00', weight: 1.2 },
+    ],
+    timeframes: ['M15', 'H1', 'H4'],
+  }),
+  createFxInstrument({
+    pair: 'GBPNZD',
+    region: 'UK/New Zealand',
+    volatilityTier: 'high',
+    liquidityNotes: 'High volatility cross; watch BOE and RBNZ policy meetings',
+    sessions: [
+      { label: 'London', start: '07:00', end: '16:00', weight: 1.5 },
+      { label: 'Wellington', start: '21:00', end: '04:00', weight: 1.2 },
+    ],
+    timeframes: ['M15', 'H1', 'H4'],
+  }),
+  createFxInstrument({
+    pair: 'AUDCHF',
+    region: 'Australia/Switzerland',
+    volatilityTier: 'low',
+    liquidityNotes: 'Risk vs safe-haven; driven by RBA policy and SNB intervention',
+    sessions: [
+      { label: 'Sydney', start: '21:00', end: '05:00', weight: 1.3 },
+      { label: 'Zurich', start: '07:00', end: '16:00', weight: 1.3 },
+    ],
+    timeframes: ['M15', 'H1', 'H4'],
+  }),
+  createFxInstrument({
+    pair: 'CADCHF',
+    region: 'Canada/Switzerland',
+    volatilityTier: 'low',
+    liquidityNotes: 'Oil-sensitive cross vs safe-haven CHF; low liquidity outside EU/NY',
+    sessions: [
+      { label: 'Zurich', start: '07:00', end: '16:00', weight: 1.3 },
+      { label: 'New York', start: '12:00', end: '21:00', weight: 1.3 },
     ],
     timeframes: ['M15', 'H1', 'H4'],
   }),
