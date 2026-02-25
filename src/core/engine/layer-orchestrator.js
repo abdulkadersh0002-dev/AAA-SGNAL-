@@ -365,79 +365,221 @@ class LayerOrchestrator {
   // Each layer implements specific validation logic
 
   async processLayer1({ snapshot }) {
-    // Market Data Quality
+    // Market Data Quality — graduated score based on quote freshness
     const quote = snapshot?.quote;
     if (!quote) {
       return { status: 'FAIL', reason: 'No quote data available' };
     }
 
-    const age = Date.now() - (quote.receivedAt || quote.timestamp || 0);
-    if (age > 60000) {
-      // Quote older than 60 seconds
-      return { status: 'FAIL', reason: `Quote too old: ${age}ms`, metrics: { ageMs: age } };
-    }
-
-    if (!quote.bid || !quote.ask || quote.bid <= 0 || quote.ask <= 0) {
+    if (!quote.bid || !quote.ask || Number(quote.bid) <= 0 || Number(quote.ask) <= 0) {
       return { status: 'FAIL', reason: 'Invalid bid/ask prices' };
     }
 
+    const now = Date.now();
+    const quoteTs = Number(quote.receivedAt || quote.timestamp || 0);
+    const age = quoteTs > 0 ? now - quoteTs : 0;
+
+    // Hard limit: 5 minutes (300 s) — allows slow EA heartbeats while still blocking truly stale data
+    const HARD_LIMIT_MS = 300_000;
+    // Score degrades linearly from 100 at 0 s to 55 at 120 s, then to 30 at 300 s
+    let score, reason;
+    if (age > HARD_LIMIT_MS) {
+      return {
+        status: 'FAIL',
+        reason: `Quote too old: ${Math.round(age / 1000)}s (max ${HARD_LIMIT_MS / 1000}s)`,
+        metrics: { ageMs: age, bid: quote.bid, ask: quote.ask },
+      };
+    } else if (age <= 5_000) {
+      score = 100;
+      reason = 'Quote is live (< 5 s)';
+    } else if (age <= 60_000) {
+      score = Math.round(100 - ((age - 5_000) / 55_000) * 20); // 100 → 80
+      reason = `Quote fresh (${Math.round(age / 1000)}s old)`;
+    } else if (age <= 120_000) {
+      score = Math.round(80 - ((age - 60_000) / 60_000) * 25); // 80 → 55
+      reason = `Quote aging (${Math.round(age / 1000)}s old)`;
+    } else {
+      score = Math.round(55 - ((age - 120_000) / 180_000) * 25); // 55 → 30
+      reason = `Quote stale (${Math.round(age / 1000)}s old) — proceed with caution`;
+    }
+
+    const confidence = Math.min(95, Math.max(40, score));
     return {
       status: 'PASS',
-      score: 100,
-      confidence: 95,
+      score,
+      confidence,
       metrics: { ageMs: age, bid: quote.bid, ask: quote.ask },
-      reason: 'Quote data is fresh and valid',
+      reason,
     };
   }
 
   async processLayer2({ snapshot }) {
-    // Spread Analysis
+    // Spread Analysis — compute spread from bid/ask when spreadPoints is missing
     const quote = snapshot?.quote;
-    if (!quote || !quote.spreadPoints) {
-      return { status: 'SKIP', reason: 'Spread data not available' };
+    if (!quote) {
+      return { status: 'SKIP', reason: 'No quote available for spread check' };
     }
 
-    // Acceptable spread: < 30 points for major pairs
-    const spread = quote.spreadPoints;
-    if (spread > 30) {
+    const bid = Number(quote.bid);
+    const ask = Number(quote.ask);
+
+    // Compute spread: prefer explicit spreadPoints, fall back to bid/ask delta
+    let spread = Number(quote.spreadPoints);
+    let spreadSource = 'spreadPoints';
+    if (!Number.isFinite(spread) || spread <= 0) {
+      if (Number.isFinite(bid) && Number.isFinite(ask) && ask > bid && bid > 0) {
+        spread = Math.round((ask - bid) * 10000 * 10) / 10; // rounded to 0.1 points
+        spreadSource = 'bid_ask_delta';
+      } else {
+        return { status: 'SKIP', reason: 'Spread data not available and bid/ask invalid' };
+      }
+    }
+
+    // ATR-relative threshold: use ATR from H1 bars if available, otherwise fixed threshold
+    let maxSpread = 30; // points — conservative default for major FX
+    let atrBased = false;
+    try {
+      const h1Bars = snapshot?.bars?.H1;
+      if (Array.isArray(h1Bars) && h1Bars.length >= 10) {
+        const highs = h1Bars.map((b) => b.high);
+        const lows = h1Bars.map((b) => b.low);
+        const closes = h1Bars.map((b) => b.close);
+        const atr = calculateATR(highs, lows, closes, Math.min(14, h1Bars.length - 1));
+        if (Number.isFinite(atr) && atr > 0) {
+          // Allow spread up to 12% of H1 ATR (in price units → points ×10000)
+          const atrPoints = atr * 10000;
+          maxSpread = Math.max(20, Math.min(60, atrPoints * 0.12));
+          atrBased = true;
+        }
+      }
+    } catch (_e) {
+      // best-effort ATR; fall back to fixed threshold
+    }
+
+    const spreadRatio = spread / maxSpread;
+
+    if (spread > maxSpread * 1.5) {
       return {
         status: 'FAIL',
-        reason: `Spread too wide: ${spread} points`,
-        metrics: { spreadPoints: spread },
+        reason: `Spread too wide: ${spread.toFixed(1)} pts (max ${maxSpread.toFixed(1)})`,
+        metrics: { spreadPoints: spread, maxSpread, spreadSource, atrBased },
       };
     }
 
+    // Graduated score: 0 ratio → 100, ratio=1 → 75, ratio=1.5 → 50
+    const score = Math.round(Math.max(50, 100 - spreadRatio * 33));
+    const confidence = atrBased ? 88 : 82;
+
     return {
       status: 'PASS',
-      score: 100 - (spread / 30) * 20, // Lower score for wider spreads
-      confidence: 90,
-      metrics: { spreadPoints: spread },
-      reason: 'Spread is acceptable',
+      score,
+      confidence,
+      metrics: {
+        spreadPoints: spread,
+        maxSpread: Number(maxSpread.toFixed(2)),
+        spreadSource,
+        atrBased,
+        spreadRatio: Number(spreadRatio.toFixed(3)),
+      },
+      reason: `Spread ${spread.toFixed(1)} pts is ${atrBased ? 'ATR-relative' : 'within fixed threshold'}`,
     };
   }
 
-  async processLayer3({ snapshot }) {
-    // Volatility Check
-    const volatility = snapshot?.volatility;
-    if (volatility == null) {
-      return { status: 'SKIP', reason: 'Volatility data not available' };
-    }
+  async processLayer3({ snapshot, signal }) {
+    // Volatility Check — use ATR from bars when raw volatility metric is absent
+    try {
+      let volatility = snapshot?.volatility != null ? Number(snapshot.volatility) : null;
+      let source = 'snapshot';
+      let atr = null;
+      let atrPct = null;
 
-    // Accept moderate volatility (not too low, not too high)
-    if (volatility < 10) {
-      return { status: 'FAIL', reason: 'Volatility too low', metrics: { volatility } };
-    }
-    if (volatility > 200) {
-      return { status: 'FAIL', reason: 'Volatility too high', metrics: { volatility } };
-    }
+      // Derive volatility from H1/M15 ATR if not provided directly
+      if (!Number.isFinite(volatility) || volatility <= 0) {
+        const tfOrder = ['H1', 'M15', 'H4'];
+        for (const tf of tfOrder) {
+          const tfBars = snapshot?.bars?.[tf];
+          if (Array.isArray(tfBars) && tfBars.length >= 15) {
+            const highs = tfBars.map((b) => b.high);
+            const lows = tfBars.map((b) => b.low);
+            const closes = tfBars.map((b) => b.close);
+            const computedAtr = calculateATR(highs, lows, closes, Math.min(14, tfBars.length - 1));
+            if (Number.isFinite(computedAtr) && computedAtr > 0) {
+              atr = computedAtr;
+              const lastClose = closes[closes.length - 1];
+              atrPct = lastClose > 0 ? (atr / lastClose) * 100 : null;
+              // Convert ATR% to a 0-200 volatility index: 0.1% ATR = ~10, 2% ATR = ~200
+              volatility = Number.isFinite(atrPct) ? atrPct * 100 : null;
+              source = `atr_${tf}`;
+              break;
+            }
+          }
+        }
+      }
 
-    return {
-      status: 'PASS',
-      score: 80,
-      confidence: 75,
-      metrics: { volatility },
-      reason: 'Volatility is in acceptable range',
-    };
+      if (!Number.isFinite(volatility) || volatility <= 0) {
+        return {
+          status: 'PASS',
+          score: 70,
+          confidence: 40,
+          reason: 'Volatility data unavailable — passing with low confidence',
+          metrics: { volatility: null, source: 'unavailable' },
+        };
+      }
+
+      // Thresholds: volatility index (scaled ATR% × 100)
+      // < 8   → dead market (likely weekend/holiday)
+      // 8–15  → low — ok for strong signals
+      // 15–100 → normal — ideal
+      // 100–180 → elevated — still tradeable, score penalty
+      // > 180 → extreme — risk of gapping, slippage
+      let score, reason, status;
+      if (volatility < 8) {
+        return {
+          status: 'FAIL',
+          score: 20,
+          confidence: 80,
+          reason: `Volatility too low (${volatility.toFixed(1)}) — dead market, avoid`,
+          metrics: { volatility, atr, atrPct, source },
+        };
+      } else if (volatility > 180) {
+        return {
+          status: 'FAIL',
+          score: 25,
+          confidence: 80,
+          reason: `Volatility extreme (${volatility.toFixed(1)}) — excessive slippage risk`,
+          metrics: { volatility, atr, atrPct, source },
+        };
+      } else if (volatility <= 15) {
+        score = 65;
+        status = 'PASS';
+        reason = `Low volatility (${volatility.toFixed(1)}) — require strong signal`;
+      } else if (volatility <= 100) {
+        // Sweet spot: score from 80 to 100
+        score = Math.round(80 + ((volatility - 15) / 85) * 20);
+        status = 'PASS';
+        reason = `Normal volatility (${volatility.toFixed(1)}) — ideal conditions`;
+      } else {
+        // Elevated: score from 75 down to 50
+        score = Math.round(75 - ((volatility - 100) / 80) * 25);
+        status = 'PASS';
+        reason = `Elevated volatility (${volatility.toFixed(1)}) — trade with tighter stops`;
+      }
+
+      return {
+        status,
+        score,
+        confidence: 78,
+        metrics: { volatility: Number(volatility.toFixed(2)), atr, atrPct, source },
+        reason,
+      };
+    } catch (error) {
+      return {
+        status: 'PASS',
+        score: 65,
+        confidence: 40,
+        reason: `Volatility check skipped: ${error.message}`,
+      };
+    }
   }
 
   // Placeholder processors for remaining layers (4-20)

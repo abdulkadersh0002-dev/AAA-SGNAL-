@@ -191,10 +191,37 @@ export const riskEngine = {
     const rawKelly = edge / reward;
     const adjustedKelly = rawKelly > 0 ? rawKelly : this.config.minKellyFraction * 0.6;
     const blended = adjustedKelly * 0.6 + this.config.riskPerTrade * 0.4;
-    return Math.max(
+    const baseKelly = Math.max(
       this.config.minKellyFraction,
       Math.min(blended, this.config.maxKellyFraction * 1.1)
     );
+
+    // Consecutive-loss scaling: reduce risk size after a losing streak
+    // 0 losses → 100%, 1 → 90%, 2 → 75%, 3 → 55%, 4+ → 35%
+    const consecutiveLosses = this.getConsecutiveLosses?.() ?? 0;
+    const lossScales = [1.0, 0.9, 0.75, 0.55, 0.35];
+    const scaleIdx = Math.min(consecutiveLosses, lossScales.length - 1);
+    const consecutiveLossScale = lossScales[scaleIdx];
+
+    return baseKelly * consecutiveLossScale;
+  },
+
+  // Returns the current consecutive-loss count from closed trade history
+  getConsecutiveLosses() {
+    const history = Array.isArray(this.tradingHistory) ? this.tradingHistory : [];
+    let count = 0;
+    for (let i = history.length - 1; i >= 0; i--) {
+      const pnl = parseFloat(history[i]?.finalPnL?.percentage);
+      if (!Number.isFinite(pnl)) {
+        break;
+      }
+      if (pnl < 0) {
+        count++;
+      } else {
+        break; // streak ended on a win/breakeven
+      }
+    }
+    return count;
   },
 
   getVolatilityAdjustment(signal) {

@@ -550,7 +550,7 @@ export const executionEngine = {
     };
   },
 
-  evaluateSmartTradeSupervision(trade, _currentPrice) {
+  evaluateSmartTradeSupervision(trade, currentPrice) {
     const enabled = String(process.env.SMART_TRADE_SUPERVISOR_ENABLED || '')
       .trim()
       .toLowerCase();
@@ -601,6 +601,42 @@ export const executionEngine = {
         return { action: 'close', reason: 'data_quality_exit' };
       }
       return { action: 'breakeven', reason: 'data_quality_breakeven' };
+    }
+
+    // R-based price-action profit guard:
+    // If price has given back more than 0.4R after reaching 1R, lock profit immediately.
+    // This prevents turning a winning trade back into a loss after the market reverses.
+    try {
+      const rMultiple = this.getCurrentRMultiple(trade, currentPrice);
+
+      // Track peak R-multiple on the trade object
+      if (Number.isFinite(rMultiple)) {
+        if (trade._peakRMultiple == null) {
+          trade._peakRMultiple = rMultiple; // initialise on first call
+        } else if (rMultiple > Number(trade._peakRMultiple)) {
+          trade._peakRMultiple = rMultiple;
+        }
+      }
+
+      const peakR = Number.isFinite(Number(trade._peakRMultiple))
+        ? Number(trade._peakRMultiple)
+        : null;
+      const pullbackR = peakR != null && Number.isFinite(rMultiple) ? peakR - rMultiple : null;
+
+      // Guard: gave back > 0.4R after reaching >= 1R peak
+      if (peakR != null && pullbackR != null && peakR >= 1.0 && pullbackR >= 0.4) {
+        if (!trade.movedToBreakeven) {
+          return {
+            action: 'breakeven',
+            reason: 'profit_pullback_guard',
+            rMultiple,
+            peakR,
+            pullbackR,
+          };
+        }
+      }
+    } catch (_e) {
+      // best-effort price-action guard
     }
 
     return null;

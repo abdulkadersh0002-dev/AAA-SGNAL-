@@ -64,10 +64,14 @@ class IntelligentTradeManager {
     this.maxQualityScores = 1000;
 
     // Performance tracking per symbol
-    this.symbolPerformance = new Map(); // symbol -> { wins, losses, breakeven, avgProfit, avgLoss }
+    this.symbolPerformance = new Map(); // symbol -> { wins, losses, breakeven, avgProfit, avgLoss, consecutiveLosses, coolDownUntil }
 
     // Market regime awareness
     this.currentRegime = new Map(); // symbol -> 'trending' | 'ranging' | 'volatile'
+
+    // Consecutive-loss cool-down: block entry after N losses on same symbol
+    this.maxConsecutiveLossesPerSymbol = options.maxConsecutiveLossesPerSymbol ?? 3;
+    this.symbolCoolDownMs = options.symbolCoolDownMs ?? 2 * 60 * 60 * 1000; // 2 hours
 
     // Active trades with re-scoring
     this.activeTrades = new Map(); // tradeId -> { trade, lastScore, scoreHistory }
@@ -227,6 +231,17 @@ class IntelligentTradeManager {
         confidence: 0,
         reasons: [`Invalid or neutral direction: ${direction}`],
         blocked: 'INVALID_DIRECTION',
+      };
+    }
+
+    // 0. Consecutive-loss cool-down guard (per symbol)
+    const coolDownCheck = this.checkConsecutiveLossCoolDown(symbol);
+    if (coolDownCheck.blocked) {
+      return {
+        shouldOpen: false,
+        confidence: 0,
+        reasons: [coolDownCheck.reason],
+        blocked: 'CONSECUTIVE_LOSS_COOLDOWN',
       };
     }
 
@@ -716,7 +731,7 @@ class IntelligentTradeManager {
 
   /**
    * Update symbol performance
-   * Tracks wins, losses, and break-even trades separately
+   * Tracks wins, losses, break-even trades, consecutive losses, and cool-down state
    */
   updateSymbolPerformance(symbol, profit) {
     const perf = this.symbolPerformance.get(symbol) || {
@@ -725,17 +740,30 @@ class IntelligentTradeManager {
       breakeven: 0,
       avgProfit: 0,
       avgLoss: 0,
+      consecutiveLosses: 0,
+      coolDownUntil: 0,
     };
 
     if (profit > 0) {
       perf.avgProfit = (perf.avgProfit * perf.wins + profit) / (perf.wins + 1);
       perf.wins++;
+      perf.consecutiveLosses = 0; // reset streak on win
     } else if (profit < 0) {
       const absLoss = Math.abs(profit);
       perf.avgLoss = (perf.avgLoss * perf.losses + absLoss) / (perf.losses + 1);
       perf.losses++;
+      perf.consecutiveLosses = (perf.consecutiveLosses || 0) + 1;
+
+      // Trigger cool-down after reaching threshold
+      if (perf.consecutiveLosses >= this.maxConsecutiveLossesPerSymbol) {
+        perf.coolDownUntil = Date.now() + this.symbolCoolDownMs;
+        this.logger?.warn?.(
+          { symbol, consecutiveLosses: perf.consecutiveLosses, coolDownMs: this.symbolCoolDownMs },
+          'Symbol cool-down activated after consecutive losses'
+        );
+      }
     } else {
-      // Track break-even trades separately
+      // Track break-even trades separately; don't reset or increment streak
       perf.breakeven++;
     }
 
@@ -743,6 +771,35 @@ class IntelligentTradeManager {
 
     // Cleanup old symbols if cache grows too large
     this.cleanupCachesIfNeeded();
+  }
+
+  /**
+   * Check if a symbol is in consecutive-loss cool-down
+   * Returns { blocked: boolean, reason: string, consecutiveLosses: number, coolDownUntil: number }
+   */
+  checkConsecutiveLossCoolDown(symbol) {
+    const perf = this.symbolPerformance.get(symbol);
+    if (!perf) {
+      return { blocked: false, reason: 'No history', consecutiveLosses: 0, coolDownUntil: 0 };
+    }
+
+    const now = Date.now();
+    if (perf.coolDownUntil && now < perf.coolDownUntil) {
+      const remainingMinutes = Math.ceil((perf.coolDownUntil - now) / 60_000);
+      return {
+        blocked: true,
+        reason: `${symbol} in cool-down after ${perf.consecutiveLosses} consecutive losses (${remainingMinutes} min remaining)`,
+        consecutiveLosses: perf.consecutiveLosses,
+        coolDownUntil: perf.coolDownUntil,
+      };
+    }
+
+    return {
+      blocked: false,
+      reason: 'OK',
+      consecutiveLosses: perf.consecutiveLosses || 0,
+      coolDownUntil: perf.coolDownUntil || 0,
+    };
   }
 
   /**
