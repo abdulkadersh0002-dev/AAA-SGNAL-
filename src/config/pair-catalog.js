@@ -33,6 +33,17 @@ const FX_VOLATILITY = {
   GBPJPY: 0.22,
   AUDJPY: 0.14,
   CADJPY: 0.16,
+  EURCHF: 0.0007,
+  EURAUD: 0.0013,
+  EURCAD: 0.001,
+  GBPAUD: 0.0015,
+  GBPCAD: 0.0012,
+  AUDCAD: 0.0009,
+  AUDNZD: 0.0008,
+  NZDCAD: 0.0009,
+  NZDCHF: 0.0007,
+  GBPCHF: 0.001,
+  CHFJPY: 0.17,
 };
 
 function createFxInstrument(config) {
@@ -231,7 +242,6 @@ const forexInstruments = [
     liquidityNotes: 'Most active during European data releases',
     sessions: [{ label: 'London', start: '07:00', end: '16:00', weight: 1.5 }],
     timeframes: ['M15', 'H1', 'H4'],
-    enabled: false,
   }),
   createFxInstrument({
     pair: 'EURJPY',
@@ -243,7 +253,6 @@ const forexInstruments = [
       { label: 'London', start: '06:00', end: '15:00', weight: 1.4 },
     ],
     timeframes: ['M15', 'H1', 'H4'],
-    enabled: false,
   }),
   createFxInstrument({
     pair: 'GBPJPY',
@@ -255,7 +264,6 @@ const forexInstruments = [
       { label: 'London', start: '07:00', end: '16:00', weight: 1.6 },
     ],
     timeframes: ['M15', 'H1', 'H4'],
-    enabled: false,
   }),
   createFxInstrument({
     pair: 'AUDJPY',
@@ -267,7 +275,6 @@ const forexInstruments = [
       { label: 'Sydney', start: '21:00', end: '05:00', weight: 1.2 },
     ],
     timeframes: ['M15', 'H1', 'H4'],
-    enabled: false,
   }),
   createFxInstrument({
     pair: 'CADJPY',
@@ -279,7 +286,119 @@ const forexInstruments = [
       { label: 'New York', start: '12:00', end: '21:00', weight: 1.3 },
     ],
     timeframes: ['M15', 'H1', 'H4'],
-    enabled: false,
+  }),
+  // ── Additional FX Crosses ────────────────────────────────────────────────
+  createFxInstrument({
+    pair: 'EURCHF',
+    region: 'Eurozone/Switzerland',
+    volatilityTier: 'low',
+    liquidityNotes: 'Safe-haven cross; sensitive to SNB intervention',
+    sessions: [{ label: 'Zurich', start: '07:00', end: '16:00', weight: 1.4 }],
+    timeframes: ['M15', 'H1', 'H4'],
+  }),
+  createFxInstrument({
+    pair: 'EURAUD',
+    region: 'Eurozone/Australia',
+    volatilityTier: 'medium',
+    liquidityNotes: 'Active during European and Asia-Pacific overlap',
+    sessions: [
+      { label: 'Sydney', start: '21:00', end: '05:00', weight: 1.3 },
+      { label: 'London', start: '07:00', end: '16:00', weight: 1.4 },
+    ],
+    timeframes: ['M15', 'H1', 'H4'],
+  }),
+  createFxInstrument({
+    pair: 'EURCAD',
+    region: 'Eurozone/Canada',
+    volatilityTier: 'medium',
+    liquidityNotes: 'Sensitive to oil prices and ECB/BOC policy divergence',
+    sessions: [
+      { label: 'London', start: '07:00', end: '16:00', weight: 1.4 },
+      { label: 'New York', start: '12:00', end: '21:00', weight: 1.3 },
+    ],
+    timeframes: ['M15', 'H1', 'H4'],
+  }),
+  createFxInstrument({
+    pair: 'GBPAUD',
+    region: 'UK/Australia',
+    volatilityTier: 'high',
+    liquidityNotes: 'High volatility; watch RBA and BOE policy meetings',
+    sessions: [
+      { label: 'Sydney', start: '21:00', end: '05:00', weight: 1.3 },
+      { label: 'London', start: '07:00', end: '16:00', weight: 1.5 },
+    ],
+    timeframes: ['M15', 'H1', 'H4'],
+  }),
+  createFxInstrument({
+    pair: 'GBPCAD',
+    region: 'UK/Canada',
+    volatilityTier: 'medium',
+    liquidityNotes: 'Active during London/NY overlap; oil-correlated',
+    sessions: [
+      { label: 'London', start: '07:00', end: '16:00', weight: 1.4 },
+      { label: 'New York', start: '12:00', end: '21:00', weight: 1.3 },
+    ],
+    timeframes: ['M15', 'H1', 'H4'],
+  }),
+  createFxInstrument({
+    pair: 'AUDCAD',
+    region: 'Australia/Canada',
+    volatilityTier: 'medium',
+    liquidityNotes: 'Commodity-linked cross; driven by oil/iron ore sentiment',
+    sessions: [
+      { label: 'Sydney', start: '21:00', end: '05:00', weight: 1.3 },
+      { label: 'New York', start: '12:00', end: '21:00', weight: 1.3 },
+    ],
+    timeframes: ['M15', 'H1', 'H4'],
+  }),
+  createFxInstrument({
+    pair: 'AUDNZD',
+    region: 'Australia/New Zealand',
+    volatilityTier: 'low',
+    liquidityNotes: 'Tightest spread within Asia-Pacific; RBA/RBNZ divergence plays',
+    sessions: [
+      { label: 'Sydney', start: '21:00', end: '05:00', weight: 1.5 },
+      { label: 'Wellington', start: '21:00', end: '04:00', weight: 1.3 },
+    ],
+    timeframes: ['M15', 'H1', 'H4'],
+  }),
+  createFxInstrument({
+    pair: 'NZDCAD',
+    region: 'New Zealand/Canada',
+    volatilityTier: 'low',
+    liquidityNotes: 'Less liquid cross; commodity-correlated',
+    sessions: [
+      { label: 'Wellington', start: '21:00', end: '04:00', weight: 1.3 },
+      { label: 'New York', start: '12:00', end: '21:00', weight: 1.2 },
+    ],
+    timeframes: ['M15', 'H1', 'H4'],
+  }),
+  createFxInstrument({
+    pair: 'NZDCHF',
+    region: 'New Zealand/Switzerland',
+    volatilityTier: 'low',
+    liquidityNotes: 'Risk/safe-haven cross; low liquidity outside Asia hours',
+    sessions: [{ label: 'Wellington', start: '21:00', end: '04:00', weight: 1.3 }],
+    timeframes: ['M15', 'H1', 'H4'],
+  }),
+  createFxInstrument({
+    pair: 'GBPCHF',
+    region: 'UK/Switzerland',
+    volatilityTier: 'medium',
+    liquidityNotes: 'Active during European hours; SNB-sensitive',
+    sessions: [{ label: 'London', start: '07:00', end: '16:00', weight: 1.5 }],
+    timeframes: ['M15', 'H1', 'H4'],
+  }),
+  createFxInstrument({
+    pair: 'CHFJPY',
+    region: 'Switzerland/Japan',
+    volatilityTier: 'medium',
+    liquidityNotes: 'Safe-haven cross; driven by risk appetite and BOJ/SNB policy',
+    sessions: [
+      { label: 'Tokyo', start: '23:00', end: '07:00', weight: 1.4 },
+      { label: 'Zurich', start: '07:00', end: '16:00', weight: 1.4 },
+    ],
+    timeframes: ['M15', 'H1', 'H4'],
   }),
 ];
 
@@ -375,7 +494,6 @@ const commodityInstruments = [
     },
     syntheticBasePrice: 1950,
     syntheticVolatility: 4.5,
-    enabled: false,
   }),
   createCommodityInstrument({
     pair: 'XAGUSD',
@@ -399,7 +517,6 @@ const commodityInstruments = [
     },
     syntheticBasePrice: 24,
     syntheticVolatility: 0.6,
-    enabled: false,
   }),
   createCommodityInstrument({
     pair: 'XAGEUR',

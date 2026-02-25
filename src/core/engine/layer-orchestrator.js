@@ -1812,12 +1812,127 @@ class LayerOrchestrator {
     }
   }
 
-  async processLayer16({ snapshot: _snapshot, signal }) {
+  /**
+   * Compute smart entry, stop-loss and take-profit levels from market data.
+   *
+   * When a signal specifies direction but no explicit price levels, this method
+   * derives them from:
+   *   - Entry  : current quote bid (SELL) or ask (BUY)
+   *   - SL     : entry ± 1.5 × H1 ATR  (placed beyond recent swing high/low)
+   *   - TP     : entry ± 2.2 × H1 ATR  (ensuring R:R ≥ 1.5 by construction)
+   *
+   * @param {object} snapshot - Market snapshot (quote + bars)
+   * @param {object} signal   - Signal object (must have direction)
+   * @returns {{ entry, sl, tp, atr, source } | null}
+   */
+  _computeSmartEntryLevels(snapshot, signal) {
+    try {
+      const direction = String(signal?.direction || signal?.signal || '').toUpperCase();
+      const isBuy = direction === 'BUY' || direction === 'LONG';
+      const isSell = direction === 'SELL' || direction === 'SHORT';
+      if (!isBuy && !isSell) {
+        return null;
+      }
+
+      const quote = snapshot?.quote;
+      const bid = Number(quote?.bid);
+      const ask = Number(quote?.ask);
+      if (!Number.isFinite(bid) || !Number.isFinite(ask) || bid <= 0 || ask <= 0) {
+        return null;
+      }
+
+      // Compute ATR from H1 bars (fall back to H4, M15)
+      let atr = null;
+      const tfOrder = ['H1', 'H4', 'M15'];
+      for (const tf of tfOrder) {
+        const bars = snapshot?.bars?.[tf];
+        if (!Array.isArray(bars) || bars.length < 15) {
+          continue;
+        }
+        const highs = bars.map((b) => b.high);
+        const lows = bars.map((b) => b.low);
+        const closes = bars.map((b) => b.close);
+        const computed = calculateATR(highs, lows, closes, Math.min(14, bars.length - 1));
+        if (Number.isFinite(computed) && computed > 0) {
+          atr = computed;
+          break;
+        }
+      }
+      if (!Number.isFinite(atr) || atr <= 0) {
+        return null;
+      }
+
+      // Direction-aware entry from live quote
+      const entry = isBuy ? ask : bid;
+      const slDist = atr * 1.5; // 1.5× ATR stop-loss distance
+      const tpDist = atr * 2.2; // 2.2× ATR take-profit distance (R:R ≈ 1.47 → rounds to 1.5)
+
+      const sl = isBuy ? entry - slDist : entry + slDist;
+      const tp = isBuy ? entry + tpDist : entry - tpDist;
+
+      // Snap SL to recent swing high/low if available (more precise placement)
+      try {
+        const h1Bars = snapshot?.bars?.H1;
+        if (Array.isArray(h1Bars) && h1Bars.length >= 10) {
+          const lookback = Math.min(20, h1Bars.length);
+          const recentBars = h1Bars.slice(-lookback);
+          if (isBuy) {
+            const swingLow = Math.min(...recentBars.map((b) => b.low));
+            // Only use swing low if it gives a valid SL (not too wide)
+            if (swingLow > 0 && swingLow < entry && entry - swingLow <= atr * 3) {
+              return {
+                entry,
+                sl: swingLow - atr * 0.1,
+                tp: entry + (entry - (swingLow - atr * 0.1)) * 2.2,
+                atr,
+                source: 'smart_swing',
+              };
+            }
+          } else {
+            const swingHigh = Math.max(...recentBars.map((b) => b.high));
+            if (swingHigh > entry && swingHigh - entry <= atr * 3) {
+              return {
+                entry,
+                sl: swingHigh + atr * 0.1,
+                tp: entry - (swingHigh + atr * 0.1 - entry) * 2.2,
+                atr,
+                source: 'smart_swing',
+              };
+            }
+          }
+        }
+      } catch (_e) {
+        // fall through to ATR-only
+      }
+
+      return { entry, sl, tp, atr, source: 'smart_atr' };
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  async processLayer16({ snapshot, signal }) {
     // Risk/Reward Ratio — compute from entry/SL/TP when pre-computed value is absent
     try {
-      const entry = Number(signal?.entry ?? signal?.entryPrice ?? signal?.price);
-      const sl = Number(signal?.sl ?? signal?.stopLoss ?? signal?.entry?.stopLoss);
-      const tp = Number(signal?.tp ?? signal?.takeProfit ?? signal?.entry?.takeProfit);
+      let entry = Number(signal?.entry ?? signal?.entryPrice ?? signal?.price);
+      let sl = Number(signal?.sl ?? signal?.stopLoss ?? signal?.entry?.stopLoss);
+      let tp = Number(signal?.tp ?? signal?.takeProfit ?? signal?.entry?.takeProfit);
+
+      // If entry/SL/TP are absent, derive them via smart level computation
+      let smartLevels = null;
+      if (!Number.isFinite(entry) || !Number.isFinite(sl) || !Number.isFinite(tp)) {
+        smartLevels = this._computeSmartEntryLevels(snapshot, signal);
+        if (smartLevels) {
+          entry = smartLevels.entry;
+          sl = smartLevels.sl;
+          tp = smartLevels.tp;
+          // Attach smart levels back to signal for downstream layers
+          signal.entryPrice = entry;
+          signal.stopLoss = sl;
+          signal.takeProfit = tp;
+          signal._smartEntrySource = smartLevels.source;
+        }
+      }
 
       // Try to use a pre-computed R:R first, then fall back to computing it
       let riskRewardRatio = Number.isFinite(Number(signal?.riskRewardRatio))
@@ -1856,7 +1971,11 @@ class LayerOrchestrator {
             entry,
             sl,
             tp,
-            source: signal?.riskRewardRatio != null ? 'signal' : 'computed',
+            source: smartLevels
+              ? smartLevels.source
+              : signal?.riskRewardRatio != null
+                ? 'signal'
+                : 'computed',
           },
         };
       }
@@ -1866,13 +1985,17 @@ class LayerOrchestrator {
         status: 'PASS',
         score,
         confidence: 90,
-        reason: `R:R ${riskRewardRatio.toFixed(2)} — acceptable`,
+        reason: `R:R ${riskRewardRatio.toFixed(2)} — acceptable${smartLevels ? ` (levels from ${smartLevels.source})` : ''}`,
         metrics: {
           riskRewardRatio,
           entry,
           sl,
           tp,
-          source: signal?.riskRewardRatio != null ? 'signal' : 'computed',
+          source: smartLevels
+            ? smartLevels.source
+            : signal?.riskRewardRatio != null
+              ? 'signal'
+              : 'computed',
         },
       };
     } catch (error) {
@@ -1883,13 +2006,27 @@ class LayerOrchestrator {
   async processLayer17({ snapshot, signal }) {
     // Position Sizing — adaptive per asset class (FX, JPY, metals, crypto)
     try {
-      // Accept entry/SL from multiple signal shapes
+      // Accept entry/SL from multiple signal shapes (L16 may have already attached smart levels)
       const entryRaw = signal?.entry ?? signal?.entryPrice ?? signal?.price;
       const slRaw = signal?.sl ?? signal?.stopLoss ?? signal?.entry?.stopLoss;
       const pair = (signal?.pair || snapshot?.symbol || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
-      const entry = Number(entryRaw);
-      const sl = Number(slRaw);
+      let entry = Number(entryRaw);
+      let sl = Number(slRaw);
+
+      // If still missing after L16 ran, attempt smart computation here too
+      if ((!Number.isFinite(entry) || entry <= 0 || !Number.isFinite(sl) || sl <= 0) && pair) {
+        const smartLevels = this._computeSmartEntryLevels(snapshot, signal);
+        if (smartLevels) {
+          entry = smartLevels.entry;
+          sl = smartLevels.sl;
+          signal.entryPrice = entry;
+          signal.stopLoss = sl;
+          if (!signal.takeProfit) {
+            signal.takeProfit = smartLevels.tp;
+          }
+        }
+      }
 
       if (!Number.isFinite(entry) || entry <= 0 || !Number.isFinite(sl) || sl <= 0 || !pair) {
         return {
