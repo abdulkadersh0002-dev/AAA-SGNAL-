@@ -501,7 +501,11 @@ class LayerOrchestrator {
       const alignmentRatio = alignedCount / analyzedCount;
       const avgStrength = totalStrength / analyzedCount;
       const score = Math.round(alignmentRatio * 100);
-      const confidence = Math.min(95, Math.round(avgStrength * 0.8 + alignmentRatio * 20));
+      // Base confidence of 50 + 40 for full alignment + up to 5 from trend strength
+      const confidence = Math.min(
+        95,
+        Math.round(50 + alignmentRatio * 40 + Math.min(5, avgStrength * 0.5))
+      );
 
       // Determine pass/fail
       const minAlignment = 0.66; // At least 2 out of 3 timeframes
@@ -569,9 +573,8 @@ class LayerOrchestrator {
       const prevBar = dailyBars[dailyBars.length - 2];
       const pivots = calculatePivotPoints(prevBar.high, prevBar.low, prevBar.close);
 
-      // Create array of S/R levels
+      // Create array of S/R levels (exclude PIVOT to keep types as SUPPORT/RESISTANCE only)
       const levels = [
-        { value: pivots.pp, type: 'PIVOT' },
         { value: pivots.r1, type: 'RESISTANCE' },
         { value: pivots.r2, type: 'RESISTANCE' },
         { value: pivots.s1, type: 'SUPPORT' },
@@ -638,7 +641,7 @@ class LayerOrchestrator {
             ? {
                 value: srCheck.level,
                 type: srCheck.type,
-                distancePips: srCheck.distancePips.toFixed(1),
+                distancePips: Math.round(srCheck.distancePips * 10) / 10,
                 atLevel: srCheck.atLevel,
               }
             : null,
@@ -714,8 +717,8 @@ class LayerOrchestrator {
           signals.rsi.signal = 'BEARISH';
           signals.rsi.aligned = true;
         } else if ((direction === 'buy' && rsi > 70) || (direction === 'sell' && rsi < 30)) {
-          // Overbought/oversold against signal
-          signals.rsi.signal = direction === 'buy' ? 'OVERBOUGHT' : 'OVERSOLD';
+          // Overbought/oversold against signal - mapped to BEARISH/BULLISH for consistency
+          signals.rsi.signal = direction === 'buy' ? 'BEARISH' : 'BULLISH';
           signals.rsi.aligned = false;
         } else {
           signals.rsi.aligned = true; // Neutral is acceptable
@@ -723,20 +726,17 @@ class LayerOrchestrator {
         }
       }
 
-      // MACD analysis
+      // MACD analysis - use macd line (not histogram which is simplified to 0)
       if (macd !== null) {
         total++;
-        const macdSignal = macd.histogram > 0 ? 'BULLISH' : 'BEARISH';
+        const macdSignal = macd.macd > 0 ? 'BULLISH' : 'BEARISH';
         signals.macd = {
-          value: macd.histogram.toFixed(5),
+          value: macd.macd.toFixed(5),
           signal: macdSignal,
           aligned: false,
         };
 
-        if (
-          (direction === 'buy' && macd.histogram > 0) ||
-          (direction === 'sell' && macd.histogram < 0)
-        ) {
+        if ((direction === 'buy' && macd.macd > 0) || (direction === 'sell' && macd.macd < 0)) {
           aligned++;
           signals.macd.aligned = true;
         }

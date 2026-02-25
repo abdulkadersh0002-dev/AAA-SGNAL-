@@ -4,408 +4,82 @@
  */
 
 /**
+ * Generate OHLC bars with a zigzag trend (2 steps forward, 1 step back)
+ * This ensures RSI stays in a realistic range (not at extremes) while showing clear trend.
+ * @param {number} count - Number of bars to generate
+ * @param {number} startPrice - Starting close price
+ * @param {number} endPrice - Ending close price
+ * @param {number} intervalMs - Milliseconds per bar
+ * @param {number} baseVolume - Base volume per bar
+ * @returns {Array} Array of OHLC bar objects
+ */
+function generateTrendBars(count, startPrice, endPrice, intervalMs, baseVolume = 1000) {
+  const bars = [];
+  const now = Date.now();
+  const isUp = endPrice >= startPrice;
+  const totalMove = Math.abs(endPrice - startPrice);
+
+  // 3-forward-2-back zigzag (5-bar cycles): net gain per cycle = 1 unit
+  // This gives RSI ~57 (neutral) instead of extreme values from a linear trend
+  const cycles = Math.floor(count / 5);
+  const unitStep = totalMove / Math.max(1, cycles);
+  const fwdStep = unitStep;
+  const bckStep = unitStep;
+
+  let price = startPrice;
+  for (let i = 0; i < count; i++) {
+    const phase = i % 5;
+    let change;
+    if (phase < 3) {
+      change = isUp ? fwdStep : -fwdStep; // 3 bars in trend direction
+    } else {
+      change = isUp ? -bckStep : bckStep; // 2 bars counter-trend
+    }
+    const open = parseFloat(price.toFixed(5));
+    const close = parseFloat((price + change).toFixed(5));
+    price = close;
+    bars.push({
+      time: now - intervalMs * (count - 1 - i),
+      open,
+      high: parseFloat((Math.max(open, close) + 0.0005).toFixed(5)),
+      low: parseFloat((Math.min(open, close) - 0.0005).toFixed(5)),
+      close,
+      volume: baseVolume + i * 10,
+    });
+  }
+  return bars;
+}
+
+/**
  * Sample OHLC bar data for multiple timeframes
- * Represents a bullish trend scenario
+ * Represents a bullish trend scenario (90+ bars per timeframe for sufficient TA calculations)
+ * Uses 200 H1 bars to enable full MA analysis (SMA200 requires 200 bars)
  */
 export const bullishTrendBars = {
-  M15: [
-    { time: Date.now() - 900000, open: 1.08, high: 1.081, low: 1.0795, close: 1.0808, volume: 100 },
-    {
-      time: Date.now() - 800000,
-      open: 1.0808,
-      high: 1.082,
-      low: 1.0805,
-      close: 1.0815,
-      volume: 120,
-    },
-    {
-      time: Date.now() - 700000,
-      open: 1.0815,
-      high: 1.0828,
-      low: 1.0812,
-      close: 1.0825,
-      volume: 150,
-    },
-    {
-      time: Date.now() - 600000,
-      open: 1.0825,
-      high: 1.0838,
-      low: 1.082,
-      close: 1.0835,
-      volume: 180,
-    },
-    {
-      time: Date.now() - 500000,
-      open: 1.0835,
-      high: 1.0848,
-      low: 1.083,
-      close: 1.0845,
-      volume: 200,
-    },
-    {
-      time: Date.now() - 400000,
-      open: 1.0845,
-      high: 1.0858,
-      low: 1.084,
-      close: 1.0855,
-      volume: 220,
-    },
-    {
-      time: Date.now() - 300000,
-      open: 1.0855,
-      high: 1.0868,
-      low: 1.085,
-      close: 1.0865,
-      volume: 250,
-    },
-    {
-      time: Date.now() - 200000,
-      open: 1.0865,
-      high: 1.0878,
-      low: 1.086,
-      close: 1.0875,
-      volume: 280,
-    },
-    {
-      time: Date.now() - 100000,
-      open: 1.0875,
-      high: 1.0888,
-      low: 1.087,
-      close: 1.0885,
-      volume: 300,
-    },
-    { time: Date.now(), open: 1.0885, high: 1.0898, low: 1.088, close: 1.0895, volume: 320 },
-  ],
-  H1: [
-    {
-      time: Date.now() - 3600000 * 5,
-      open: 1.075,
-      high: 1.077,
-      low: 1.074,
-      close: 1.0765,
-      volume: 1000,
-    },
-    {
-      time: Date.now() - 3600000 * 4,
-      open: 1.0765,
-      high: 1.079,
-      low: 1.076,
-      close: 1.0785,
-      volume: 1100,
-    },
-    {
-      time: Date.now() - 3600000 * 3,
-      open: 1.0785,
-      high: 1.081,
-      low: 1.078,
-      close: 1.0805,
-      volume: 1200,
-    },
-    {
-      time: Date.now() - 3600000 * 2,
-      open: 1.0805,
-      high: 1.0835,
-      low: 1.08,
-      close: 1.083,
-      volume: 1300,
-    },
-    {
-      time: Date.now() - 3600000,
-      open: 1.083,
-      high: 1.086,
-      low: 1.0825,
-      close: 1.0855,
-      volume: 1400,
-    },
-    { time: Date.now(), open: 1.0855, high: 1.0898, low: 1.085, close: 1.0895, volume: 1500 },
-  ],
-  H4: [
-    {
-      time: Date.now() - 14400000 * 5,
-      open: 1.065,
-      high: 1.069,
-      low: 1.064,
-      close: 1.068,
-      volume: 5000,
-    },
-    {
-      time: Date.now() - 14400000 * 4,
-      open: 1.068,
-      high: 1.073,
-      low: 1.067,
-      close: 1.072,
-      volume: 5500,
-    },
-    {
-      time: Date.now() - 14400000 * 3,
-      open: 1.072,
-      high: 1.077,
-      low: 1.071,
-      close: 1.076,
-      volume: 6000,
-    },
-    {
-      time: Date.now() - 14400000 * 2,
-      open: 1.076,
-      high: 1.082,
-      low: 1.075,
-      close: 1.081,
-      volume: 6500,
-    },
-    {
-      time: Date.now() - 14400000,
-      open: 1.081,
-      high: 1.087,
-      low: 1.08,
-      close: 1.086,
-      volume: 7000,
-    },
-    { time: Date.now(), open: 1.086, high: 1.092, low: 1.085, close: 1.0895, volume: 7500 },
-  ],
-  D1: [
-    {
-      time: Date.now() - 86400000 * 5,
-      open: 1.05,
-      high: 1.058,
-      low: 1.049,
-      close: 1.057,
-      volume: 50000,
-    },
-    {
-      time: Date.now() - 86400000 * 4,
-      open: 1.057,
-      high: 1.066,
-      low: 1.056,
-      close: 1.065,
-      volume: 55000,
-    },
-    {
-      time: Date.now() - 86400000 * 3,
-      open: 1.065,
-      high: 1.074,
-      low: 1.064,
-      close: 1.073,
-      volume: 60000,
-    },
-    {
-      time: Date.now() - 86400000 * 2,
-      open: 1.073,
-      high: 1.082,
-      low: 1.072,
-      close: 1.081,
-      volume: 65000,
-    },
-    {
-      time: Date.now() - 86400000,
-      open: 1.081,
-      high: 1.09,
-      low: 1.08,
-      close: 1.089,
-      volume: 70000,
-    },
-  ],
+  // 90 M15 bars trending up with zigzag: 1.0700 → ~1.0895
+  M15: generateTrendBars(90, 1.07, 1.0895, 900000, 100),
+  // 200 H1 bars trending up with zigzag: 1.0500 → ~1.0895
+  H1: generateTrendBars(200, 1.05, 1.0895, 3600000, 1000),
+  // 90 H4 bars trending up with zigzag: 1.0300 → ~1.0895
+  H4: generateTrendBars(90, 1.03, 1.0895, 14400000, 5000),
+  // 90 D1 bars trending up with zigzag: 1.0000 → ~1.0895
+  D1: generateTrendBars(90, 1.0, 1.0895, 86400000, 50000),
 };
 
 /**
  * Sample OHLC bar data for bearish trend scenario
+ * (90+ bars per timeframe for sufficient TA calculations)
+ * Uses 200 H1 bars to enable full MA analysis (SMA200 requires 200 bars)
  */
 export const bearishTrendBars = {
-  M15: [
-    {
-      time: Date.now() - 900000,
-      open: 1.09,
-      high: 1.0905,
-      low: 1.0892,
-      close: 1.0895,
-      volume: 100,
-    },
-    { time: Date.now() - 800000, open: 1.0895, high: 1.09, low: 1.088, close: 1.0885, volume: 120 },
-    {
-      time: Date.now() - 700000,
-      open: 1.0885,
-      high: 1.089,
-      low: 1.087,
-      close: 1.0875,
-      volume: 150,
-    },
-    {
-      time: Date.now() - 600000,
-      open: 1.0875,
-      high: 1.088,
-      low: 1.086,
-      close: 1.0865,
-      volume: 180,
-    },
-    {
-      time: Date.now() - 500000,
-      open: 1.0865,
-      high: 1.087,
-      low: 1.085,
-      close: 1.0855,
-      volume: 200,
-    },
-    {
-      time: Date.now() - 400000,
-      open: 1.0855,
-      high: 1.086,
-      low: 1.084,
-      close: 1.0845,
-      volume: 220,
-    },
-    {
-      time: Date.now() - 300000,
-      open: 1.0845,
-      high: 1.085,
-      low: 1.083,
-      close: 1.0835,
-      volume: 250,
-    },
-    {
-      time: Date.now() - 200000,
-      open: 1.0835,
-      high: 1.084,
-      low: 1.082,
-      close: 1.0825,
-      volume: 280,
-    },
-    {
-      time: Date.now() - 100000,
-      open: 1.0825,
-      high: 1.083,
-      low: 1.081,
-      close: 1.0815,
-      volume: 300,
-    },
-    { time: Date.now(), open: 1.0815, high: 1.082, low: 1.08, close: 1.0805, volume: 320 },
-  ],
-  H1: [
-    {
-      time: Date.now() - 3600000 * 5,
-      open: 1.095,
-      high: 1.096,
-      low: 1.093,
-      close: 1.0935,
-      volume: 1000,
-    },
-    {
-      time: Date.now() - 3600000 * 4,
-      open: 1.0935,
-      high: 1.0945,
-      low: 1.091,
-      close: 1.0915,
-      volume: 1100,
-    },
-    {
-      time: Date.now() - 3600000 * 3,
-      open: 1.0915,
-      high: 1.0925,
-      low: 1.089,
-      close: 1.0895,
-      volume: 1200,
-    },
-    {
-      time: Date.now() - 3600000 * 2,
-      open: 1.0895,
-      high: 1.0905,
-      low: 1.087,
-      close: 1.0875,
-      volume: 1300,
-    },
-    {
-      time: Date.now() - 3600000,
-      open: 1.0875,
-      high: 1.0885,
-      low: 1.085,
-      close: 1.0855,
-      volume: 1400,
-    },
-    { time: Date.now(), open: 1.0855, high: 1.0865, low: 1.08, close: 1.0805, volume: 1500 },
-  ],
-  H4: [
-    {
-      time: Date.now() - 14400000 * 5,
-      open: 1.1,
-      high: 1.102,
-      low: 1.098,
-      close: 1.099,
-      volume: 5000,
-    },
-    {
-      time: Date.now() - 14400000 * 4,
-      open: 1.099,
-      high: 1.101,
-      low: 1.096,
-      close: 1.097,
-      volume: 5500,
-    },
-    {
-      time: Date.now() - 14400000 * 3,
-      open: 1.097,
-      high: 1.099,
-      low: 1.094,
-      close: 1.095,
-      volume: 6000,
-    },
-    {
-      time: Date.now() - 14400000 * 2,
-      open: 1.095,
-      high: 1.097,
-      low: 1.092,
-      close: 1.093,
-      volume: 6500,
-    },
-    {
-      time: Date.now() - 14400000,
-      open: 1.093,
-      high: 1.095,
-      low: 1.088,
-      close: 1.089,
-      volume: 7000,
-    },
-    { time: Date.now(), open: 1.089, high: 1.091, low: 1.08, close: 1.0805, volume: 7500 },
-  ],
-  D1: [
-    {
-      time: Date.now() - 86400000 * 5,
-      open: 1.11,
-      high: 1.115,
-      low: 1.108,
-      close: 1.109,
-      volume: 50000,
-    },
-    {
-      time: Date.now() - 86400000 * 4,
-      open: 1.109,
-      high: 1.112,
-      low: 1.1,
-      close: 1.101,
-      volume: 55000,
-    },
-    {
-      time: Date.now() - 86400000 * 3,
-      open: 1.101,
-      high: 1.104,
-      low: 1.092,
-      close: 1.093,
-      volume: 60000,
-    },
-    {
-      time: Date.now() - 86400000 * 2,
-      open: 1.093,
-      high: 1.096,
-      low: 1.084,
-      close: 1.085,
-      volume: 65000,
-    },
-    {
-      time: Date.now() - 86400000,
-      open: 1.085,
-      high: 1.088,
-      low: 1.076,
-      close: 1.077,
-      volume: 70000,
-    },
-  ],
+  // 90 M15 bars trending down with zigzag: 1.0900 → ~1.0705
+  M15: generateTrendBars(90, 1.09, 1.0705, 900000, 100),
+  // 200 H1 bars trending down with zigzag: 1.1100 → ~1.0805
+  H1: generateTrendBars(200, 1.11, 1.0805, 3600000, 1000),
+  // 90 H4 bars trending down with zigzag: 1.1300 → ~1.0805
+  H4: generateTrendBars(90, 1.13, 1.0805, 14400000, 5000),
+  // 90 D1 bars trending down with zigzag: 1.1600 → ~1.0805
+  D1: generateTrendBars(90, 1.16, 1.0805, 86400000, 50000),
 };
 
 /**
