@@ -1278,6 +1278,10 @@ class LayerOrchestrator {
     }
   }
 
+  getLayerResult(previousLayers, id) {
+    return previousLayers.find((layer) => layer.layer === id) || null;
+  }
+
   async processLayer18({ previousLayers }) {
     // Final validation with adaptive thresholds derived from real market state.
     const criticalLayers = [1, 2, 3, 4, 6, 11, 12, 14, 16, 17];
