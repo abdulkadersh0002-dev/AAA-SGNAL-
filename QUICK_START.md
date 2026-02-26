@@ -1,5 +1,47 @@
 # 🚀 Quick Start Guide / دليل البدء السريع
 
+## 📥 Clone & Open in VS Code
+
+> **Don't have the folder yet?** Use one of the scripts below – they clone the
+> repository and open it in VS Code automatically.
+
+### Windows
+
+1. Install [Git for Windows](https://git-scm.com/download/win) and
+   [VS Code](https://code.visualstudio.com/) (tick **"Add to PATH"** during
+   VS Code setup).
+2. Download **`clone-and-open.bat`** from this repository (or copy the raw
+   URL below into a browser and save the file).
+3. Double-click `clone-and-open.bat`.
+
+```
+https://raw.githubusercontent.com/abdulkadersh0002-dev/AAA-SGNAL-/main/clone-and-open.bat
+```
+
+### Mac / Linux
+
+```bash
+# Download and run the script in one command:
+curl -fsSL https://raw.githubusercontent.com/abdulkadersh0002-dev/AAA-SGNAL-/main/clone-and-open.sh | bash
+```
+
+Or download the file, make it executable, and run it:
+
+```bash
+chmod +x clone-and-open.sh
+bash clone-and-open.sh
+```
+
+### Manual clone (any platform)
+
+```bash
+git clone https://github.com/abdulkadersh0002-dev/AAA-SGNAL-.git
+cd AAA-SGNAL-
+code .
+```
+
+---
+
 ## English Version
 
 ### One Command to Rule Them All!
@@ -80,6 +122,37 @@ DASHBOARD_PORT=4173 # Change to 4174, 4175, etc.
 ---
 
 ## النسخة العربية
+
+### 📥 استنساخ المشروع وفتحه في VS Code
+
+> **ليس لديك المجلد بعد؟** استخدم أحد السكريبتات أدناه – تستنسخ المشروع وتفتحه في VS Code تلقائياً.
+
+#### Windows
+
+1. ثبّت [Git for Windows](https://git-scm.com/download/win) و
+   [VS Code](https://code.visualstudio.com/) (اختر **"Add to PATH"** أثناء تثبيت VS Code).
+2. حمّل ملف **`clone-and-open.bat`** من المستودع.
+3. انقر عليه نقراً مزدوجاً.
+
+```
+https://raw.githubusercontent.com/abdulkadersh0002-dev/AAA-SGNAL-/main/clone-and-open.bat
+```
+
+#### Mac / Linux
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/abdulkadersh0002-dev/AAA-SGNAL-/main/clone-and-open.sh | bash
+```
+
+#### يدوياً (جميع الأنظمة)
+
+```bash
+git clone https://github.com/abdulkadersh0002-dev/AAA-SGNAL-.git
+cd AAA-SGNAL-
+code .
+```
+
+---
 
 ### أمر واحد لتشغيل كل شيء!
 
