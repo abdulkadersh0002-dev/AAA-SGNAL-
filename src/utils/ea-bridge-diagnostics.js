@@ -58,6 +58,11 @@ export function buildEaConnectionDiagnostics({ eaBridgeService, broker, symbol, 
 
   const stats =
     typeof eaBridgeService?.getStatistics === 'function' ? eaBridgeService.getStatistics() : null;
+  const quoteFeedHeartbeatAt = Number(
+    stats?.marketFeed?.quoteFeedHeartbeat?.byBroker?.[normalizedBroker] || 0
+  );
+  const quoteFeedHeartbeatAgeMs =
+    quoteFeedHeartbeatAt > 0 ? Math.max(0, effectiveNow - quoteFeedHeartbeatAt) : null;
   const statsSummary = stats
     ? {
         activeSessions: Number(stats.activeSessions || 0),
@@ -68,6 +73,9 @@ export function buildEaConnectionDiagnostics({ eaBridgeService, broker, symbol, 
           snapshotsTotal: Number(stats?.marketFeed?.snapshots?.total || 0),
           barsSeries: Number(stats?.marketFeed?.bars?.series || 0),
           barsTotal: Number(stats?.marketFeed?.bars?.totalBars || 0),
+          quoteFeedHeartbeatAt,
+          quoteFeedHeartbeatAgeMs,
+          quoteFeedHeartbeatMaxAgeMs: Number(stats?.marketFeed?.quoteFeedHeartbeat?.maxAgeMs || 0),
         },
       }
     : null;
@@ -98,6 +106,10 @@ export function buildEaConnectionDiagnostics({ eaBridgeService, broker, symbol, 
       count: quoteCount,
       latestQuoteAt,
       latestQuoteAgeMs,
+    },
+    quoteFeedHeartbeat: {
+      at: quoteFeedHeartbeatAt || null,
+      ageMs: quoteFeedHeartbeatAgeMs,
     },
     statistics: statsSummary,
     hints: hints.length ? hints : undefined,

@@ -605,6 +605,9 @@ export const evaluateLayers18Readiness = ({
 
   return {
     ok,
+    model: 'L1-L20',
+    validationLayer: 'L18',
+    decisionLayer: 'L20',
     layersCount: layers.length,
     layer16Pass,
     layer17Ok,

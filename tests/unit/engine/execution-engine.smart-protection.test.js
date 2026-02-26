@@ -131,3 +131,116 @@ test('applySmartProfitProtection with OFFENSIVE profile lets winners run longer'
   assert.ok(trade.stopLoss > 1.1);
   assert.ok(trade.stopLoss < 1.1011);
 });
+
+test('updateLiveTradeIntelligence tracks favorable R and drawdown', () => {
+  const engine = createEngine();
+  const trade = {
+    direction: 'BUY',
+    entryPrice: 1.1,
+    stopLoss: 1.099,
+    lifecycleIntelligence: {
+      maxFavorableR: null,
+      maxAdverseR: null,
+      drawdownFromPeakR: 0,
+      lastRMultiple: null,
+      momentumScore: null,
+      lastPrice: null,
+      priceTape: [],
+    },
+  };
+
+  const first = engine.updateLiveTradeIntelligence(trade, 1.1015);
+  const second = engine.updateLiveTradeIntelligence(trade, 1.1008);
+
+  assert.ok(first.rMultiple > 1.4);
+  assert.ok(second.rMultiple > 0.7);
+  assert.ok(trade.lifecycleIntelligence.maxFavorableR >= first.rMultiple);
+  assert.ok(trade.lifecycleIntelligence.drawdownFromPeakR > 0);
+});
+
+test('decideAdaptiveLifecycleAction exits on large profit giveback', () => {
+  const engine = createEngine();
+  const trade = {
+    direction: 'BUY',
+    smartExecution: { exit: { trailStartRR: 0.9 } },
+  };
+
+  const action = engine.decideAdaptiveLifecycleAction(trade, {
+    rMultiple: 0.45,
+    maxFavorableR: 1.5,
+    drawdownFromPeakR: 1.05,
+    momentumScore: -0.00004,
+  });
+
+  assert.equal(action?.action, 'close');
+  assert.equal(action?.reason, 'adaptive_profit_giveback_exit');
+});
+
+test('decideAdaptiveLifecycleAction honors lifecycle config and cooldown', () => {
+  const engine = createEngine();
+  const now = Date.now();
+  const trade = {
+    direction: 'BUY',
+    openTime: now - 30 * 60 * 1000,
+    smartExecution: {
+      lifecycle: {
+        hardRiskBreachR: -0.8,
+        givebackMinPeakR: 1.1,
+        profitGivebackExitR: 0.5,
+        decisionCooldownMs: 15000,
+      },
+    },
+    lifecycleIntelligence: {
+      lastAdaptiveActionAt: now,
+    },
+  };
+
+  const blocked = engine.decideAdaptiveLifecycleAction(trade, {
+    rMultiple: -0.95,
+    maxFavorableR: 1.3,
+    drawdownFromPeakR: 0.9,
+    momentumScore: -0.00002,
+    consecutiveNegativeMomentum: 3,
+  });
+  assert.equal(blocked, null);
+
+  trade.lifecycleIntelligence.lastAdaptiveActionAt = now - 20000;
+  const allowed = engine.decideAdaptiveLifecycleAction(trade, {
+    rMultiple: -0.95,
+    maxFavorableR: 1.3,
+    drawdownFromPeakR: 0.9,
+    momentumScore: -0.00002,
+    consecutiveNegativeMomentum: 3,
+  });
+
+  assert.equal(allowed?.action, 'close');
+  assert.equal(allowed?.reason, 'adaptive_hard_risk_breach');
+});
+
+test('decideAdaptiveLifecycleAction exits stale trade when momentum stays weak', () => {
+  const engine = createEngine();
+  const trade = {
+    direction: 'BUY',
+    openTime: Date.now() - 150 * 60 * 1000,
+    smartExecution: {
+      lifecycle: {
+        staleTradeMinutes: 90,
+        staleMinR: 0.2,
+      },
+    },
+    lifecycleIntelligence: {
+      lastAdaptiveActionAt: Date.now() - 180000,
+    },
+  };
+
+  const action = engine.decideAdaptiveLifecycleAction(trade, {
+    rMultiple: 0.1,
+    maxFavorableR: 0.45,
+    drawdownFromPeakR: 0.35,
+    momentumScore: -0.00001,
+    consecutiveNegativeMomentum: 3,
+  });
+
+  assert.equal(action?.action, 'close');
+  assert.equal(action?.reason, 'adaptive_stale_trade_exit');
+});

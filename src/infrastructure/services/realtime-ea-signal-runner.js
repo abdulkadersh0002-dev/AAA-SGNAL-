@@ -50,6 +50,22 @@ const isStrictEaSymbolFilterEnabled = () => {
   return raw === '1' || raw === 'true' || raw === 'yes';
 };
 
+const isMetalSymbolToken = (symbol) => {
+  const base = extractBaseSymbol(symbol);
+  if (!base) {
+    return false;
+  }
+  return (
+    base === 'XAUUSD' ||
+    base === 'XAGUSD' ||
+    base === 'XAGEUR' ||
+    base === 'XPTUSD' ||
+    base === 'XPDUSD' ||
+    base === 'GOLD' ||
+    base === 'SILVER'
+  );
+};
+
 export class RealtimeEaSignalRunner {
   constructor(options = {}) {
     this.tradingEngine = options.tradingEngine;
@@ -281,16 +297,28 @@ export class RealtimeEaSignalRunner {
           : null;
 
     const envSmartSpreadPct = Number(process.env.EA_SMART_MAX_SPREAD_PCT);
+    const envSmartSpreadPctMetals = Number(process.env.EA_SMART_MAX_SPREAD_PCT_METALS);
     const envSmartSpreadPoints = Number(process.env.EA_SMART_MAX_SPREAD_POINTS);
+    const envSmartSpreadPointsMetals = Number(process.env.EA_SMART_MAX_SPREAD_POINTS_METALS);
     this.smartMaxSpreadPct = Number.isFinite(envSmartSpreadPct)
       ? Math.max(0, envSmartSpreadPct)
       : this.smartStrong
         ? 0.12
         : null;
+    this.smartMaxSpreadPctMetals = Number.isFinite(envSmartSpreadPctMetals)
+      ? Math.max(0, envSmartSpreadPctMetals)
+      : this.smartStrong
+        ? 0.25
+        : null;
     this.smartMaxSpreadPoints = Number.isFinite(envSmartSpreadPoints)
       ? Math.max(0, envSmartSpreadPoints)
       : this.smartStrong
         ? 45
+        : null;
+    this.smartMaxSpreadPointsMetals = Number.isFinite(envSmartSpreadPointsMetals)
+      ? Math.max(0, envSmartSpreadPointsMetals)
+      : this.smartStrong
+        ? 800
         : null;
 
     // Default: publish strict entry-ready signals to the dashboard.
@@ -304,8 +332,10 @@ export class RealtimeEaSignalRunner {
             envAllowCandidates === 'yes'
           ? true
           : this.smartStrong
-            ? false
+            ? eaOnlyMode || isNonProd
             : eaOnlyMode || isNonProd;
+
+    this.dashboardAllowCandidates = allowCandidatesByDefault;
 
     const envSnapshotSpecified = envRequireSnapshotRaw.trim().length > 0;
     const envBarsSpecified = envRequireBarsRaw.trim().length > 0;
@@ -906,7 +936,13 @@ export class RealtimeEaSignalRunner {
     }
 
     // Metals
-    if (base === 'XAUUSD' || base === 'XAGUSD' || base === 'XPTUSD' || base === 'XPDUSD') {
+    if (
+      base === 'XAUUSD' ||
+      base === 'XAGUSD' ||
+      base === 'XAGEUR' ||
+      base === 'XPTUSD' ||
+      base === 'XPDUSD'
+    ) {
       return true;
     }
     if (base === 'GOLD' || base === 'SILVER') {
@@ -1305,18 +1341,22 @@ export class RealtimeEaSignalRunner {
               ? Number(quote.spreadPoints)
               : null;
 
-        if (
-          this.smartMaxSpreadPct != null &&
-          Number.isFinite(spreadPct) &&
-          spreadPct > this.smartMaxSpreadPct
-        ) {
+        const spreadPctLimit = isMetalSymbolToken(symbol)
+          ? this.smartMaxSpreadPctMetals
+          : this.smartMaxSpreadPct;
+
+        if (spreadPctLimit != null && Number.isFinite(spreadPct) && spreadPct > spreadPctLimit) {
           return;
         }
 
+        const spreadPointsLimit = isMetalSymbolToken(symbol)
+          ? this.smartMaxSpreadPointsMetals
+          : this.smartMaxSpreadPoints;
+
         if (
-          this.smartMaxSpreadPoints != null &&
+          spreadPointsLimit != null &&
           Number.isFinite(spreadPoints) &&
-          spreadPoints > this.smartMaxSpreadPoints
+          spreadPoints > spreadPointsLimit
         ) {
           return;
         }
@@ -1408,8 +1448,67 @@ export class RealtimeEaSignalRunner {
 
     if (!rawSignal || typeof rawSignal !== 'object') {
       this.recordReject('generate_signal_empty', { broker, symbol });
-      this.lastGeneratedAt.set(key, now);
-      return;
+
+      const fallbackDirection = (() => {
+        const current = Number(barFallback?.price);
+        const previous = Number(barFallback?.prevClose);
+        if (Number.isFinite(current) && Number.isFinite(previous) && current !== previous) {
+          return current > previous ? 'BUY' : 'SELL';
+        }
+        const quoteBid = Number(quote?.bid);
+        const quoteAsk = Number(quote?.ask);
+        if (Number.isFinite(quoteBid) && Number.isFinite(quoteAsk) && quoteAsk > quoteBid) {
+          return quoteAsk >= quoteBid ? 'BUY' : 'SELL';
+        }
+        return 'NEUTRAL';
+      })();
+
+      // Deterministic candidate fallback (non-random): keep symbol visible in dashboard
+      // when upstream signal computation is temporarily unavailable (e.g. missing snapshot).
+      rawSignal = {
+        broker,
+        pair: symbol,
+        symbol,
+        timestamp: now,
+        direction: fallbackDirection,
+        strength: 0,
+        confidence: 0,
+        finalScore: 0,
+        signalStatus: 'analysis_pending',
+        validity: {
+          state: 'WAIT_MONITOR',
+          evaluatedAt: now,
+          reason: 'analysis_pending_upstream',
+        },
+        components: {
+          technical: {
+            signals: [
+              {
+                timeframe: barFallback?.timeframe || null,
+                source: 'realtime_fallback',
+              },
+            ],
+          },
+          diagnostics: {
+            fallback: true,
+            reason: 'generate_signal_empty',
+            barFallbackTimeframe: barFallback?.timeframe || null,
+            hasQuote: Boolean(quote),
+            hasSnapshot: Boolean(snapshot),
+            barsReady,
+          },
+        },
+        isValid: {
+          isValid: false,
+          checks: {},
+          reason: 'Signal generation pending complete market context',
+          decision: {
+            state: 'WAIT_MONITOR',
+            blocked: true,
+            blockedReason: 'analysis_pending_upstream',
+          },
+        },
+      };
     }
 
     // Ensure the DTO includes broker context (used by the dashboard to filter).
@@ -1681,7 +1780,102 @@ export class RealtimeEaSignalRunner {
         });
       }
 
+      const publishCandidate =
+        (directional && analyzedReady) ||
+        (this.dashboardAllowCandidates === true &&
+          (directional || decisionState === 'WAIT_MONITOR' || tradeValid === false));
+      if (!publishCandidate) {
+        this.lastGeneratedAt.set(key, now);
+        return;
+      }
+
+      const candidateBroadcastEvent = 'signal_candidate';
+      const candidateBroadcastKey = `${key}:candidate`;
+
+      const lastCandidateBarTime = this.lastPublishedBarTime.get(candidateBroadcastKey) || null;
+      if (
+        !isLifecycleUpdate &&
+        latestBarTime != null &&
+        lastCandidateBarTime != null &&
+        latestBarTime === lastCandidateBarTime
+      ) {
+        this.lastGeneratedAt.set(key, now);
+        this.lastGeneratedAt.set(candidateBroadcastKey, now);
+        return;
+      }
+
+      const candidateFingerprint = `${this.buildFingerprint(rawSignal)}:candidate:${rejectReason}`;
+      const lastCandidateFp = this.lastFingerprint.get(candidateBroadcastKey) || '';
+      if (candidateFingerprint && candidateFingerprint === lastCandidateFp) {
+        this.lastGeneratedAt.set(key, now);
+        this.lastGeneratedAt.set(candidateBroadcastKey, now);
+        return;
+      }
+
+      let candidateDto;
+      try {
+        candidateDto = validateTradingSignalDTO(createTradingSignalDTO(rawSignal));
+      } catch (error) {
+        this.recordReject('dto_validation_error', {
+          broker,
+          symbol,
+          message: error?.message || null,
+          event: candidateBroadcastEvent,
+        });
+        this.lastGeneratedAt.set(key, now);
+        this.lastGeneratedAt.set(candidateBroadcastKey, now);
+        return;
+      }
+
+      candidateDto.shouldExecute = false;
+
       this.lastGeneratedAt.set(key, now);
+      this.lastGeneratedAt.set(candidateBroadcastKey, now);
+      this.lastFingerprint.set(candidateBroadcastKey, candidateFingerprint);
+      if (latestBarTime != null) {
+        this.lastPublishedBarTime.set(candidateBroadcastKey, latestBarTime);
+      }
+      this.lastPublishedMeta.set(candidateBroadcastKey, metaNow);
+
+      try {
+        if (typeof this.broadcast !== 'function') {
+          this.recordReject('broadcast_unavailable', {
+            broker,
+            symbol,
+            event: candidateBroadcastEvent,
+          });
+          this.recordDroppedEvent({
+            reason: 'broadcast_unavailable',
+            broker,
+            symbol,
+            event: candidateBroadcastEvent,
+            message: 'Broadcast handler is unavailable',
+          });
+          return;
+        }
+        this.broadcast(candidateBroadcastEvent, candidateDto);
+        this.recordHotSymbol({
+          broker,
+          symbol: candidateDto?.pair || symbol,
+          event: candidateBroadcastEvent,
+          kind: 'candidate',
+        });
+        this.recordPublish(candidateBroadcastEvent);
+      } catch (error) {
+        this.recordReject('broadcast_error', {
+          broker,
+          symbol,
+          event: candidateBroadcastEvent,
+          message: error?.message || null,
+        });
+        this.recordDroppedEvent({
+          reason: 'broadcast_error',
+          broker,
+          symbol,
+          event: candidateBroadcastEvent,
+          message: error?.message || null,
+        });
+      }
       return;
     }
 

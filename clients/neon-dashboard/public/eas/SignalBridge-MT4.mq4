@@ -76,6 +76,7 @@ extern bool   SmartStrongMode               = true;
 extern bool   EnforceSmartStrongThresholds  = true;
 extern double SmartStrongMinStrengthTrade   = 60.0;
 extern double SmartStrongMinConfidenceTrade = 75.0;
+extern int    LayersReadyMin                = 14;   // 18 = strict, lower = more permissive
 extern int    ServerPolicyRefreshSec        = 300;
 extern int    SmartMaxTickAgeSec            = 6;
 extern double SmartMinAtrPips               = 4.0;
@@ -102,7 +103,9 @@ extern bool   OverlayRespectServerExecution = false;
 // === Intelligent Features ===
 extern bool   UseDynamicStopLoss = true;    // Adjust SL based on volatility
 extern bool   EnableLearning     = true;     // Learn from trade results
-extern bool   TradeMajorsAndMetalsOnly = true;
+extern bool   TradeForexAndMetalsOnly = true;  // include all FX pairs + metals (excludes crypto/indices)
+extern bool   TradeMajorsAndMetalsOnly = false; // legacy fallback
+extern bool   RespectServerExecution = true;
 extern bool   CloseLosingTrades = false;
 extern double MaxLossPerTradePips = 0.0;
 extern double MaxLossPerTradeCurrency = 0.0;
@@ -153,6 +156,9 @@ double   g_serverMinStrength = 0.0;
 double   g_serverMinConfidence = 0.0;
 bool     g_serverRequireLayers18 = false;
 bool     g_serverRequiresEnterState = true;
+bool     g_serverDynamicTrailingEnabled = true;
+bool     g_serverPartialCloseEnabled = true;
+bool     g_serverSessionStrict = false;
 
 datetime g_lastSmartCloseCheck = 0;
 
@@ -317,8 +323,27 @@ bool IsMajorsForexPair(const string sym)
    return(IsMajorCurrency(base) && IsMajorCurrency(quote));
 }
 
+   bool IsForexPair(const string sym)
+   {
+      string c = CanonicalSymbol(sym);
+      if(StringLen(c) < 6)
+         return(false);
+      string base = StringSubstr(c, 0, 3);
+      string quote = StringSubstr(c, 3, 3);
+      StringToUpper(base);
+      StringToUpper(quote);
+      return(IsMajorCurrency(base) && IsMajorCurrency(quote));
+   }
+
 bool IsTradeSymbolEligible(const string sym)
 {
+   if(TradeForexAndMetalsOnly)
+   {
+      if(IsMetalSymbol(sym))
+         return(true);
+      return(IsForexPair(sym));
+   }
+
    if(!TradeMajorsAndMetalsOnly)
       return(true);
    if(IsMetalSymbol(sym))
@@ -932,6 +957,20 @@ bool JsonGetBoolFrom(const string src, const string key, bool &value)
    return JsonGetBoolFromPos(src, 0, key, value);
 }
 
+bool IsServerDynamicTrailingAllowed()
+{
+   if(!g_serverPolicyLoaded)
+      return(true);
+   return(g_serverDynamicTrailingEnabled);
+}
+
+bool IsServerManagementLoopAllowed()
+{
+   if(!g_serverPolicyLoaded)
+      return(true);
+   return(g_serverDynamicTrailingEnabled || g_serverPartialCloseEnabled || g_serverSessionStrict);
+}
+
 bool ParseSignalForExecution(const string json,
                              string &directionOut,
                              double &entryOut,
@@ -960,11 +999,33 @@ bool ParseSignalForExecution(const string json,
          if(requireLayers)
          {
             bool layersOk = true;
+            bool layersOkFound = false;
+            double layersCount = 0.0;
+            bool layersCountFound = false;
             int layersPos = JsonFindKeyOutsideString(json, "\"layersStatus\"", execPos);
             if(layersPos >= 0)
             {
                bool okVal = true;
-               if(JsonGetBoolFromPos(json, layersPos, "\"ok\"", okVal) && !okVal)
+               if(JsonGetBoolFromPos(json, layersPos, "\"ok\"", okVal))
+               {
+                  layersOk = okVal;
+                  layersOkFound = true;
+               }
+               if(JsonGetNumberFrom2(json, layersPos, "\"layersCount\"", layersCount))
+                  layersCountFound = true;
+               else if(JsonGetNumberFrom2(json, layersPos, "\"count\"", layersCount))
+                  layersCountFound = true;
+            }
+
+            if(layersOkFound && !layersOk)
+            {
+               int minLayers = LayersReadyMin;
+               if(minLayers <= 0)
+                  minLayers = 18;
+               if(minLayers > 18)
+                  minLayers = 18;
+
+               if(!(layersCountFound && layersCount >= minLayers))
                   shouldExecuteOut = false;
             }
          }
@@ -1072,16 +1133,30 @@ bool FetchServerPolicy(bool logOnSuccess)
    double minS = g_serverMinStrength;
    bool requireLayers = g_serverRequireLayers18;
    bool requireEnter = g_serverRequiresEnterState;
+   bool dynamicTrailing = g_serverDynamicTrailingEnabled;
+   bool partialClose = g_serverPartialCloseEnabled;
+   bool sessionStrict = g_serverSessionStrict;
 
    JsonGetNumberFrom(response, "\"minConfidence\"", minC);
    JsonGetNumberFrom(response, "\"minStrength\"", minS);
    JsonGetBoolFrom(response, "\"requireLayers18\"", requireLayers);
    JsonGetBoolFrom(response, "\"requiresEnterState\"", requireEnter);
 
+   int tradeManagementPos = StringFind(response, "\"tradeManagement\"", policyPos);
+   if(tradeManagementPos >= 0)
+   {
+      JsonGetBoolFromPos(response, tradeManagementPos, "\"dynamicTrailingEnabled\"", dynamicTrailing);
+      JsonGetBoolFromPos(response, tradeManagementPos, "\"partialCloseEnabled\"", partialClose);
+      JsonGetBoolFromPos(response, tradeManagementPos, "\"sessionStrict\"", sessionStrict);
+   }
+
    g_serverMinConfidence = minC;
    g_serverMinStrength = minS;
    g_serverRequireLayers18 = requireLayers;
    g_serverRequiresEnterState = requireEnter;
+   g_serverDynamicTrailingEnabled = dynamicTrailing;
+   g_serverPartialCloseEnabled = partialClose;
+   g_serverSessionStrict = sessionStrict;
    g_serverPolicyLoaded = true;
    g_lastServerPolicyFetch = TimeCurrent();
 
@@ -1089,7 +1164,10 @@ bool FetchServerPolicy(bool logOnSuccess)
       Print("Server policy synced: minConfidence=", g_serverMinConfidence,
             " minStrength=", g_serverMinStrength,
             " requireLayers18=", g_serverRequireLayers18,
-            " requiresEnterState=", g_serverRequiresEnterState);
+            " requiresEnterState=", g_serverRequiresEnterState,
+            " dynamicTrailingEnabled=", g_serverDynamicTrailingEnabled,
+            " partialCloseEnabled=", g_serverPartialCloseEnabled,
+            " sessionStrict=", g_serverSessionStrict);
 
    return true;
 }
@@ -2174,13 +2252,13 @@ void OnTimer()
       CheckSmartCloseOppositeSignals();
 
    // Server-guided position management + command polling
-   if(EnableServerPositionSync && (g_lastPositionSync == 0 || (TimeCurrent() - g_lastPositionSync) >= PositionSyncIntervalSec))
+   if(EnableServerPositionSync && IsServerManagementLoopAllowed() && (g_lastPositionSync == 0 || (TimeCurrent() - g_lastPositionSync) >= PositionSyncIntervalSec))
    {
       if(PostPositionManagement(true))
          g_lastPositionSync = TimeCurrent();
    }
 
-   if(EnableCommandPolling && (g_lastCommandPoll == 0 || (TimeCurrent() - g_lastCommandPoll) >= CommandPollIntervalSec))
+   if(EnableCommandPolling && IsServerManagementLoopAllowed() && (g_lastCommandPoll == 0 || (TimeCurrent() - g_lastCommandPoll) >= CommandPollIntervalSec))
    {
       if(PollManagementCommands())
          g_lastCommandPoll = TimeCurrent();
@@ -2578,7 +2656,7 @@ void CheckAndExecuteSignals()
       double entry = 0.0, sl = 0.0, tp = 0.0, lots = 0.0;
       if(!ParseSignalForExecution(response, dirU, entry, sl, tp, lots, shouldExecute))
          continue;
-      if(SmartStrongMode && !shouldExecute)
+      if(RespectServerExecution && !shouldExecute)
          continue;
 
       if(SmartStrongMode && EnforceSmartStrongThresholds)
@@ -2627,12 +2705,32 @@ void CheckAndExecuteSignals()
 
          if(g_serverRequireLayers18)
          {
-            bool layersOk = (StringFind(response, "\"layersStatus\":{\"ok\":true") >= 0 ||
-                             StringFind(response, "\"layersStatus\":{\"ok\" : true") >= 0 ||
-                             StringFind(response, "\"layersStatus\" : {\"ok\":true") >= 0 ||
-                             StringFind(response, "\"layersStatus\" : {\"ok\" : true") >= 0);
-            if(!layersOk)
-               continue;
+            bool layersOk = false;
+            bool layersOkFound = false;
+            double layersCount = 0.0;
+            bool layersCountFound = false;
+
+            int layersPos = JsonFindKeyOutsideString(response, "\"layersStatus\"", 0);
+            if(layersPos >= 0)
+            {
+               if(JsonGetBoolFromPos(response, layersPos, "\"ok\"", layersOk))
+                  layersOkFound = true;
+               if(JsonGetNumberFrom2(response, layersPos, "\"layersCount\"", layersCount))
+                  layersCountFound = true;
+               else if(JsonGetNumberFrom2(response, layersPos, "\"count\"", layersCount))
+                  layersCountFound = true;
+            }
+
+            if(layersOkFound && !layersOk)
+            {
+               int minLayers = LayersReadyMin;
+               if(minLayers <= 0)
+                  minLayers = 18;
+               if(minLayers > 18)
+                  minLayers = 18;
+               if(!(layersCountFound && layersCount >= minLayers))
+                  continue;
+            }
          }
 
          if(g_serverRequiresEnterState)
@@ -2690,7 +2788,7 @@ bool ExecuteSignalFromResponse(string response, string symbol)
    double entry = 0.0, slServer = 0.0, tpServer = 0.0, lotsServer = 0.0;
    if(!ParseSignalForExecution(response, directionU, entry, slServer, tpServer, lotsServer, shouldExecute))
       return false;
-   if(SmartStrongMode && !shouldExecute)
+   if(RespectServerExecution && !shouldExecute)
       return false;
 
    string direction = (directionU == "SELL") ? "sell" : "buy";
@@ -3048,7 +3146,7 @@ void ManageOpenPositions()
       if(OrderType() == OP_BUY)
       {
          double trailPips = TrailingDistancePips;
-         if(EnableAtrTrailing)
+         if(EnableAtrTrailing && IsServerDynamicTrailingAllowed())
          {
             double atr = iATR(sym, AtrTrailingTf, 14, 0);
             double atrPips = pip > 0 ? atr / pip : 0;
@@ -3105,7 +3203,7 @@ void ManageOpenPositions()
       else if(OrderType() == OP_SELL)
       {
          double trailPips = TrailingDistancePips;
-         if(EnableAtrTrailing)
+         if(EnableAtrTrailing && IsServerDynamicTrailingAllowed())
          {
             double atr = iATR(sym, AtrTrailingTf, 14, 0);
             double atrPips = pip > 0 ? atr / pip : 0;

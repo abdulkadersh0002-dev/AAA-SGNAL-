@@ -8,12 +8,26 @@ const toFinite = (value) => {
   return Number.isFinite(numeric) ? numeric : null;
 };
 
+const normalizeDecisionState = (value) => {
+  const normalized = toUpper(value);
+  if (!normalized) {
+    return null;
+  }
+  if (normalized === 'WAIT') {
+    return 'WAIT_MONITOR';
+  }
+  if (normalized === 'BLOCKED' || normalized === 'NO_TRADE') {
+    return 'NO_TRADE_BLOCKED';
+  }
+  return normalized;
+};
+
 const normalizeDecisionShape = (decision, source) => {
   if (!decision || typeof decision !== 'object') {
     return null;
   }
 
-  const state = toUpper(decision.state);
+  const state = normalizeDecisionState(decision.state);
   if (!state) {
     return null;
   }
@@ -99,7 +113,7 @@ export function getNormalizedDecision(signal) {
     return fromLayers;
   }
 
-  const fromFinalState = toUpper(signal?.finalDecision?.state);
+  const fromFinalState = normalizeDecisionState(signal?.finalDecision?.state);
   if (fromFinalState) {
     return {
       state: fromFinalState,
@@ -109,6 +123,76 @@ export function getNormalizedDecision(signal) {
       blockers: [],
       source: 'finalDecision',
     };
+  }
+
+  const fromFinalAction = toUpper(signal?.finalDecision?.action);
+  if (fromFinalAction === 'BUY' || fromFinalAction === 'SELL') {
+    return {
+      state: 'ENTER',
+      blocked: false,
+      score: toFinite(signal?.finalDecision?.score),
+      missing: [],
+      blockers: [],
+      source: 'finalDecisionAction',
+    };
+  }
+  if (fromFinalAction === 'NEUTRAL') {
+    return {
+      state: 'WAIT_MONITOR',
+      blocked: false,
+      score: toFinite(signal?.finalDecision?.score),
+      missing: [],
+      blockers: [],
+      source: 'finalDecisionAction',
+    };
+  }
+
+  if (signal?.smartExecution && typeof signal.smartExecution === 'object') {
+    const shouldEnterNow = signal.smartExecution.shouldEnterNow;
+    if (shouldEnterNow === true) {
+      return {
+        state: 'ENTER',
+        blocked: false,
+        score: null,
+        missing: [],
+        blockers: [],
+        source: 'smartExecution',
+      };
+    }
+    if (shouldEnterNow === false) {
+      return {
+        state: 'WAIT_MONITOR',
+        blocked: false,
+        score: null,
+        missing: [],
+        blockers: [],
+        source: 'smartExecution',
+      };
+    }
+  }
+
+  if (signal?.components?.smartExecution && typeof signal.components.smartExecution === 'object') {
+    const shouldEnterNow = signal.components.smartExecution.shouldEnterNow;
+    if (shouldEnterNow === true) {
+      return {
+        state: 'ENTER',
+        blocked: false,
+        score: null,
+        missing: [],
+        blockers: [],
+        source: 'components.smartExecution',
+      };
+    }
+    if (shouldEnterNow === false) {
+      return {
+        state: 'WAIT_MONITOR',
+        blocked: false,
+        score: null,
+        missing: [],
+        blockers: [],
+        source: 'components.smartExecution',
+      };
+    }
   }
 
   return null;

@@ -18,7 +18,7 @@
     {
       "label": "📦 Install Dependencies",
       "type": "process",
-      "command": "npm.cmd",
+      "command": "npm",
       "args": ["ci"],
       "dependsOn": ["🧰 Check Node.js + npm"],
       "dependsOrder": "sequence",
@@ -33,7 +33,7 @@
     {
       "label": "🚀 Start Server + Dashboard",
       "type": "process",
-      "command": "npm.cmd",
+      "command": "npm",
       "args": ["run", "start:all", "--", "--detached", "--free-ports"],
       "dependsOn": ["🧰 Check Node.js + npm"],
       "dependsOrder": "sequence",
@@ -67,7 +67,7 @@
     {
       "label": "🚀 Start Server + Dashboard (NO DB/NO KEYS - synthetic dev)",
       "type": "process",
-      "command": "npm.cmd",
+      "command": "npm",
       "args": ["run", "start:all", "--", "--preset", "synthetic", "--detached", "--free-ports"],
       "dependsOn": ["🧰 Check Node.js + npm"],
       "dependsOrder": "sequence",
@@ -83,7 +83,7 @@
     {
       "label": "🚀 Start Server + Dashboard (REALTIME + DB required)",
       "type": "process",
-      "command": "npm.cmd",
+      "command": "npm",
       "args": ["run", "start:all", "--", "--preset", "realtime_db", "--detached", "--free-ports"],
       "dependsOn": ["🧰 Check Node.js + npm"],
       "dependsOrder": "sequence",
@@ -99,7 +99,7 @@
     {
       "label": "🚀 Start Server + Dashboard (ALL symbols)",
       "type": "process",
-      "command": "npm.cmd",
+      "command": "npm",
       "args": ["run", "start:all", "--", "--preset", "all_symbols", "--detached", "--free-ports"],
       "dependsOn": ["🧰 Check Node.js + npm"],
       "dependsOrder": "sequence",
@@ -115,7 +115,7 @@
     {
       "label": "🚀 Start Server + Dashboard (ALL symbols + Full Scan)",
       "type": "process",
-      "command": "npm.cmd",
+      "command": "npm",
       "args": [
         "run",
         "start:all",
@@ -137,7 +137,7 @@
     {
       "label": "🚀 Start Server + Dashboard (ALL symbols + AUTO trading)",
       "type": "process",
-      "command": "npm.cmd",
+      "command": "npm",
       "args": [
         "run",
         "start:all",
@@ -159,7 +159,7 @@
     {
       "label": "🚀 Start Server + Dashboard (SMART STRONG MT5 auto)",
       "type": "process",
-      "command": "npm.cmd",
+      "command": "npm",
       "args": [
         "run",
         "start:all",
@@ -181,7 +181,7 @@
     {
       "label": "🚀 Start Server + Dashboard (SMART STRONG MT5 auto + more entries)",
       "type": "process",
-      "command": "npm.cmd",
+      "command": "npm",
       "args": [
         "run",
         "start:all",
@@ -203,7 +203,7 @@
     {
       "label": "🚀 Start Server + Dashboard (FX+Metals STRONG AUTO v2)",
       "type": "process",
-      "command": "npm.cmd",
+      "command": "npm",
       "args": [
         "run",
         "start:all",
@@ -225,7 +225,7 @@
     {
       "label": "🚀 Start Server + Dashboard (FX+Metals ACTIVE AUTO - more trades)",
       "type": "process",
-      "command": "npm.cmd",
+      "command": "npm",
       "args": [
         "run",
         "start:all",
@@ -248,7 +248,7 @@
     {
       "label": "🚀 Start Server + Dashboard (FX+Metals MORE AUTO trading)",
       "type": "process",
-      "command": "npm.cmd",
+      "command": "npm",
       "args": [
         "run",
         "start:all",
@@ -271,7 +271,7 @@
     {
       "label": "🚀 Start Server + Dashboard (FX+Metals SMART AUTO - strong trades)",
       "type": "process",
-      "command": "npm.cmd",
+      "command": "npm",
       "args": [
         "run",
         "start:all",
@@ -293,7 +293,7 @@
     {
       "label": "🧪 Run Tests",
       "type": "process",
-      "command": "npm.cmd",
+      "command": "npm",
       "args": ["test"],
       "dependsOn": ["🧰 Check Node.js + npm"],
       "dependsOrder": "sequence",
@@ -330,7 +330,7 @@
     {
       "label": "🔍 Run Linter",
       "type": "process",
-      "command": "npm.cmd",
+      "command": "npm",
       "args": ["run", "lint"],
       "dependsOn": ["🧰 Check Node.js + npm"],
       "dependsOrder": "sequence",
@@ -458,10 +458,10 @@
     {
       "label": "🔎 Check Backend Health + EA Quotes (fixed)",
       "type": "shell",
-      "command": "cmd",
+      "command": "bash",
       "args": [
-        "/c",
-        "curl -s -o NUL -w \"heartbeat:%{http_code}\\n\" http://127.0.0.1:4101/api/health/heartbeat && curl -s -o NUL -w \"quotes:%{http_code}\\n\" \"http://127.0.0.1:4101/api/broker/bridge/mt5/market/quotes?maxAgeMs=30000\""
+        "-lc",
+        "curl -s -o /dev/null -w 'heartbeat:%{http_code}\\n' http://127.0.0.1:4101/api/health/heartbeat && curl -s -o /dev/null -w 'quotes:%{http_code}\\n' 'http://127.0.0.1:4101/api/broker/bridge/mt5/market/quotes?maxAgeMs=30000'"
       ],
       "isBackground": false,
       "problemMatcher": [],
@@ -474,8 +474,8 @@
     {
       "label": "🔎 EA Bridge Status (mt5)",
       "type": "shell",
-      "command": "cmd",
-      "args": ["/c", "curl -s \"http://127.0.0.1:4101/api/broker/bridge/status?broker=mt5\""],
+      "command": "curl",
+      "args": ["-s", "http://127.0.0.1:4101/api/broker/bridge/status?broker=mt5"],
       "isBackground": false,
       "problemMatcher": [],
       "presentation": {
@@ -487,11 +487,8 @@
     {
       "label": "🔎 EA Bridge Status (mt5, 10m)",
       "type": "shell",
-      "command": "cmd",
-      "args": [
-        "/c",
-        "curl -s \"http://127.0.0.1:4101/api/broker/bridge/status?broker=mt5^&maxAgeMs=600000\""
-      ],
+      "command": "curl",
+      "args": ["-s", "http://127.0.0.1:4101/api/broker/bridge/status?broker=mt5&maxAgeMs=600000"],
       "isBackground": false,
       "problemMatcher": [],
       "group": "test"
@@ -499,8 +496,8 @@
     {
       "label": "🔎 EA Agent Config (mt5)",
       "type": "shell",
-      "command": "cmd",
-      "args": ["/c", "curl -s \"http://127.0.0.1:4101/api/broker/bridge/mt5/agent/config\""],
+      "command": "curl",
+      "args": ["-s", "http://127.0.0.1:4101/api/broker/bridge/mt5/agent/config"],
       "isBackground": false,
       "problemMatcher": [],
       "presentation": {
@@ -512,8 +509,8 @@
     {
       "label": "🔎 EA Bridge Statistics",
       "type": "shell",
-      "command": "cmd",
-      "args": ["/c", "curl -s \"http://127.0.0.1:4101/api/broker/bridge/statistics\""],
+      "command": "curl",
+      "args": ["-s", "http://127.0.0.1:4101/api/broker/bridge/statistics"],
       "isBackground": false,
       "problemMatcher": [],
       "group": "test"
@@ -521,8 +518,8 @@
     {
       "label": "🔎 Auto-Trading Readiness (mt5)",
       "type": "shell",
-      "command": "cmd",
-      "args": ["/c", "curl -s \"http://127.0.0.1:4101/api/auto-trading/readiness?broker=mt5\""],
+      "command": "curl",
+      "args": ["-s", "http://127.0.0.1:4101/api/auto-trading/readiness?broker=mt5"],
       "isBackground": false,
       "problemMatcher": [],
       "group": "test"

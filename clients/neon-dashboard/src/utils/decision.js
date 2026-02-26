@@ -8,12 +8,26 @@ const toFinite = (value) => {
   return Number.isFinite(numeric) ? numeric : null;
 };
 
+const normalizeDecisionState = (value) => {
+  const normalized = toUpper(value);
+  if (!normalized) {
+    return null;
+  }
+  if (normalized === 'WAIT') {
+    return 'WAIT_MONITOR';
+  }
+  if (normalized === 'BLOCKED' || normalized === 'NO_TRADE') {
+    return 'NO_TRADE_BLOCKED';
+  }
+  return normalized;
+};
+
 const normalizeDecisionShape = (decision, source) => {
   if (!decision || typeof decision !== 'object') {
     return null;
   }
 
-  const state = toUpper(decision.state);
+  const state = normalizeDecisionState(decision.state);
   if (!state) {
     return null;
   }
@@ -94,13 +108,97 @@ export const getNormalizedDecision = (signal) => {
     return null;
   }
 
-  return (
+  const fromKnown =
     normalizeDecisionShape(signal?.components?.normalizedDecision, 'normalized') ||
     normalizeDecisionShape(signal?.components?.layeredDecision?.entry, 'layered_entry') ||
     normalizeDecisionShape(signal?.isValid?.decision, 'isValid') ||
     normalizeDecisionShape(signal?.decision, 'root') ||
-    resolveFromLayers(signal)
-  );
+    resolveFromLayers(signal);
+
+  if (fromKnown) {
+    return fromKnown;
+  }
+
+  const finalState = toUpper(signal?.finalDecision?.state);
+  const normalizedFinalState = normalizeDecisionState(finalState);
+  if (normalizedFinalState) {
+    return {
+      state: normalizedFinalState,
+      blocked: false,
+      score: toFinite(signal?.finalDecision?.score),
+      missing: [],
+      blockers: [],
+      source: 'finalDecision',
+    };
+  }
+
+  const finalAction = toUpper(signal?.finalDecision?.action);
+  if (finalAction === 'BUY' || finalAction === 'SELL') {
+    return {
+      state: 'ENTER',
+      blocked: false,
+      score: toFinite(signal?.finalDecision?.score),
+      missing: [],
+      blockers: [],
+      source: 'finalDecisionAction',
+    };
+  }
+  if (finalAction === 'NEUTRAL') {
+    return {
+      state: 'WAIT_MONITOR',
+      blocked: false,
+      score: toFinite(signal?.finalDecision?.score),
+      missing: [],
+      blockers: [],
+      source: 'finalDecisionAction',
+    };
+  }
+
+  const rootSmartShouldEnterNow = signal?.smartExecution?.shouldEnterNow;
+  if (rootSmartShouldEnterNow === true) {
+    return {
+      state: 'ENTER',
+      blocked: false,
+      score: null,
+      missing: [],
+      blockers: [],
+      source: 'smartExecution',
+    };
+  }
+  if (rootSmartShouldEnterNow === false) {
+    return {
+      state: 'WAIT_MONITOR',
+      blocked: false,
+      score: null,
+      missing: [],
+      blockers: [],
+      source: 'smartExecution',
+    };
+  }
+
+  const smartShouldEnterNow = signal?.components?.smartExecution?.shouldEnterNow;
+  if (smartShouldEnterNow === true) {
+    return {
+      state: 'ENTER',
+      blocked: false,
+      score: null,
+      missing: [],
+      blockers: [],
+      source: 'components.smartExecution',
+    };
+  }
+  if (smartShouldEnterNow === false) {
+    return {
+      state: 'WAIT_MONITOR',
+      blocked: false,
+      score: null,
+      missing: [],
+      blockers: [],
+      source: 'components.smartExecution',
+    };
+  }
+
+  return null;
 };
 
 export const getDecisionState = (signal) => getNormalizedDecision(signal)?.state || null;

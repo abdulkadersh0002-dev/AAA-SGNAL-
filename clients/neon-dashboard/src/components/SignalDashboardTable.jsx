@@ -62,7 +62,7 @@ const formatConfluenceScore = (confluence) => {
   return `${Math.round(score)}%`;
 };
 
-const formatLayer18Score = (value) => {
+const formatLayerScore = (value) => {
   const numeric = Number(value);
   if (!Number.isFinite(numeric)) {
     return null;
@@ -367,6 +367,11 @@ const resolveExecutionDebugChain = (signal) => {
   const originalDecisionState = toUpper(gates?.originalDecisionState) || null;
   const layer18Verdict =
     toUpper(gates?.layer18Verdict) || toUpper(layer18?.metrics?.verdict) || '—';
+  const layer20State =
+    toUpper(gates?.decisionState) ||
+    toUpper(layer20?.metrics?.decision?.state) ||
+    toUpper(signal?.isValid?.decision?.state) ||
+    '—';
   const layers18Ready = layersStatus?.ok === true;
   const intelligentApproved = gates?.intelligentApproved === true;
   const tradingEnabled = gates?.tradingEnabled === true;
@@ -404,8 +409,8 @@ const resolveExecutionDebugChain = (signal) => {
       decisionState === 'ENTER' ? 'ENTER' : decisionState === 'WAIT_MONITOR' ? 'WAIT_MONITOR' : decisionState,
     stageLayersLabel:
       layers18Ready
-        ? `READY · L18 ${layer18Verdict}`
-        : `NOT READY · L18 ${layer18Verdict}`,
+        ? `READY · L18 ${layer18Verdict} · L20 ${layer20State}`
+        : `NOT READY · L18 ${layer18Verdict} · L20 ${layer20State}`,
     stageIntelligentLabel:
       intelligentApproved
         ? 'APPROVED'
@@ -857,7 +862,7 @@ function SignalDashboardTable({
                           {row.debugOriginalDecisionState ? ` (from ${row.debugOriginalDecisionState})` : ''}
                         </div>
                         <div>
-                          <strong>2) Layers18:</strong> {row.debugLayersLabel}
+                          <strong>2) Validation:</strong> {row.debugLayersLabel}
                         </div>
                         <div>
                           <strong>3) Intelligent Gate:</strong> {row.debugIntelligentLabel}
@@ -866,7 +871,7 @@ function SignalDashboardTable({
                           <strong>4) Final:</strong> {row.debugFinalLabel}
                         </div>
                         <div style={{ opacity: 0.9 }}>
-                          <strong>Checks:</strong> trading {row.debugTradingEnabled} · floor {row.debugStrengthFloor} · quote {row.debugQuoteOk} · layers {row.debugLayers18Ready}
+                          <strong>Checks:</strong> trading {row.debugTradingEnabled} · floor {row.debugStrengthFloor} · quote {row.debugQuoteOk} · layers18 {row.debugLayers18Ready}
                         </div>
                         <div style={{ opacity: 0.9 }}>
                           <strong>Intelligent reasons:</strong> {row.debugIntelligentReasons}
@@ -889,7 +894,7 @@ function SignalDashboardTable({
                             layer?.confidence !== undefined && layer?.confidence !== null
                               ? `${layer.confidence}%`
                               : '—';
-                          const scoreLabel = formatLayer18Score(layer?.score);
+                          const scoreLabel = formatLayerScore(layer?.score);
                           const score = scoreLabel != null ? ` · ${scoreLabel}` : '';
                           const summary = layer?.summaryEn ? String(layer.summaryEn) : '';
 
@@ -1005,7 +1010,7 @@ function SignalDashboardTable({
                             {row.debugOriginalDecisionState ? ` (from ${row.debugOriginalDecisionState})` : ''}
                           </div>
                           <div>
-                            <strong>2) Layers18:</strong> {row.debugLayersLabel}
+                            <strong>2) Validation:</strong> {row.debugLayersLabel}
                           </div>
                           <div>
                             <strong>3) Intelligent Gate:</strong> {row.debugIntelligentLabel}
@@ -1014,7 +1019,7 @@ function SignalDashboardTable({
                             <strong>4) Final:</strong> {row.debugFinalLabel}
                           </div>
                           <div style={{ opacity: 0.9 }}>
-                            <strong>Checks:</strong> trading {row.debugTradingEnabled} · floor {row.debugStrengthFloor} · quote {row.debugQuoteOk} · layers {row.debugLayers18Ready}
+                            <strong>Checks:</strong> trading {row.debugTradingEnabled} · floor {row.debugStrengthFloor} · quote {row.debugQuoteOk} · layers18 {row.debugLayers18Ready}
                           </div>
                           <div style={{ opacity: 0.9 }}>
                             <strong>Intelligent reasons:</strong> {row.debugIntelligentReasons}

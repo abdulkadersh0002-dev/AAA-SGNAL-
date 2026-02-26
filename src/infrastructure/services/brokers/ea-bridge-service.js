@@ -370,6 +370,19 @@ class EaBridgeService {
       ? Math.max(1_000, Number(process.env.EA_MAX_QUOTE_FUTURE_MS))
       : 2 * 60 * 1000;
 
+    this.quoteOutOfOrderToleranceMs = Number.isFinite(
+      Number(process.env.EA_QUOTE_OUT_OF_ORDER_TOLERANCE_MS)
+    )
+      ? Math.max(0, Number(process.env.EA_QUOTE_OUT_OF_ORDER_TOLERANCE_MS))
+      : 2_500;
+    this.quoteDedupWindowMs = Number.isFinite(Number(process.env.EA_QUOTE_DEDUP_WINDOW_MS))
+      ? Math.max(0, Number(process.env.EA_QUOTE_DEDUP_WINDOW_MS))
+      : 400;
+    this.quoteFeedHeartbeatByBroker = new Map();
+    this.quoteFeedHeartbeatMaxAgeMs = Number.isFinite(Number(process.env.EA_QUOTE_FEED_MAX_AGE_MS))
+      ? Math.max(10_000, Number(process.env.EA_QUOTE_FEED_MAX_AGE_MS))
+      : Math.max(120_000, this.maxQuoteAgeMs || 0);
+
     this.maxFutureBarMs = Number.isFinite(Number(process.env.EA_MAX_BAR_FUTURE_MS))
       ? Math.max(1_000, Number(process.env.EA_MAX_BAR_FUTURE_MS))
       : 5 * 60 * 1000;
@@ -1297,6 +1310,9 @@ class EaBridgeService {
       return { success: true, message: 'Symbol ignored (asset class not allowed)', broker, symbol };
     }
 
+    const key = `${broker}:${symbol}`;
+    const latestKnown = this.latestQuotes.get(key) || null;
+
     const timestamp = this.normalizeEpochMs(payload.timestamp || payload.time || Date.now());
     if (
       !this.isTimestampFresh(timestamp, {
@@ -1307,6 +1323,20 @@ class EaBridgeService {
       return {
         success: true,
         message: 'Quote ignored (stale or future timestamp)',
+        broker,
+        symbol,
+      };
+    }
+
+    const latestTimestamp = Number(latestKnown?.timestamp || 0);
+    if (
+      latestTimestamp > 0 &&
+      Number.isFinite(Number(timestamp)) &&
+      Number(timestamp) + this.quoteOutOfOrderToleranceMs < latestTimestamp
+    ) {
+      return {
+        success: true,
+        message: 'Quote ignored (out-of-order timestamp)',
         broker,
         symbol,
       };
@@ -1408,13 +1438,31 @@ class EaBridgeService {
       source: payload.source || 'ea',
     };
 
-    const key = `${broker}:${symbol}`;
+    const latestReceivedAt = Number(latestKnown?.receivedAt || 0);
+    const quoteTimestamp = Number(quote.timestamp || 0);
+    const latestQuoteTimestamp = Number(latestKnown?.timestamp || 0);
+    const isDuplicateQuote =
+      latestKnown &&
+      latestReceivedAt > 0 &&
+      Date.now() - latestReceivedAt <= this.quoteDedupWindowMs &&
+      Number(latestKnown?.bid ?? NaN) === Number(quote.bid ?? NaN) &&
+      Number(latestKnown?.ask ?? NaN) === Number(quote.ask ?? NaN) &&
+      Number(latestKnown?.mid ?? NaN) === Number(quote.mid ?? NaN) &&
+      quoteTimestamp > 0 &&
+      latestQuoteTimestamp > 0 &&
+      quoteTimestamp === latestQuoteTimestamp;
+
+    if (isDuplicateQuote) {
+      this.quoteFeedHeartbeatByBroker.set(broker, Date.now());
+      return { success: true, message: 'Quote ignored (duplicate)', broker, symbol };
+    }
 
     // Store in cache coordinator with 2 minute TTL
     this.cacheCoordinator.set('quotes', key, quote, 120000);
 
     // Also update legacy Map for backward compatibility
     this.latestQuotes.set(key, quote);
+    this.quoteFeedHeartbeatByBroker.set(broker, receivedAt);
 
     try {
       history.push({
@@ -5095,17 +5143,32 @@ class EaBridgeService {
   }
 
   hasFreshHeartbeatForBroker({ broker, maxAgeMs, now = Date.now() } = {}) {
-    const sessions = this.getActiveSessionsForBroker(broker);
-    if (sessions.length === 0) {
+    const normalizedBroker = this.normalizeSessionBroker(broker) || null;
+    if (!normalizedBroker) {
       return false;
     }
-    return sessions.some((session) => {
+    const sessions = this.getActiveSessionsForBroker(normalizedBroker);
+    const hasSessionHeartbeat = sessions.some((session) => {
       if (!maxAgeMs) {
         return true;
       }
       const last = Number(session?.lastHeartbeat || 0);
       return last > 0 && now - last <= maxAgeMs;
     });
+
+    if (hasSessionHeartbeat) {
+      return true;
+    }
+
+    const quoteHeartbeatAt = Number(this.quoteFeedHeartbeatByBroker.get(normalizedBroker) || 0);
+    if (!(quoteHeartbeatAt > 0)) {
+      return false;
+    }
+    const quoteHeartbeatAgeMs = Math.max(0, now - quoteHeartbeatAt);
+    const quoteHeartbeatMaxAgeMs = Number.isFinite(Number(maxAgeMs))
+      ? Math.max(Number(maxAgeMs), this.quoteFeedHeartbeatMaxAgeMs)
+      : this.quoteFeedHeartbeatMaxAgeMs;
+    return quoteHeartbeatAgeMs <= quoteHeartbeatMaxAgeMs;
   }
 
   getStatistics() {
@@ -5147,6 +5210,11 @@ class EaBridgeService {
       activeSymbolsByBroker[broker] = map?.size || 0;
     }
 
+    const quoteFeedHeartbeatByBroker = {};
+    for (const [broker, ts] of this.quoteFeedHeartbeatByBroker.entries()) {
+      quoteFeedHeartbeatByBroker[broker] = Number(ts || 0) || 0;
+    }
+
     return {
       activeSessions: activeSessions.length,
       totalTradesExecuted: activeSessions.reduce((sum, s) => sum + s.tradesExecuted, 0),
@@ -5176,6 +5244,10 @@ class EaBridgeService {
         activeSymbols: {
           brokers: this.activeSymbols.size,
           byBroker: activeSymbolsByBroker,
+        },
+        quoteFeedHeartbeat: {
+          byBroker: quoteFeedHeartbeatByBroker,
+          maxAgeMs: this.quoteFeedHeartbeatMaxAgeMs,
         },
         snapshotRequests: {
           brokers: this.snapshotRequests.size,
@@ -5407,6 +5479,7 @@ class EaBridgeService {
     this.latestSnapshots.clear();
     this.latestBars.clear();
     this.entryContextBySymbol.clear();
+    this.quoteFeedHeartbeatByBroker.clear();
 
     this.logger?.info?.('EA Bridge Service destroyed');
   }

@@ -149,6 +149,13 @@ class SignalFactory {
         signal.components && typeof signal.components === 'object' ? signal.components : {};
       signal.components.layeredAnalysis = layeredAnalysis;
 
+      const smartExecution = this.buildSmartExecutionPlan({
+        signal,
+        layeredAnalysis,
+        snapshot,
+      });
+      signal.components.smartExecution = smartExecution;
+
       // Step 7: Check Layer 18 readiness (from orchestrator)
       const layer18Ready = layeredAnalysis.layer18Ready;
       signal.layer18Ready = layer18Ready;
@@ -345,6 +352,357 @@ class SignalFactory {
     }
 
     return true;
+  }
+
+  getLayer(layeredAnalysis, layerId) {
+    if (!layeredAnalysis?.layers || !Array.isArray(layeredAnalysis.layers)) {
+      return null;
+    }
+    return layeredAnalysis.layers.find((layer) => Number(layer?.layer) === Number(layerId)) || null;
+  }
+
+  getLayerMetric(layeredAnalysis, layerId, metricName) {
+    const layer = this.getLayer(layeredAnalysis, layerId);
+    const value = layer?.metrics?.[metricName];
+    return Number.isFinite(Number(value)) ? Number(value) : null;
+  }
+
+  resolveExecutionStyle({ confidence, confluence, spreadPoints, volatility }) {
+    if (spreadPoints != null && spreadPoints >= 20) {
+      return 'retest';
+    }
+    if (volatility != null && volatility >= 150) {
+      return 'confirm-breakout';
+    }
+    if (confidence >= 84 && (confluence == null || confluence >= 82)) {
+      return 'aggressive';
+    }
+    return 'balanced';
+  }
+
+  resolveAdaptiveEntryThresholds({ style, riskRegime, layer18, layer19 }) {
+    const layer18MinComposite = Number(layer18?.metrics?.minCompositeScore);
+    const layer18Composite = Number(layer18?.metrics?.compositeScore);
+    const layer19Score = Number(layer19?.score);
+    const clearanceBand = String(layer19?.metrics?.clearanceBand || '')
+      .trim()
+      .toUpperCase();
+
+    const thresholds = {
+      minConfidence: 68,
+      minConfluence: 74,
+      maxSpreadPoints: 22,
+      minRiskReward: 1.55,
+    };
+
+    if (style === 'aggressive') {
+      thresholds.minConfidence = 71;
+      thresholds.minConfluence = 78;
+      thresholds.maxSpreadPoints = 20;
+      thresholds.minRiskReward = 1.7;
+    } else if (style === 'retest') {
+      thresholds.minConfidence = 66;
+      thresholds.minConfluence = 70;
+      thresholds.maxSpreadPoints = 24;
+      thresholds.minRiskReward = 1.5;
+    } else if (style === 'confirm-breakout') {
+      thresholds.minConfidence = 70;
+      thresholds.minConfluence = 76;
+      thresholds.maxSpreadPoints = 21;
+      thresholds.minRiskReward = 1.65;
+    }
+
+    if (riskRegime === 'high-volatility') {
+      thresholds.minConfidence += 3;
+      thresholds.minConfluence += 2;
+      thresholds.maxSpreadPoints -= 2;
+      thresholds.minRiskReward += 0.1;
+    } else if (riskRegime === 'low-volatility') {
+      thresholds.minConfidence -= 1;
+      thresholds.minConfluence -= 1;
+    }
+
+    if (clearanceBand === 'LOW') {
+      thresholds.minConfidence += 4;
+      thresholds.minConfluence += 3;
+      thresholds.maxSpreadPoints -= 2;
+      thresholds.minRiskReward += 0.15;
+    } else if (clearanceBand === 'HIGH') {
+      thresholds.minConfidence -= 2;
+      thresholds.minConfluence -= 1;
+      thresholds.maxSpreadPoints += 1;
+    }
+
+    if (
+      Number.isFinite(layer18Composite) &&
+      Number.isFinite(layer18MinComposite) &&
+      layer18Composite < layer18MinComposite + 4
+    ) {
+      thresholds.minConfidence += 2;
+      thresholds.minConfluence += 2;
+      thresholds.minRiskReward += 0.08;
+    }
+
+    if (Number.isFinite(layer19Score) && layer19Score < 82) {
+      thresholds.minConfidence += 2;
+      thresholds.maxSpreadPoints -= 1;
+    }
+
+    thresholds.minConfidence = Math.max(60, Math.min(90, thresholds.minConfidence));
+    thresholds.minConfluence = Math.max(65, Math.min(92, thresholds.minConfluence));
+    thresholds.maxSpreadPoints = Math.max(12, Math.min(30, thresholds.maxSpreadPoints));
+    thresholds.minRiskReward = Number(
+      Math.max(1.4, Math.min(2.3, thresholds.minRiskReward)).toFixed(2)
+    );
+
+    return thresholds;
+  }
+
+  classifyForexPairProfile(pair) {
+    const normalized = String(pair || '')
+      .trim()
+      .toUpperCase();
+    if (!/^[A-Z]{6}$/.test(normalized)) {
+      return null;
+    }
+
+    const base = normalized.slice(0, 3);
+    const quote = normalized.slice(3, 6);
+    const majors = ['USD', 'EUR', 'GBP', 'JPY', 'CHF', 'CAD', 'AUD', 'NZD'];
+    const hasUsd = base === 'USD' || quote === 'USD';
+    const isYenCross = quote === 'JPY' || base === 'JPY';
+    const isMajor = majors.includes(base) && majors.includes(quote);
+
+    if (hasUsd && isMajor) {
+      return 'major';
+    }
+    if (isYenCross) {
+      return 'yen_cross';
+    }
+    if (isMajor) {
+      return 'major_cross';
+    }
+    return 'other';
+  }
+
+  applyPairProfileThresholdAdjustments({ thresholds, pairProfile }) {
+    const next = { ...thresholds };
+
+    if (pairProfile === 'major') {
+      next.minConfidence -= 1;
+      next.maxSpreadPoints += 1;
+    } else if (pairProfile === 'yen_cross') {
+      next.minConfluence -= 1;
+      next.maxSpreadPoints += 2;
+    } else if (pairProfile === 'major_cross') {
+      next.minConfidence += 2;
+      next.minConfluence += 2;
+      next.minRiskReward += 0.05;
+    } else if (pairProfile === 'other') {
+      next.minConfidence += 3;
+      next.minConfluence += 3;
+      next.minRiskReward += 0.1;
+      next.maxSpreadPoints -= 1;
+    }
+
+    next.minConfidence = Math.max(60, Math.min(90, next.minConfidence));
+    next.minConfluence = Math.max(65, Math.min(92, next.minConfluence));
+    next.maxSpreadPoints = Math.max(12, Math.min(30, next.maxSpreadPoints));
+    next.minRiskReward = Number(Math.max(1.4, Math.min(2.3, next.minRiskReward)).toFixed(2));
+    return next;
+  }
+
+  resolveNewsGuard({ signal }) {
+    const telemetryNews = signal?.components?.telemetry?.news;
+    const componentNews = signal?.components?.news;
+
+    const nextHighImpactMinutesRaw =
+      telemetryNews?.nextHighImpactMinutes ??
+      componentNews?.nextHighImpactMinutes ??
+      componentNews?.calendar?.nextHighImpactMinutes ??
+      null;
+    const impactRaw =
+      telemetryNews?.nextHighImpact?.impact ??
+      telemetryNews?.impactScore ??
+      componentNews?.impact ??
+      componentNews?.impactScore ??
+      null;
+
+    const nextHighImpactMinutes = Number(nextHighImpactMinutesRaw);
+    const impactScore = Number(impactRaw);
+
+    const hasMinutes = Number.isFinite(nextHighImpactMinutes);
+    const hasImpact = Number.isFinite(impactScore);
+
+    const absoluteMinutes = hasMinutes ? Math.abs(nextHighImpactMinutes) : null;
+    const hardBlockWindowMin = 15;
+    const cautionWindowMin = 45;
+    const hardBlockImpact = 75;
+    const cautionImpact = 60;
+
+    const blocked =
+      hasMinutes &&
+      hasImpact &&
+      absoluteMinutes <= hardBlockWindowMin &&
+      impactScore >= hardBlockImpact;
+
+    const caution =
+      !blocked &&
+      hasMinutes &&
+      hasImpact &&
+      absoluteMinutes <= cautionWindowMin &&
+      impactScore >= cautionImpact;
+
+    return {
+      blocked,
+      caution,
+      nextHighImpactMinutes: hasMinutes ? nextHighImpactMinutes : null,
+      impactScore: hasImpact ? impactScore : null,
+      hardBlockWindowMin,
+      cautionWindowMin,
+    };
+  }
+
+  buildSmartExecutionPlan({ signal, layeredAnalysis, snapshot }) {
+    const entry = signal?.entry && typeof signal.entry === 'object' ? signal.entry : {};
+    const entryPrice = Number(signal?.entryPrice ?? entry?.price);
+    const stopLoss = Number(signal?.stopLoss ?? entry?.stopLoss);
+    const takeProfit = Number(signal?.takeProfit ?? entry?.takeProfit);
+    const direction = String(signal?.direction || signal?.signal || '').toUpperCase();
+
+    const confidence = Number.isFinite(Number(signal?.confidence)) ? Number(signal.confidence) : 0;
+    const spreadPoints = this.getLayerMetric(layeredAnalysis, 2, 'spreadPoints');
+    const volatility = this.getLayerMetric(layeredAnalysis, 3, 'volatility');
+    const confluence =
+      this.getLayerMetric(layeredAnalysis, 11, 'confluenceScore') ??
+      (Number.isFinite(Number(this.getLayer(layeredAnalysis, 11)?.score))
+        ? Number(this.getLayer(layeredAnalysis, 11).score)
+        : null);
+
+    const riskDistance =
+      Number.isFinite(entryPrice) && Number.isFinite(stopLoss)
+        ? Math.abs(entryPrice - stopLoss)
+        : null;
+    const rewardDistance =
+      Number.isFinite(entryPrice) && Number.isFinite(takeProfit)
+        ? Math.abs(takeProfit - entryPrice)
+        : null;
+    const riskReward =
+      riskDistance && rewardDistance && riskDistance > 0 ? rewardDistance / riskDistance : null;
+
+    const style = this.resolveExecutionStyle({ confidence, confluence, spreadPoints, volatility });
+    const layer18 = this.getLayer(layeredAnalysis, 18);
+    const layer19 = this.getLayer(layeredAnalysis, 19);
+    const layer20Profile = this.getLayer(layeredAnalysis, 20)?.metrics?.executionProfile || null;
+
+    const riskRegime =
+      volatility != null && volatility >= 160
+        ? 'high-volatility'
+        : volatility != null && volatility <= 80
+          ? 'low-volatility'
+          : 'normal-volatility';
+
+    const thresholds = this.resolveAdaptiveEntryThresholds({
+      style,
+      riskRegime,
+      layer18,
+      layer19,
+    });
+
+    const pairProfile = this.classifyForexPairProfile(signal?.pair || signal?.symbol);
+    const adjustedThresholds = this.applyPairProfileThresholdAdjustments({
+      thresholds,
+      pairProfile,
+    });
+
+    const newsGuard = this.resolveNewsGuard({ signal });
+
+    const nearEntryBand =
+      riskDistance != null
+        ? style === 'aggressive'
+          ? riskDistance * 0.18
+          : style === 'retest'
+            ? riskDistance * 0.42
+            : riskDistance * 0.28
+        : null;
+
+    const entryWindowSec =
+      style === 'aggressive'
+        ? 25
+        : style === 'confirm-breakout'
+          ? 90
+          : style === 'retest'
+            ? 150
+            : 60;
+
+    const entryWindowAdjustedSec = newsGuard.caution
+      ? Math.max(entryWindowSec, 120)
+      : entryWindowSec;
+
+    const tapeVolatility =
+      snapshot?.market?.volatility ??
+      snapshot?.volatility ??
+      snapshot?.liveContext?.volatility ??
+      null;
+
+    const tapeBias = String(snapshot?.liveContext?.decision || snapshot?.market?.bias || '')
+      .trim()
+      .toUpperCase();
+
+    const shouldEnterNow =
+      newsGuard.blocked !== true &&
+      confidence >= adjustedThresholds.minConfidence &&
+      (confluence == null || confluence >= adjustedThresholds.minConfluence) &&
+      (riskReward == null || riskReward >= adjustedThresholds.minRiskReward) &&
+      (spreadPoints == null || spreadPoints <= adjustedThresholds.maxSpreadPoints) &&
+      (!tapeBias || tapeBias === 'ENTER' || tapeBias === 'HOLD');
+
+    const lifecycle = {
+      hardRiskBreachR: -1.02,
+      givebackMinPeakR: style === 'aggressive' ? 1.45 : 1.2,
+      profitGivebackExitR: style === 'retest' ? 0.95 : 0.82,
+      momentumRolloverMinPeakR: style === 'confirm-breakout' ? 1.05 : 0.9,
+      momentumRolloverToR: style === 'aggressive' ? 0.1 : 0.22,
+      decisionCooldownMs: style === 'aggressive' ? 12000 : 18000,
+      staleTradeMinutes: riskRegime === 'high-volatility' ? 70 : 110,
+      staleMinR: 0.12,
+    };
+
+    return {
+      style,
+      shouldEnterNow,
+      why: {
+        confidence,
+        confluence,
+        spreadPoints,
+        volatility,
+        tapeBias: tapeBias || null,
+        riskReward: riskReward != null ? Number(riskReward.toFixed(3)) : null,
+        pairProfile,
+        thresholds: adjustedThresholds,
+        newsGuard,
+      },
+      entry: {
+        preferredWindowSec: entryWindowAdjustedSec,
+        nearEntryBand: nearEntryBand != null ? Number(nearEntryBand.toFixed(6)) : null,
+        entryPrice: Number.isFinite(entryPrice) ? entryPrice : null,
+      },
+      exit: {
+        stopLoss: Number.isFinite(stopLoss) ? stopLoss : null,
+        takeProfit: Number.isFinite(takeProfit) ? takeProfit : null,
+        tp1RR: 1.0,
+        tp2RR: 1.8,
+        trailStartRR: style === 'retest' ? 1.2 : 0.9,
+      },
+      context: {
+        direction,
+        riskRegime,
+        tapeVolatility: Number.isFinite(Number(tapeVolatility)) ? Number(tapeVolatility) : null,
+        layer19ClearanceBand: String(layer19?.metrics?.clearanceBand || '').toUpperCase() || null,
+        layer20Profile,
+      },
+      lifecycle,
+    };
   }
 
   /**

@@ -3,17 +3,18 @@ import { recordExecutionSlippage } from '../../../infrastructure/services/metric
 export const executionEngine = {
   async executeTrade(signal) {
     const auditLogger = this.config?.auditLogger;
+    const signalValidation = signal?.isValid;
 
-    if (!signal.isValid.isValid) {
+    if (!signalValidation?.isValid) {
       auditLogger?.record?.('execution.trade.blocked', {
-        reason: signal.isValid.reason,
+        reason: signalValidation?.reason || 'invalid_signal',
         pair: signal?.pair || null,
         direction: signal?.direction || null,
         source: signal?.source || null,
       });
       return {
         success: false,
-        reason: signal.isValid.reason,
+        reason: signalValidation?.reason || 'Invalid signal payload',
         signal,
       };
     }
@@ -115,6 +116,20 @@ export const executionEngine = {
         invalidationRules: signal?.components?.invalidationRules || null,
         layeredAnalysis: signal?.components?.layeredAnalysis || null,
         executionProfile: signal?.components?.executionProfile || null,
+        smartExecution: signal?.components?.smartExecution || null,
+        lifecycleIntelligence: {
+          maxFavorableR: null,
+          maxAdverseR: null,
+          drawdownFromPeakR: 0,
+          lastRMultiple: null,
+          momentumScore: null,
+          consecutiveNegativeMomentum: 0,
+          lastPrice: null,
+          priceTape: [],
+          lastDecision: null,
+          lastDecisionAt: null,
+          lastAdaptiveActionAt: null,
+        },
         signal,
       };
 
@@ -216,6 +231,51 @@ export const executionEngine = {
         });
         const pnl = this.calculatePnL(trade, currentPrice);
         trade.currentPnL = pnl;
+
+        const marketIntelligence = this.updateLiveTradeIntelligence(trade, currentPrice);
+        const adaptiveAction = this.decideAdaptiveLifecycleAction(trade, marketIntelligence);
+        if (adaptiveAction?.action === 'close') {
+          trade.lifecycleIntelligence.lastDecision = adaptiveAction.reason;
+          trade.lifecycleIntelligence.lastDecisionAt = Date.now();
+          trade.lifecycleIntelligence.lastAdaptiveActionAt = Date.now();
+          this.logger?.info?.(
+            {
+              module: 'ExecutionEngine',
+              tradeId,
+              pair: trade.pair,
+              reason: adaptiveAction.reason,
+              rMultiple: marketIntelligence?.rMultiple,
+              drawdownFromPeakR: marketIntelligence?.drawdownFromPeakR,
+            },
+            'Adaptive lifecycle closed trade'
+          );
+          await this.closeTrade(tradeId, currentPrice, adaptiveAction.reason);
+          continue;
+        }
+        if (adaptiveAction?.action === 'breakeven') {
+          const entryPrice = Number(trade.entryPrice);
+          const currentStop = Number(trade.stopLoss);
+          if (
+            Number.isFinite(entryPrice) &&
+            (!Number.isFinite(currentStop) || Math.abs(currentStop - entryPrice) > 1e-10)
+          ) {
+            trade.stopLoss = entryPrice;
+            trade.movedToBreakeven = true;
+            trade.lifecycleIntelligence.lastDecision = adaptiveAction.reason;
+            trade.lifecycleIntelligence.lastDecisionAt = Date.now();
+            trade.lifecycleIntelligence.lastAdaptiveActionAt = Date.now();
+            this.logger?.info?.(
+              {
+                module: 'ExecutionEngine',
+                tradeId,
+                pair: trade.pair,
+                reason: adaptiveAction.reason,
+                rMultiple: marketIntelligence?.rMultiple,
+              },
+              'Adaptive lifecycle moved trade to breakeven'
+            );
+          }
+        }
 
         const supervision = this.evaluateSmartTradeSupervision(trade, currentPrice);
         if (supervision?.action === 'close') {
@@ -347,6 +407,180 @@ export const executionEngine = {
 
     const gain = direction === 'BUY' ? current - entry : entry - current;
     return gain / riskDistance;
+  },
+
+  updateLiveTradeIntelligence(trade, currentPrice) {
+    if (!trade.lifecycleIntelligence || typeof trade.lifecycleIntelligence !== 'object') {
+      trade.lifecycleIntelligence = {
+        maxFavorableR: null,
+        maxAdverseR: null,
+        drawdownFromPeakR: 0,
+        lastRMultiple: null,
+        momentumScore: null,
+        consecutiveNegativeMomentum: 0,
+        lastPrice: null,
+        priceTape: [],
+        lastDecision: null,
+        lastDecisionAt: null,
+        lastAdaptiveActionAt: null,
+      };
+    }
+
+    const intel = trade.lifecycleIntelligence;
+    const rMultiple = this.getCurrentRMultiple(trade, currentPrice);
+    if (!Number.isFinite(rMultiple)) {
+      return {
+        ...intel,
+        rMultiple: null,
+      };
+    }
+
+    intel.maxFavorableR = Number.isFinite(intel.maxFavorableR)
+      ? Math.max(intel.maxFavorableR, rMultiple)
+      : rMultiple;
+    intel.maxAdverseR = Number.isFinite(intel.maxAdverseR)
+      ? Math.min(intel.maxAdverseR, rMultiple)
+      : rMultiple;
+    intel.drawdownFromPeakR = Number.isFinite(intel.maxFavorableR)
+      ? Math.max(0, intel.maxFavorableR - rMultiple)
+      : 0;
+
+    const now = Date.now();
+    const normalizedPrice = Number(currentPrice);
+    if (Number.isFinite(normalizedPrice)) {
+      intel.priceTape = Array.isArray(intel.priceTape) ? intel.priceTape : [];
+      intel.priceTape.push({ ts: now, price: normalizedPrice });
+      if (intel.priceTape.length > 7) {
+        intel.priceTape.splice(0, intel.priceTape.length - 7);
+      }
+      intel.lastPrice = normalizedPrice;
+    }
+
+    const tape = intel.priceTape || [];
+    const direction = String(trade?.direction || '').toUpperCase();
+    let momentumScore = 0;
+    if (tape.length >= 3) {
+      const p0 = tape[tape.length - 3]?.price;
+      const p1 = tape[tape.length - 2]?.price;
+      const p2 = tape[tape.length - 1]?.price;
+      const v1 = Number.isFinite(p1) && Number.isFinite(p0) ? p1 - p0 : 0;
+      const v2 = Number.isFinite(p2) && Number.isFinite(p1) ? p2 - p1 : 0;
+      const signedVelocity = direction === 'SELL' ? -v2 : v2;
+      const signedAcceleration = direction === 'SELL' ? -(v2 - v1) : v2 - v1;
+      momentumScore = signedVelocity * 0.7 + signedAcceleration * 0.3;
+    }
+
+    intel.lastRMultiple = rMultiple;
+    intel.momentumScore = Number.isFinite(momentumScore) ? momentumScore : 0;
+    if (intel.momentumScore < 0) {
+      const prev = Number(intel.consecutiveNegativeMomentum);
+      intel.consecutiveNegativeMomentum = Number.isFinite(prev) ? prev + 1 : 1;
+    } else {
+      intel.consecutiveNegativeMomentum = 0;
+    }
+
+    return {
+      ...intel,
+      rMultiple,
+      momentumScore: intel.momentumScore,
+      drawdownFromPeakR: intel.drawdownFromPeakR,
+    };
+  },
+
+  resolveAdaptiveLifecycleConfig(trade) {
+    const cfg = trade?.smartExecution?.lifecycle;
+    const asNumberOr = (value, fallback) => {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : fallback;
+    };
+
+    return {
+      hardRiskBreachR: asNumberOr(cfg?.hardRiskBreachR, -1.05),
+      givebackMinPeakR: asNumberOr(cfg?.givebackMinPeakR, 1.2),
+      profitGivebackExitR: asNumberOr(cfg?.profitGivebackExitR, 0.85),
+      momentumRolloverMinPeakR: asNumberOr(cfg?.momentumRolloverMinPeakR, 0.9),
+      momentumRolloverToR: asNumberOr(cfg?.momentumRolloverToR, 0.2),
+      decisionCooldownMs: asNumberOr(cfg?.decisionCooldownMs, 18000),
+      staleTradeMinutes: asNumberOr(cfg?.staleTradeMinutes, 120),
+      staleMinR: asNumberOr(cfg?.staleMinR, 0.15),
+    };
+  },
+
+  decideAdaptiveLifecycleAction(trade, intelligence) {
+    if (!intelligence || !Number.isFinite(intelligence.rMultiple)) {
+      return null;
+    }
+
+    const config = this.resolveAdaptiveLifecycleConfig(trade);
+    const now = Date.now();
+    const lastAdaptiveActionAt = Number(trade?.lifecycleIntelligence?.lastAdaptiveActionAt);
+    if (
+      Number.isFinite(lastAdaptiveActionAt) &&
+      now - lastAdaptiveActionAt < Math.max(1000, config.decisionCooldownMs)
+    ) {
+      return null;
+    }
+
+    const rMultiple = intelligence.rMultiple;
+    const maxFavorableR = Number.isFinite(intelligence.maxFavorableR)
+      ? intelligence.maxFavorableR
+      : null;
+    const drawdownFromPeakR = Number.isFinite(intelligence.drawdownFromPeakR)
+      ? intelligence.drawdownFromPeakR
+      : 0;
+    const momentumScore = Number.isFinite(intelligence.momentumScore)
+      ? intelligence.momentumScore
+      : 0;
+    const consecutiveNegativeMomentum = Number.isFinite(
+      Number(intelligence.consecutiveNegativeMomentum)
+    )
+      ? Number(intelligence.consecutiveNegativeMomentum)
+      : 0;
+    const openTime = Number(trade?.openTime);
+    const ageMinutes = Number.isFinite(openTime) ? (now - openTime) / 60000 : null;
+
+    if (rMultiple <= config.hardRiskBreachR) {
+      return { action: 'close', reason: 'adaptive_hard_risk_breach' };
+    }
+
+    if (
+      maxFavorableR != null &&
+      maxFavorableR >= config.givebackMinPeakR &&
+      drawdownFromPeakR >= config.profitGivebackExitR
+    ) {
+      return { action: 'close', reason: 'adaptive_profit_giveback_exit' };
+    }
+
+    if (
+      maxFavorableR != null &&
+      maxFavorableR >= config.momentumRolloverMinPeakR &&
+      rMultiple <= config.momentumRolloverToR &&
+      momentumScore < 0 &&
+      consecutiveNegativeMomentum >= 2
+    ) {
+      return { action: 'breakeven', reason: 'adaptive_momentum_rollover_breakeven' };
+    }
+
+    if (
+      Number.isFinite(ageMinutes) &&
+      ageMinutes >= config.staleTradeMinutes &&
+      rMultiple <= config.staleMinR &&
+      momentumScore <= 0
+    ) {
+      return { action: 'close', reason: 'adaptive_stale_trade_exit' };
+    }
+
+    const smartTrailStartRR = Number(trade?.smartExecution?.exit?.trailStartRR);
+    if (
+      Number.isFinite(smartTrailStartRR) &&
+      rMultiple >= smartTrailStartRR &&
+      rMultiple < smartTrailStartRR + 0.25 &&
+      momentumScore < 0
+    ) {
+      return { action: 'breakeven', reason: 'adaptive_early_protection' };
+    }
+
+    return null;
   },
 
   resolveSmartProtectionModel(trade) {

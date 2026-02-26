@@ -205,19 +205,20 @@ export function createTradingSignalDTO(raw) {
       return null;
     }
 
-    for (const layer of layers) {
+    const normalizeFromLayer = (layer) => {
       const decision = layer?.metrics?.decision;
       if (!decision || typeof decision !== 'object') {
-        continue;
+        return null;
       }
       const state = decision?.state != null ? String(decision.state).trim() : '';
-      if (!state) {
-        continue;
+      const normalizedState = normalizeDecisionState(state);
+      if (!normalizedState) {
+        return null;
       }
       const direction = layer?.metrics?.direction != null ? String(layer.metrics.direction) : null;
       const confidence = layer?.metrics?.confidence ?? layer?.confidence ?? null;
       return {
-        state: normalizeDecisionState(state),
+        state: normalizedState,
         score: Number.isFinite(Number(decision?.score)) ? Number(decision.score) : null,
         blocked: decision?.blocked === true,
         missing: Array.isArray(decision?.missing) ? decision.missing.map((v) => String(v)) : null,
@@ -238,9 +239,37 @@ export function createTradingSignalDTO(raw) {
         direction: direction != null ? String(direction).trim().toUpperCase() : null,
         confidence: Number.isFinite(Number(confidence)) ? Number(confidence) : null,
       };
+    };
+
+    const layer20 =
+      layers.find(
+        (layer) =>
+          String(layer?.key || '')
+            .trim()
+            .toUpperCase() === 'L20' || Number(layer?.layer) === 20
+      ) || null;
+
+    const direct = normalizeFromLayer(layer20);
+    if (direct) {
+      return direct;
     }
 
-    return null;
+    const decided = layers
+      .map((layer) => {
+        const layerNo = Number.isFinite(Number(layer?.layer)) ? Number(layer.layer) : -1;
+        return {
+          layerNo,
+          decision: normalizeFromLayer(layer),
+        };
+      })
+      .filter((item) => item.decision);
+
+    if (decided.length === 0) {
+      return null;
+    }
+
+    decided.sort((a, b) => b.layerNo - a.layerNo);
+    return decided[0].decision;
   })();
 
   const technicalPrimary = raw?.components?.technical?.signals?.[0] || null;

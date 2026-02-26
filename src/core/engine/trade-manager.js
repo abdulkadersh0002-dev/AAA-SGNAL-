@@ -3,7 +3,7 @@
  * Handles opening, monitoring, and closing trades automatically
  */
 
-import { listTargetPairs } from '../../config/pair-catalog.js';
+import { listInstrumentsByAssetClass, listTargetPairs } from '../../config/pair-catalog.js';
 import logger from '../../infrastructure/services/logging/logger.js';
 import {
   attachLayeredAnalysisToSignal,
@@ -114,8 +114,25 @@ class TradeManager {
     this.brokerHealthCache = new Map();
 
     // Trading pairs to monitor (seed list; the live universe can expand from EA quotes).
-    this.tradingPairs = listTargetPairs();
-    this.configuredPairs = [...this.tradingPairs];
+    // configuredPairs keeps the explicit config set (typically majors).
+    // tradingPairs can be expanded to full FX + metals for full-market smart scanning.
+    this.configuredPairs = listTargetPairs();
+    const fullFxMetalsUniverseEnv = readEnvBool('AUTO_TRADING_FULL_FX_METALS_UNIVERSE', null);
+    const fullFxMetalsUniverse =
+      fullFxMetalsUniverseEnv === null ? true : fullFxMetalsUniverseEnv === true;
+
+    if (fullFxMetalsUniverse) {
+      const seed = new Set(this.configuredPairs);
+      for (const pair of listInstrumentsByAssetClass('forex', { includeDisabled: true })) {
+        seed.add(pair);
+      }
+      for (const pair of listInstrumentsByAssetClass('metals', { includeDisabled: true })) {
+        seed.add(pair);
+      }
+      this.tradingPairs = Array.from(seed);
+    } else {
+      this.tradingPairs = [...this.configuredPairs];
+    }
 
     this.lastSignalCheck = new Map();
 
@@ -332,6 +349,14 @@ class TradeManager {
     // Safety: never execute blocked/non-enter signals.
     if (decisionState !== 'ENTER' || signal?.isValid?.isValid !== true) {
       return reject(`Signal not executable (state=${decisionState || 'unknown'})`);
+    }
+
+    const smartShouldEnterNow =
+      signal?.components?.smartExecution?.shouldEnterNow ?? signal?.smartExecution?.shouldEnterNow;
+    if (smartShouldEnterNow === false) {
+      return reject('Smart execution gate: shouldEnterNow=false', {
+        smartExecution: signal?.components?.smartExecution || null,
+      });
     }
 
     // If the EA pipeline explicitly says "do not execute", respect it.

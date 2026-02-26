@@ -298,7 +298,11 @@ export const createClientExperienceModule = ({
 
           const validation =
             signal.validation ||
-            (signal.isValid != null ? { isValid: Boolean(signal.isValid) } : null);
+            (signal.isValid != null
+              ? typeof signal.isValid === 'object'
+                ? signal.isValid
+                : { isValid: Boolean(signal.isValid) }
+              : null);
 
           return {
             id: trade.id,

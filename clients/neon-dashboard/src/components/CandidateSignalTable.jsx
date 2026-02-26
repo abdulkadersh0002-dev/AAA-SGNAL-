@@ -422,7 +422,7 @@ export default function CandidateSignalTable({
   onSelect,
   title = 'Near / Analyzed candidates',
   hint =
-    'Filtered to smart-strong, high win-rate signals (L1–L18) that are near ENTER.',
+    'Filtered to smart-strong, high win-rate signals (L1–L20) that are near ENTER.',
   emptyText = 'No analyzed candidates received yet.'
 }) {
   const [ageTick, setAgeTick] = useState(0);

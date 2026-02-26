@@ -300,6 +300,9 @@ double   g_serverMinStrength = 0.0;
 double   g_serverMinConfidence = 0.0;
 bool     g_serverRequireLayers18 = false;
 bool     g_serverRequiresEnterState = true;
+bool     g_serverDynamicTrailingEnabled = true;
+bool     g_serverPartialCloseEnabled = true;
+bool     g_serverSessionStrict = false;
 datetime g_lastSessionRefresh = 0;
 
 datetime g_lastMarketFeed = 0;
@@ -1559,6 +1562,20 @@ bool ShouldBypassExoticSpreadGuards(const string sym, const string json, const d
 
    int minLayers = ExoticBypassMinLayers > 0 ? ExoticBypassMinLayers : 18;
    return IsLayersAlignedMin(json, minLayers);
+}
+
+bool IsServerDynamicTrailingAllowed()
+{
+   if(!g_serverPolicyLoaded)
+      return true;
+   return g_serverDynamicTrailingEnabled;
+}
+
+bool IsServerManagementLoopAllowed()
+{
+   if(!g_serverPolicyLoaded)
+      return true;
+   return (g_serverDynamicTrailingEnabled || g_serverPartialCloseEnabled || g_serverSessionStrict);
 }
 
 bool ExtractSignalDedupeKey(const string json, const string direction, const double entry, const double sl, const double tp, const double lots, const double strength, const double confidence, string &outKey)
@@ -3180,27 +3197,44 @@ bool FetchServerPolicy(const bool logOnSuccess)
    double minS = g_serverMinStrength;
    bool requireLayers = g_serverRequireLayers18;
    bool requireEnter = g_serverRequiresEnterState;
+   bool dynamicTrailing = g_serverDynamicTrailingEnabled;
+   bool partialClose = g_serverPartialCloseEnabled;
+   bool sessionStrict = g_serverSessionStrict;
 
    JsonGetNumberFrom(response, execPos, "\"minConfidence\"", minC);
    JsonGetNumberFrom(response, execPos, "\"minStrength\"", minS);
    JsonGetBoolFrom(response, execPos, "\"requireLayers18\"", requireLayers);
    JsonGetBoolFrom(response, execPos, "\"requiresEnterState\"", requireEnter);
 
+   int tradeManagementPos = StringFind(response, "\"tradeManagement\"", policyPos);
+   if(tradeManagementPos >= 0)
+   {
+      JsonGetBoolFrom(response, tradeManagementPos, "\"dynamicTrailingEnabled\"", dynamicTrailing);
+      JsonGetBoolFrom(response, tradeManagementPos, "\"partialCloseEnabled\"", partialClose);
+      JsonGetBoolFrom(response, tradeManagementPos, "\"sessionStrict\"", sessionStrict);
+   }
+
    g_serverMinConfidence = minC;
    g_serverMinStrength = minS;
    g_serverRequireLayers18 = requireLayers;
    g_serverRequiresEnterState = requireEnter;
+    g_serverDynamicTrailingEnabled = dynamicTrailing;
+    g_serverPartialCloseEnabled = partialClose;
+    g_serverSessionStrict = sessionStrict;
    g_serverPolicyLoaded = true;
    g_lastServerPolicyFetch = TimeCurrent();
 
    if(logOnSuccess)
    {
       PrintFormat(
-         "Server policy synced: minConfidence=%.0f minStrength=%.0f requireLayers18=%s requiresEnterState=%s",
+         "Server policy synced: minConfidence=%.0f minStrength=%.0f requireLayers18=%s requiresEnterState=%s dynamicTrailingEnabled=%s partialCloseEnabled=%s sessionStrict=%s",
          g_serverMinConfidence,
          g_serverMinStrength,
          g_serverRequireLayers18 ? "true" : "false",
-         g_serverRequiresEnterState ? "true" : "false"
+         g_serverRequiresEnterState ? "true" : "false",
+         g_serverDynamicTrailingEnabled ? "true" : "false",
+         g_serverPartialCloseEnabled ? "true" : "false",
+         g_serverSessionStrict ? "true" : "false"
       );
    }
 
@@ -3938,7 +3972,7 @@ void ManagePositionsTrailingStop()
 
       double startPips = TrailingStartPips;
       double distPips = TrailingDistancePips;
-      if(EnableAtrTrailing)
+      if(EnableAtrTrailing && IsServerDynamicTrailingAllowed())
       {
          double atrPips = ReadAtrPips(sym, AtrTrailingTf);
          if(atrPips > 0.0)
@@ -5725,13 +5759,13 @@ void OnTimer()
    CheckSmartCloseOppositeSignals();
 
    // Server-guided position management + command polling
-   if(EnableServerPositionSync && (g_lastPositionSync == 0 || (TimeCurrent() - g_lastPositionSync) >= PositionSyncIntervalSec))
+   if(EnableServerPositionSync && IsServerManagementLoopAllowed() && (g_lastPositionSync == 0 || (TimeCurrent() - g_lastPositionSync) >= PositionSyncIntervalSec))
    {
       if(PostPositionManagement(true))
          g_lastPositionSync = TimeCurrent();
    }
 
-   if(EnableCommandPolling && (g_lastCommandPoll == 0 || (TimeCurrent() - g_lastCommandPoll) >= CommandPollIntervalSec))
+   if(EnableCommandPolling && IsServerManagementLoopAllowed() && (g_lastCommandPoll == 0 || (TimeCurrent() - g_lastCommandPoll) >= CommandPollIntervalSec))
    {
       if(PollManagementCommands())
          g_lastCommandPoll = TimeCurrent();

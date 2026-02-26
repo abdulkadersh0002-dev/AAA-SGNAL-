@@ -14,10 +14,19 @@ const FX_BASE_PRICES = {
   EURCHF: 0.96,
   EURAUD: 1.656,
   EURCAD: 1.481,
+  EURNZD: 1.79,
   GBPAUD: 1.932,
   GBPCAD: 1.726,
+  GBPCHF: 1.13,
   AUDCAD: 0.894,
+  AUDCHF: 0.58,
   AUDNZD: 1.082,
+  NZDJPY: 89.5,
+  NZDCHF: 0.535,
+  GBPNZD: 2.09,
+  CHFJPY: 168.5,
+  CADCHF: 0.648,
+  NZDCAD: 0.827,
 };
 
 const FX_VOLATILITY = {
@@ -32,7 +41,23 @@ const FX_VOLATILITY = {
   EURJPY: 0.18,
   GBPJPY: 0.22,
   AUDJPY: 0.14,
+  AUDCHF: 0.001,
+  AUDNZD: 0.001,
+  AUDCAD: 0.0011,
   CADJPY: 0.16,
+  EURCHF: 0.0007,
+  EURAUD: 0.0014,
+  EURCAD: 0.0012,
+  EURNZD: 0.0017,
+  GBPAUD: 0.0018,
+  GBPCAD: 0.0015,
+  GBPCHF: 0.0013,
+  GBPNZD: 0.002,
+  NZDJPY: 0.16,
+  NZDCHF: 0.001,
+  CHFJPY: 0.17,
+  CADCHF: 0.0009,
+  NZDCAD: 0.0009,
 };
 
 function createFxInstrument(config) {
@@ -277,6 +302,189 @@ const forexInstruments = [
     sessions: [
       { label: 'Tokyo', start: '23:00', end: '07:00', weight: 1.3 },
       { label: 'New York', start: '12:00', end: '21:00', weight: 1.3 },
+    ],
+    timeframes: ['M15', 'H1', 'H4'],
+    enabled: false,
+  }),
+  createFxInstrument({
+    pair: 'EURCHF',
+    region: 'Eurozone/Switzerland',
+    volatilityTier: 'low',
+    liquidityNotes: 'Defensive cross; active in European session and risk-off flows.',
+    sessions: [{ label: 'Europe', start: '07:00', end: '16:00', weight: 1.4 }],
+    timeframes: ['M15', 'H1', 'H4'],
+    enabled: false,
+  }),
+  createFxInstrument({
+    pair: 'EURAUD',
+    region: 'Eurozone/Australia',
+    volatilityTier: 'medium',
+    liquidityNotes: 'Cross-session mover between Europe close and Asia open.',
+    sessions: [
+      { label: 'London', start: '07:00', end: '16:00', weight: 1.3 },
+      { label: 'Sydney', start: '21:00', end: '05:00', weight: 1.2 },
+    ],
+    timeframes: ['M15', 'H1', 'H4'],
+    enabled: false,
+  }),
+  createFxInstrument({
+    pair: 'EURCAD',
+    region: 'Eurozone/Canada',
+    volatilityTier: 'medium',
+    liquidityNotes: 'Responds to ECB + CAD/oil themes during EU/NY overlap.',
+    sessions: [
+      { label: 'London', start: '07:00', end: '16:00', weight: 1.3 },
+      { label: 'New York', start: '12:00', end: '21:00', weight: 1.2 },
+    ],
+    timeframes: ['M15', 'H1', 'H4'],
+    enabled: false,
+  }),
+  createFxInstrument({
+    pair: 'EURNZD',
+    region: 'Eurozone/New Zealand',
+    volatilityTier: 'medium',
+    liquidityNotes: 'Can expand in volatility during APAC session handovers.',
+    sessions: [
+      { label: 'Europe', start: '07:00', end: '16:00', weight: 1.2 },
+      { label: 'Wellington', start: '21:00', end: '04:00', weight: 1.3 },
+    ],
+    timeframes: ['M15', 'H1', 'H4'],
+    enabled: false,
+  }),
+  createFxInstrument({
+    pair: 'GBPAUD',
+    region: 'UK/Australia',
+    volatilityTier: 'high',
+    liquidityNotes: 'High beta cross; often volatile around London open.',
+    sessions: [
+      { label: 'London', start: '07:00', end: '16:00', weight: 1.5 },
+      { label: 'Sydney', start: '21:00', end: '05:00', weight: 1.2 },
+    ],
+    timeframes: ['M15', 'H1', 'H4'],
+    enabled: false,
+  }),
+  createFxInstrument({
+    pair: 'GBPCAD',
+    region: 'UK/Canada',
+    volatilityTier: 'high',
+    liquidityNotes: 'Tracks UK + Canadian macro and energy-sensitive CAD moves.',
+    sessions: [
+      { label: 'London', start: '07:00', end: '16:00', weight: 1.4 },
+      { label: 'New York', start: '12:00', end: '21:00', weight: 1.4 },
+    ],
+    timeframes: ['M15', 'H1', 'H4'],
+    enabled: false,
+  }),
+  createFxInstrument({
+    pair: 'GBPCHF',
+    region: 'UK/Switzerland',
+    volatilityTier: 'medium',
+    liquidityNotes: 'Mixed risk-on/risk-off behavior; watch European headlines.',
+    sessions: [{ label: 'Europe', start: '07:00', end: '16:00', weight: 1.4 }],
+    timeframes: ['M15', 'H1', 'H4'],
+    enabled: false,
+  }),
+  createFxInstrument({
+    pair: 'GBPNZD',
+    region: 'UK/New Zealand',
+    volatilityTier: 'high',
+    liquidityNotes: 'High-range cross; more active around London + APAC overlap.',
+    sessions: [
+      { label: 'London', start: '07:00', end: '16:00', weight: 1.5 },
+      { label: 'Wellington', start: '21:00', end: '04:00', weight: 1.3 },
+    ],
+    timeframes: ['M15', 'H1', 'H4'],
+    enabled: false,
+  }),
+  createFxInstrument({
+    pair: 'AUDCHF',
+    region: 'Australia/Switzerland',
+    volatilityTier: 'medium',
+    liquidityNotes: 'Risk-sensitive cross with cleaner behavior in Europe and APAC sessions.',
+    sessions: [
+      { label: 'Sydney', start: '21:00', end: '05:00', weight: 1.2 },
+      { label: 'Europe', start: '07:00', end: '16:00', weight: 1.2 },
+    ],
+    timeframes: ['M15', 'H1', 'H4'],
+    enabled: false,
+  }),
+  createFxInstrument({
+    pair: 'AUDNZD',
+    region: 'Australia/New Zealand',
+    volatilityTier: 'low',
+    liquidityNotes: 'Often range-bound but offers structural intraday mean reversion setups.',
+    sessions: [{ label: 'Sydney/Wellington', start: '21:00', end: '05:00', weight: 1.4 }],
+    timeframes: ['M15', 'H1', 'H4'],
+    enabled: false,
+  }),
+  createFxInstrument({
+    pair: 'AUDCAD',
+    region: 'Australia/Canada',
+    volatilityTier: 'medium',
+    liquidityNotes: 'Commodity-linked cross; sensitive to risk sentiment and oil differentials.',
+    sessions: [
+      { label: 'Sydney', start: '21:00', end: '05:00', weight: 1.2 },
+      { label: 'New York', start: '12:00', end: '21:00', weight: 1.2 },
+    ],
+    timeframes: ['M15', 'H1', 'H4'],
+    enabled: false,
+  }),
+  createFxInstrument({
+    pair: 'NZDJPY',
+    region: 'New Zealand/Japan',
+    volatilityTier: 'medium',
+    liquidityNotes: 'Risk-sensitive carry cross; active in Asia session.',
+    sessions: [
+      { label: 'Tokyo', start: '23:00', end: '07:00', weight: 1.4 },
+      { label: 'Wellington', start: '21:00', end: '04:00', weight: 1.3 },
+    ],
+    timeframes: ['M15', 'H1', 'H4'],
+    enabled: false,
+  }),
+  createFxInstrument({
+    pair: 'NZDCHF',
+    region: 'New Zealand/Switzerland',
+    volatilityTier: 'low',
+    liquidityNotes: 'Lower-liquidity defensive cross; best in active overlap windows.',
+    sessions: [
+      { label: 'Wellington', start: '21:00', end: '04:00', weight: 1.2 },
+      { label: 'Europe', start: '07:00', end: '16:00', weight: 1.2 },
+    ],
+    timeframes: ['M15', 'H1', 'H4'],
+    enabled: false,
+  }),
+  createFxInstrument({
+    pair: 'CHFJPY',
+    region: 'Switzerland/Japan',
+    volatilityTier: 'medium',
+    liquidityNotes: 'Safe-haven cross; active during risk regime shifts.',
+    sessions: [
+      { label: 'Tokyo', start: '23:00', end: '07:00', weight: 1.3 },
+      { label: 'Europe', start: '07:00', end: '16:00', weight: 1.2 },
+    ],
+    timeframes: ['M15', 'H1', 'H4'],
+    enabled: false,
+  }),
+  createFxInstrument({
+    pair: 'CADCHF',
+    region: 'Canada/Switzerland',
+    volatilityTier: 'low',
+    liquidityNotes: 'Lower-beta cross, cleaner in liquid overlapping sessions.',
+    sessions: [
+      { label: 'Europe', start: '07:00', end: '16:00', weight: 1.2 },
+      { label: 'New York', start: '12:00', end: '21:00', weight: 1.2 },
+    ],
+    timeframes: ['M15', 'H1', 'H4'],
+    enabled: false,
+  }),
+  createFxInstrument({
+    pair: 'NZDCAD',
+    region: 'New Zealand/Canada',
+    volatilityTier: 'low',
+    liquidityNotes: 'Commodity-linked cross with moderate trend persistence.',
+    sessions: [
+      { label: 'Wellington', start: '21:00', end: '04:00', weight: 1.2 },
+      { label: 'New York', start: '12:00', end: '21:00', weight: 1.2 },
     ],
     timeframes: ['M15', 'H1', 'H4'],
     enabled: false,
@@ -537,15 +745,20 @@ export function getPairMetadata(pair) {
   return instrumentIndex.get(key) || null;
 }
 
-export function listTargetPairs() {
+export function listTargetPairs(options = {}) {
+  const includeDisabled = options?.includeDisabled === true;
   return pairCatalog
-    .filter((instrument) => instrument.enabled !== false)
+    .filter((instrument) => includeDisabled || instrument.enabled !== false)
     .map((instrument) => instrument.pair);
 }
 
-export function listInstrumentsByAssetClass(assetClass) {
+export function listInstrumentsByAssetClass(assetClass, options = {}) {
+  const includeDisabled = options?.includeDisabled === true;
   return pairCatalog
-    .filter((instrument) => instrument.assetClass === assetClass && instrument.enabled !== false)
+    .filter(
+      (instrument) =>
+        instrument.assetClass === assetClass && (includeDisabled || instrument.enabled !== false)
+    )
     .map((instrument) => instrument.pair);
 }
 

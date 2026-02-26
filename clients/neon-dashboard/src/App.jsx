@@ -299,6 +299,23 @@ const normalizeSignal = (payload = {}, fallbackTimestamp) => {
             decision: payload.decision
           }
         : null),
+    decision:
+      (payload.decision && typeof payload.decision === 'object' ? payload.decision : null) ||
+      (payload?.isValid?.decision && typeof payload.isValid.decision === 'object'
+        ? payload.isValid.decision
+        : null),
+    finalDecision:
+      payload.finalDecision && typeof payload.finalDecision === 'object'
+        ? payload.finalDecision
+        : null,
+    components: payload?.components && typeof payload.components === 'object' ? payload.components : {},
+    smartExecution:
+      (payload?.smartExecution && typeof payload.smartExecution === 'object'
+        ? payload.smartExecution
+        : null) ||
+      (payload?.components?.smartExecution && typeof payload.components.smartExecution === 'object'
+        ? payload.components.smartExecution
+        : null),
     layeredAnalysis: payload?.components?.layeredAnalysis || payload?.layeredAnalysis || null,
     shouldExecute: payload?.shouldExecute ?? payload?.execution?.shouldExecute ?? payload?.tradeReference?.shouldExecute,
     timestamp,
@@ -483,6 +500,15 @@ function App() {
       return;
     }
     setCandidateSignals((current) => mergeSignalLists(incomingSignals, current, MAX_CANDIDATE_ITEMS));
+  }, []);
+
+  const isExecutableEnterSignal = useCallback((signal) => {
+    const decisionState = String(getDecisionState(signal) || '').toUpperCase();
+    const isEnter =
+      decisionState === 'ENTER' || decisionState === 'ENTER_STRONG' || decisionState === 'ENTER_TRADE';
+    const shouldExecute =
+      signal?.execution?.shouldExecute === true || signal?.shouldExecute === true;
+    return isEnter && shouldExecute;
   }, []);
 
   const entryReadySignalsMeta = useMemo(() => {
@@ -1509,7 +1535,13 @@ function App() {
             }
             const normalized = normalizeSignal(msg.payload || {}, msg.timestamp);
             if (normalized) {
-              startTransition(() => mergeSignals([normalized]));
+              startTransition(() => {
+                if (isExecutableEnterSignal(normalized)) {
+                  mergeSignals([normalized]);
+                } else {
+                  mergeCandidateSignals([normalized]);
+                }
+              });
             }
             return;
           }
@@ -1561,7 +1593,23 @@ function App() {
               .map((s) => normalizeSignal(s, msg.timestamp))
               .filter(Boolean);
             if (normalized.length) {
-              startTransition(() => mergeSignals(normalized));
+              startTransition(() => {
+                const ready = [];
+                const candidates = [];
+                for (const signal of normalized) {
+                  if (isExecutableEnterSignal(signal)) {
+                    ready.push(signal);
+                  } else {
+                    candidates.push(signal);
+                  }
+                }
+                if (ready.length) {
+                  mergeSignals(ready);
+                }
+                if (candidates.length) {
+                  mergeCandidateSignals(candidates);
+                }
+              });
             }
             return;
           }
@@ -1608,7 +1656,7 @@ function App() {
         // ignore
       }
     };
-  }, [bridgeIsConnected, effectivePlatformId]);
+  }, [bridgeIsConnected, effectivePlatformId, isExecutableEnterSignal, mergeCandidateSignals, mergeSignals]);
 
   useEffect(() => {
     if (bridgeIsConnected) {
@@ -3742,7 +3790,15 @@ function App() {
                                     Number(layer?.layer) === 18
                                 )
                               : null;
+                            const layer20 = layers
+                              ? layers.find(
+                                  (layer) =>
+                                    String(layer?.key || '') === 'L20' ||
+                                    Number(layer?.layer) === 20
+                                )
+                              : null;
                             const layer18Metrics = layer18?.metrics || null;
+                            const layer20Metrics = layer20?.metrics || null;
                             const killSwitch =
                               layer18Metrics?.decision?.killSwitch ||
                               layer18Metrics?.isValid?.decision?.killSwitch ||
@@ -3769,6 +3825,9 @@ function App() {
                                 : null;
 
                             const l18Decision = layer18Metrics?.decision || null;
+                            const l20DecisionState = String(
+                              layer20Metrics?.decision?.state || l18Decision?.state || ''
+                            ).toUpperCase();
                             const missingInputs =
                               l18Decision?.missingInputs &&
                               typeof l18Decision.missingInputs === 'object'
@@ -4097,8 +4156,15 @@ function App() {
                                   <span className="market-analyzer__key">Explainability</span>
                                   <span className="market-analyzer__val">
                                     {layers
-                                      ? `${layers.length} layers${layers.length === 18 ? ' (L1–L18)' : ''}`
+                                      ? `${layers.length} layers${layers.length === 20 ? ' (L1–L20)' : ''}`
                                       : 'Waiting for layered analysis…'}
+                                  </span>
+                                </div>
+
+                                <div className="market-analyzer__row">
+                                  <span className="market-analyzer__key">L20 decision</span>
+                                  <span className="market-analyzer__val">
+                                    {l20DecisionState || (layers ? 'Not reported in L20 yet.' : '—')}
                                   </span>
                                 </div>
 
