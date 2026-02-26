@@ -51,7 +51,8 @@ class SignalFactory {
         };
       }
 
-      const { broker, symbol, timeframe, source } = validatedRequest;
+      const { broker, symbol, timeframe, source, analysisMode, eaOnly, requestedBy } =
+        validatedRequest;
 
       // Step 2: Get or create snapshot
       let snapshot = this.snapshotManager ? this.snapshotManager.getSnapshot(broker, symbol) : null;
@@ -81,22 +82,36 @@ class SignalFactory {
         }
       }
 
-      // Step 4: Generate signal through trading engine (has orchestrationCoordinator mixed in).
-      // The orchestrationCoordinator.generateSignal(pair, options) signature takes the symbol
-      // as the first positional argument and an options object as the second.
-      const signalRaw = await this.tradingEngine.generateSignal(symbol, {
+      // Step 4: Generate signal through orchestration coordinator
+      if (!this.orchestrationCoordinator?.generateSignal) {
+        this.metrics.rejected += 1;
+        return {
+          success: false,
+          error: 'Orchestration coordinator unavailable',
+          reason: 'ORCHESTRATION_UNAVAILABLE',
+        };
+      }
+
+      const orchestrationResult = await this.orchestrationCoordinator.generateSignal(symbol, {
         broker,
-        analysisMode: 'ea',
-        eaOnly: true,
+        timeframe,
+        source,
+        analysisMode,
+        eaOnly,
         eaBridgeService: this.eaBridgeService,
-        requestedBy: request.requestedBy || 'signal-factory',
+        requestedBy: requestedBy || 'signal-factory',
       });
 
-      // generateSignal may return the signal directly or { signal, execution }
-      const signal =
-        signalRaw && typeof signalRaw === 'object' && 'signal' in signalRaw
-          ? signalRaw.signal
-          : signalRaw;
+      if (!orchestrationResult || !orchestrationResult.success) {
+        this.metrics.rejected += 1;
+        return {
+          success: false,
+          error: orchestrationResult?.message || 'Signal generation failed',
+          reason: 'ORCHESTRATION_FAILED',
+        };
+      }
+
+      const signal = orchestrationResult.signal;
 
       if (!signal || typeof signal !== 'object') {
         this.metrics.rejected += 1;
@@ -252,6 +267,9 @@ class SignalFactory {
 
     const timeframe = request.timeframe || 'H1';
     const source = request.source || 'signal-factory';
+    const analysisMode = request.analysisMode ?? request.options?.analysisMode ?? null;
+    const eaOnly = request.eaOnly === true || request.options?.eaOnly === true;
+    const requestedBy = request.requestedBy ?? request.options?.requestedBy ?? null;
 
     return {
       valid: true,
@@ -259,6 +277,9 @@ class SignalFactory {
       symbol: symbol.toUpperCase(),
       timeframe,
       source,
+      analysisMode,
+      eaOnly,
+      requestedBy,
     };
   }
 

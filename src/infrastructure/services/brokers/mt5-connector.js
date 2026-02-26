@@ -19,6 +19,7 @@ class Mt5Connector extends BaseBrokerConnector {
     });
     this.apiKey = options.apiKey || brokerConfig.apiKey || null;
     this.expectedAccount = options.accountNumber || brokerConfig.accountNumber || null;
+    this.random = typeof options.random === 'function' ? options.random : Math.random;
 
     // Connection monitoring and auto-reconnect
     this.connectionState = {
@@ -26,18 +27,25 @@ class Mt5Connector extends BaseBrokerConnector {
       lastHealthCheck: null,
       consecutiveFailures: 0,
       lastSuccessfulRequest: Date.now(),
+      lastFailureAt: null,
+      lastFailureReason: null,
+      lastReconnectAttempt: null,
+      reconnecting: false,
     };
 
     // Reconnection strategy with exponential backoff
     this.reconnectConfig = {
       enabled: options.autoReconnect !== false,
       maxRetries: options.maxReconnectRetries || 5,
+      failureThreshold: options.reconnectFailureThreshold || 3,
       baseDelayMs: options.reconnectBaseDelay || 2000,
       maxDelayMs: options.reconnectMaxDelay || 30000,
+      staleThresholdMs: options.staleThresholdMs || 90000,
+      jitterRatio: options.reconnectJitterRatio || 0.2,
       healthCheckIntervalMs: options.healthCheckInterval || 30000,
     };
-    // Guard flag: prevents concurrent reconnection storms
-    this._reconnecting = false;
+
+    this.healthCheckInProgress = false;
 
     // Start health check monitoring if enabled
     if (this.reconnectConfig.enabled) {
@@ -54,6 +62,10 @@ class Mt5Connector extends BaseBrokerConnector {
     }
 
     const runHealthCheck = async () => {
+      if (this.healthCheckInProgress) {
+        return;
+      }
+      this.healthCheckInProgress = true;
       try {
         const result = await this.healthCheck();
 
@@ -63,10 +75,12 @@ class Mt5Connector extends BaseBrokerConnector {
           this.connectionState.lastSuccessfulRequest = Date.now();
         } else {
           this.connectionState.connected = false;
-          this.connectionState.consecutiveFailures += 1;
 
           // Trigger auto-reconnect if threshold exceeded
-          if (this.connectionState.consecutiveFailures >= 3) {
+          if (
+            this.connectionState.consecutiveFailures >= this.reconnectConfig.failureThreshold ||
+            result.stale
+          ) {
             this.logger?.warn?.(
               { broker: this.name, failures: this.connectionState.consecutiveFailures },
               'MT5 connection lost, attempting auto-reconnect'
@@ -78,6 +92,8 @@ class Mt5Connector extends BaseBrokerConnector {
         this.connectionState.lastHealthCheck = Date.now();
       } catch (error) {
         this.logger?.error?.({ err: error, broker: this.name }, 'Health check error');
+      } finally {
+        this.healthCheckInProgress = false;
       }
     };
 
@@ -109,24 +125,21 @@ class Mt5Connector extends BaseBrokerConnector {
    */
   async attemptAutoReconnect() {
     if (!this.reconnectConfig.enabled) {
-      return false;
+      return;
     }
-    // Prevent concurrent reconnect storms
-    if (this._reconnecting) {
+    if (this.connectionState.reconnecting) {
       this.logger?.debug?.({ broker: this.name }, 'MT5 reconnect already in progress — skipping');
       return false;
     }
-    this._reconnecting = true;
 
+    this.connectionState.reconnecting = true;
     let attempt = 0;
     try {
       while (attempt < this.reconnectConfig.maxRetries) {
         attempt += 1;
 
-        // Exponential backoff with ±20% random jitter to spread out reconnect load
-        const baseDelay = this.reconnectConfig.baseDelayMs * Math.pow(2, attempt - 1);
-        const jitter = baseDelay * 0.2 * (Math.random() * 2 - 1); // ±20%
-        const delayMs = Math.min(Math.round(baseDelay + jitter), this.reconnectConfig.maxDelayMs);
+        const delayMs = this.computeReconnectDelay(attempt);
+        this.connectionState.lastReconnectAttempt = Date.now();
 
         this.logger?.info?.({ broker: this.name, attempt, delayMs }, 'Attempting MT5 reconnection');
 
@@ -138,11 +151,11 @@ class Mt5Connector extends BaseBrokerConnector {
 
           if (result?.connected || result?.success) {
             this.logger?.info?.({ broker: this.name, attempt }, 'MT5 reconnection successful');
-            this.connectionState.connected = true;
-            this.connectionState.consecutiveFailures = 0;
+            this.recordRequestSuccess();
             return true;
           }
         } catch (error) {
+          this.recordRequestFailure(error, 'reconnect_attempt');
           this.logger?.warn?.(
             { err: error, broker: this.name, attempt },
             'MT5 reconnection attempt failed'
@@ -156,7 +169,7 @@ class Mt5Connector extends BaseBrokerConnector {
       );
       return false;
     } finally {
-      this._reconnecting = false;
+      this.connectionState.reconnecting = false;
     }
   }
 
@@ -168,6 +181,7 @@ class Mt5Connector extends BaseBrokerConnector {
       });
 
       const connected = Boolean(response.data?.connected);
+      const stale = this.isConnectionStale();
 
       // Update connection state
       if (connected) {
@@ -180,19 +194,20 @@ class Mt5Connector extends BaseBrokerConnector {
         broker: this.name,
         mode: this.accountMode,
         connected,
+        stale,
         details: response.data,
         lastSuccessfulRequest: this.connectionState.lastSuccessfulRequest,
         consecutiveFailures: this.connectionState.consecutiveFailures,
       };
     } catch (error) {
-      this.connectionState.consecutiveFailures += 1;
-      this.connectionState.connected = false;
+      this.recordRequestFailure(error, 'health_check');
 
       this.logger?.warn?.({ err: error, broker: this.name }, 'MT5 health check failed');
       return {
         broker: this.name,
         mode: this.accountMode,
         connected: false,
+        stale: false,
         error: error.message,
         consecutiveFailures: this.connectionState.consecutiveFailures,
       };
@@ -216,13 +231,11 @@ class Mt5Connector extends BaseBrokerConnector {
       });
 
       // Update connection state on successful connect
-      this.connectionState.connected = Boolean(response.data?.connected || response.data?.success);
-      this.connectionState.consecutiveFailures = 0;
-      this.connectionState.lastSuccessfulRequest = Date.now();
+      this.recordRequestSuccess();
 
       return response.data;
     } catch (error) {
-      this.connectionState.consecutiveFailures += 1;
+      this.recordRequestFailure(error, 'connect');
       this.logger?.error?.({ err: error, broker: this.name }, 'MT5 connect failed');
       throw error;
     }
@@ -288,6 +301,7 @@ class Mt5Connector extends BaseBrokerConnector {
         error: response.data?.error || null,
       };
     } catch (error) {
+      this.recordRequestFailure(error, 'place_order');
       this.logger?.error?.({ err: error, broker: this.name }, 'MT5 placeOrder failed');
       return { success: false, error: error.message };
     }
@@ -310,6 +324,7 @@ class Mt5Connector extends BaseBrokerConnector {
         error: response.data?.error || null,
       };
     } catch (error) {
+      this.recordRequestFailure(error, 'close_position');
       this.logger?.error?.({ err: error, broker: this.name }, 'MT5 closePosition failed');
       return { success: false, error: error.message };
     }
@@ -342,6 +357,7 @@ class Mt5Connector extends BaseBrokerConnector {
         error: response.data?.error || null,
       };
     } catch (error) {
+      this.recordRequestFailure(error, 'modify_position');
       this.logger?.error?.({ err: error, broker: this.name }, 'MT5 modifyPosition failed');
       return { success: false, error: error.message };
     }
@@ -358,6 +374,7 @@ class Mt5Connector extends BaseBrokerConnector {
       });
       return response.data?.positions || [];
     } catch (error) {
+      this.recordRequestFailure(error, 'fetch_positions');
       this.logger?.warn?.({ err: error, broker: this.name }, 'MT5 fetchOpenPositions failed');
       return [];
     }
@@ -375,6 +392,7 @@ class Mt5Connector extends BaseBrokerConnector {
       });
       return response.data?.deals || [];
     } catch (error) {
+      this.recordRequestFailure(error, 'fetch_fills');
       this.logger?.warn?.({ err: error, broker: this.name }, 'MT5 fetchRecentFills failed');
       return [];
     }
@@ -391,14 +409,56 @@ class Mt5Connector extends BaseBrokerConnector {
       });
 
       // Track successful request
-      this.connectionState.lastSuccessfulRequest = Date.now();
-      this.connectionState.consecutiveFailures = 0;
+      this.recordRequestSuccess();
 
       return response.data || null;
     } catch (error) {
-      this.connectionState.consecutiveFailures += 1;
+      this.recordRequestFailure(error, 'fetch_account');
       this.logger?.warn?.({ err: error, broker: this.name }, 'MT5 fetchAccountSummary failed');
       return null;
+    }
+  }
+
+  computeReconnectDelay(attempt) {
+    const baseDelay = Math.min(
+      this.reconnectConfig.baseDelayMs * Math.pow(2, attempt - 1),
+      this.reconnectConfig.maxDelayMs
+    );
+    const jitter = baseDelay * this.reconnectConfig.jitterRatio;
+    const offset = (this.random() * 2 - 1) * jitter;
+    return Math.max(250, Math.round(baseDelay + offset));
+  }
+
+  getTimeSinceLastSuccess() {
+    return Date.now() - this.connectionState.lastSuccessfulRequest;
+  }
+
+  isConnectionStale() {
+    const threshold = Number(this.reconnectConfig.staleThresholdMs);
+    if (!Number.isFinite(threshold) || threshold <= 0) {
+      return false;
+    }
+    return this.getTimeSinceLastSuccess() > threshold;
+  }
+
+  recordRequestSuccess() {
+    this.connectionState.connected = true;
+    this.connectionState.consecutiveFailures = 0;
+    this.connectionState.lastSuccessfulRequest = Date.now();
+    this.connectionState.lastFailureAt = null;
+    this.connectionState.lastFailureReason = null;
+  }
+
+  recordRequestFailure(error, reason) {
+    this.connectionState.connected = false;
+    this.connectionState.consecutiveFailures += 1;
+    this.connectionState.lastFailureAt = Date.now();
+    this.connectionState.lastFailureReason = reason || error?.message || 'unknown';
+    if (
+      this.reconnectConfig.enabled &&
+      this.connectionState.consecutiveFailures >= this.reconnectConfig.failureThreshold
+    ) {
+      this.attemptAutoReconnect().catch(() => {});
     }
   }
 
@@ -406,9 +466,11 @@ class Mt5Connector extends BaseBrokerConnector {
    * Get current connection state
    */
   getConnectionState() {
+    const timeSinceLastSuccess = this.getTimeSinceLastSuccess();
     return {
       ...this.connectionState,
-      timeSinceLastSuccess: Date.now() - this.connectionState.lastSuccessfulRequest,
+      timeSinceLastSuccess,
+      stale: this.isConnectionStale(),
     };
   }
 

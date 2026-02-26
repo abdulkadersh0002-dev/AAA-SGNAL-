@@ -1,6 +1,6 @@
 /**
- * Tests for 3 critical signal-factory bugs fixed in this session:
- * 1. orchestrationCoordinator undefined → fixed by using tradingEngine directly
+ * Tests for signal-factory correctness:
+ * 1. orchestrationCoordinator is used directly for signal generation
  * 2. validateSignalQuality field mismatch (symbol vs pair, signal vs direction)
  * 3. isTradeable direction check uses signal.signal vs signal.direction
  */
@@ -10,9 +10,10 @@ import SignalFactory from '../../../src/core/engine/signal-factory.js';
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-function makeFactory(tradingEngineOverrides = {}) {
-  const tradingEngine = {
-    generateSignal: async (_symbol, _opts) => ({
+function makeOrchestrationResult(overrides = {}) {
+  return {
+    success: true,
+    signal: {
       pair: 'EURUSD',
       direction: 'BUY',
       confidence: 72,
@@ -23,8 +24,15 @@ function makeFactory(tradingEngineOverrides = {}) {
       takeProfit: 1.12,
       isValid: { isValid: true, checks: {} },
       components: {},
-    }),
-    ...tradingEngineOverrides,
+    },
+    ...overrides,
+  };
+}
+
+function makeFactory(orchestrationCoordinatorOverrides = {}) {
+  const orchestrationCoordinator = {
+    generateSignal: async (_symbol, _opts) => makeOrchestrationResult(),
+    ...orchestrationCoordinatorOverrides,
   };
 
   const layerOrchestrator = {
@@ -36,7 +44,7 @@ function makeFactory(tradingEngineOverrides = {}) {
   };
 
   const factory = new SignalFactory({
-    tradingEngine,
+    orchestrationCoordinator,
     eaBridgeService: null,
     snapshotManager: null,
     logger: { info: () => {}, warn: () => {}, error: () => {} },
@@ -133,61 +141,58 @@ test('isTradeable: rejects when layer18Ready is false', () => {
 
 // ── generateSignal integration ────────────────────────────────────────────────
 
-test('generateSignal: uses tradingEngine.generateSignal (not undefined orchestrationCoordinator)', async () => {
+test('generateSignal: uses orchestrationCoordinator.generateSignal', async () => {
   let calledWith = null;
   const factory = makeFactory({
     generateSignal: async (symbol, opts) => {
       calledWith = { symbol, opts };
-      return {
-        pair: symbol,
-        direction: 'BUY',
-        confidence: 72,
-        strength: 65,
-        estimatedWinRate: 78,
-        entryPrice: 1.1,
-        stopLoss: 1.09,
-        takeProfit: 1.12,
-        isValid: { isValid: true, checks: {} },
-        components: {},
-      };
+      return makeOrchestrationResult({
+        signal: { ...makeOrchestrationResult().signal, pair: symbol },
+      });
     },
   });
 
-  const result = await factory.generateSignal({ broker: 'mt5', symbol: 'EURUSD' });
+  const result = await factory.generateSignal({
+    broker: 'mt5',
+    symbol: 'EURUSD',
+    analysisMode: 'ea',
+    eaOnly: true,
+    requestedBy: 'test-runner',
+  });
 
-  // Must NOT throw TypeError on orchestrationCoordinator
   assert.equal(result.success, true);
-  assert.notEqual(calledWith, null, 'tradingEngine.generateSignal should be called');
+  assert.notEqual(calledWith, null, 'orchestrationCoordinator.generateSignal should be called');
   assert.equal(calledWith.symbol, 'EURUSD');
   assert.equal(calledWith.opts.broker, 'mt5');
   assert.equal(calledWith.opts.analysisMode, 'ea');
+  assert.equal(calledWith.opts.eaOnly, true);
+  assert.equal(calledWith.opts.requestedBy, 'test-runner');
 });
 
-test('generateSignal: handles tradingEngine returning { signal, execution } shape', async () => {
-  const factory = makeFactory({
-    generateSignal: async (symbol) => ({
-      signal: {
-        pair: symbol,
-        direction: 'SELL',
-        confidence: 68,
-        strength: 60,
-        estimatedWinRate: 76,
-        entryPrice: 1.1,
-        stopLoss: 1.11,
-        takeProfit: 1.08,
-        isValid: { isValid: true, checks: {} },
-        components: {},
-      },
-      execution: null,
-    }),
+test('generateSignal: returns ORCHESTRATION_UNAVAILABLE when coordinator missing', async () => {
+  const factory = new SignalFactory({
+    orchestrationCoordinator: null,
+    eaBridgeService: null,
+    snapshotManager: null,
+    logger: { info: () => {}, warn: () => {}, error: () => {} },
   });
 
-  const result = await factory.generateSignal({ broker: 'mt5', symbol: 'GBPUSD' });
-  assert.equal(result.success, true);
-  assert.equal(result.signal.direction, 'SELL');
+  const result = await factory.generateSignal({ broker: 'mt5', symbol: 'EURUSD' });
+  assert.equal(result.success, false);
+  assert.equal(result.reason, 'ORCHESTRATION_UNAVAILABLE');
 });
 
-test('generateSignal: records error when tradingEngine throws', async () => {
+test('generateSignal: returns ORCHESTRATION_FAILED when coordinator returns failure', async () => {
+  const factory = makeFactory({
+    generateSignal: async () => ({ success: false, message: 'no data' }),
+  });
+
+  const result = await factory.generateSignal({ broker: 'mt5', symbol: 'EURUSD' });
+  assert.equal(result.success, false);
+  assert.equal(result.reason, 'ORCHESTRATION_FAILED');
+});
+
+test('generateSignal: records error when coordinator throws', async () => {
   const factory = makeFactory({
     generateSignal: async () => {
       throw new Error('connection lost');
