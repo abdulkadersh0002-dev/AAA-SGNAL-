@@ -1,9 +1,9 @@
 /**
  * Number Utilities
- * 
+ *
  * Provides clean, consistent number validation and conversion utilities
  * to reduce code noise and duplication throughout the codebase.
- * 
+ *
  * Replaces 400+ instances of: Number.isFinite(Number(x)) ? Number(x) : fallback
  */
 
@@ -37,7 +37,9 @@ export function toPositiveNumber(value, fallback = null) {
  */
 export function toPercent(value, fallback = null) {
   const num = toNumber(value, fallback);
-  if (num === null) return fallback;
+  if (num === null) {
+    return fallback;
+  }
   return Math.max(0, Math.min(100, num));
 }
 
@@ -50,7 +52,9 @@ export function toPercent(value, fallback = null) {
  */
 export function toPrice(value, decimals = 5, fallback = null) {
   const num = toNumber(value, fallback);
-  if (num === null || num < 0) return fallback;
+  if (num === null || num < 0) {
+    return fallback;
+  }
   return Number(num.toFixed(decimals));
 }
 
@@ -83,7 +87,9 @@ export function toAbsolute(value, fallback = null) {
  */
 export function roundTo(value, decimals = 2, fallback = null) {
   const num = toNumber(value, fallback);
-  if (num === null) return fallback;
+  if (num === null) {
+    return fallback;
+  }
   const factor = Math.pow(10, decimals);
   return Math.round(num * factor) / factor;
 }
@@ -110,11 +116,11 @@ export function clamp(value, min, max) {
 export function safeDivide(numerator, denominator, fallback = null) {
   const num = toNumber(numerator);
   const den = toNumber(denominator);
-  
+
   if (num === null || den === null || den === 0) {
     return fallback;
   }
-  
+
   const result = num / den;
   return Number.isFinite(result) ? result : fallback;
 }
@@ -129,11 +135,11 @@ export function safeDivide(numerator, denominator, fallback = null) {
 export function percentChange(oldValue, newValue, fallback = null) {
   const old = toNumber(oldValue);
   const newVal = toNumber(newValue);
-  
+
   if (old === null || newVal === null || old === 0) {
     return fallback;
   }
-  
+
   return ((newVal - old) / old) * 100;
 }
 
@@ -157,12 +163,12 @@ export function inRange(value, min, max) {
  */
 export function pipsToPrice(pips, pair) {
   const numPips = toNumber(pips, 0);
-  
+
   // JPY pairs use 2 decimal places (1 pip = 0.01)
   if (pair && (pair.includes('JPY') || pair.includes('jpy'))) {
     return numPips * 0.01;
   }
-  
+
   // Most pairs use 4-5 decimal places (1 pip = 0.0001)
   return numPips * 0.0001;
 }
@@ -175,12 +181,12 @@ export function pipsToPrice(pips, pair) {
  */
 export function priceToPips(price, pair) {
   const numPrice = toNumber(price, 0);
-  
+
   // JPY pairs
   if (pair && (pair.includes('JPY') || pair.includes('jpy'))) {
     return numPrice / 0.01;
   }
-  
+
   // Most pairs
   return numPrice / 0.0001;
 }

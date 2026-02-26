@@ -3,6 +3,7 @@
 ## مُلَخَّص شَامِل لِتَحْدِيث النِّظَام (Arabic Summary)
 
 تم بنجاح إكمال تحديث شامل للنظام لجعله:
+
 - ✅ **ذكي للغاية**: منطق موحد وقوي في كل مكان
 - ✅ **منظم**: هيكل واضح بدون أي تشابك
 - ✅ **قوي**: استقرار 99.5% في الاتصال بـ MT5
@@ -10,6 +11,7 @@
 - ✅ **قابل للتعديل**: سهل التحديث والصيانة لاحقاً
 
 ### التحسينات الرئيسية:
+
 1. **20 طبقة تحليل**: كل إشارة تمر عبر 20 طبقة بالترتيب
 2. **توحيد الإشارات**: طريقة واحدة ذكية بدلاً من 5 طرق
 3. **إصلاح MT5**: استقرار 99.5% واسترجاع تلقائي
@@ -25,6 +27,7 @@
 ### Problem Statement
 
 **Original Requirements** (Arabic):
+
 - إصلاح جميع مشاكل المنطق
 - طريقة ذكية واحدة (ليس عدة طرق)
 - إصلاح البنية التحتية وجعلها أقوى
@@ -44,6 +47,7 @@
 ## System Architecture Evolution
 
 ### Before (Multiple Scattered Paths)
+
 ```
 MT5 → [Multiple Entry Points]
    ├→ Direct tradingEngine.generateSignal()
@@ -55,6 +59,7 @@ MT5 → [Multiple Entry Points]
 ```
 
 ### After (Unified Intelligent Flow)
+
 ```
 MT5 Terminal
     ↓
@@ -82,7 +87,9 @@ Snapshot Update (with all layer results)
 ## All Phases Completed
 
 ### Phase 1-2: Infrastructure Foundation ✅
+
 **MT5 Connection Improvements:**
+
 - Smart reconnection with exponential backoff
 - Health monitoring (30s heartbeat)
 - Connection state tracking
@@ -90,6 +97,7 @@ Snapshot Update (with all layer results)
 - Uptime: **92% → 99.5% (+8%)**
 
 **CacheCoordinator:**
+
 - Unified cache management (8+ caches → 1)
 - LRU eviction strategy
 - Automatic cleanup every 60s
@@ -97,6 +105,7 @@ Snapshot Update (with all layer results)
 - Cache hit rate: **0% → 85%**
 
 **SignalFactory:**
+
 - Unified signal generation (5 methods → 1)
 - Built-in caching (2.5s TTL)
 - Batch generation with concurrency control
@@ -104,13 +113,16 @@ Snapshot Update (with all layer results)
 - Generation time: **450ms → 245ms (-45%)**
 
 **SignalValidator:**
+
 - 6-gate validation pipeline
 - Structure, market rules, risk validation
 - Trading policy compliance
 - Detailed rejection reasons
 
 ### Phase 3-4: Unified Snapshot System ✅
+
 **UnifiedSnapshotManager:**
+
 - Single source of truth for ALL data
 - Versioned snapshots with change tracking
 - Event-driven real-time updates
@@ -118,6 +130,7 @@ Snapshot Update (with all layer results)
 - TTL-based staleness detection (5s)
 
 **LayerOrchestrator:**
+
 - Enforces 20-layer sequential processing
 - Stop-on-fail for required layers
 - Confluence score (0-100%)
@@ -125,6 +138,7 @@ Snapshot Update (with all layer results)
 - Comprehensive per-layer metrics
 
 **20-Layer System (All Implemented):**
+
 1. Market Data Quality ✅
 2. Spread Analysis ✅
 3. Volatility Check ✅
@@ -147,7 +161,9 @@ Snapshot Update (with all layer results)
 20. Trade Metadata ✅
 
 ### Phase 5-6: Service Integration ✅
+
 **EA Bridge Service Integration:**
+
 - Integrated with UnifiedSnapshotManager
 - Integrated with SignalFactory
 - Real-time snapshot updates via WebSocket
@@ -155,12 +171,14 @@ Snapshot Update (with all layer results)
 - Price bar gaps: **Common → Rare (-95%)**
 
 **Realtime Signal Runner Integration:**
+
 - Uses SignalFactory instead of direct engine call
 - Automatic LayerOrchestrator processing
 - Backward compatibility maintained
 - All signals through unified pipeline
 
 **API Endpoints (5 REST endpoints):**
+
 1. `GET /api/snapshot/:broker/:symbol` - Get snapshot
 2. `GET /api/snapshot/ready` - Layer 18 ready signals
 3. `GET /api/snapshot/all` - All snapshots with filtering
@@ -168,21 +186,25 @@ Snapshot Update (with all layer results)
 5. `GET /api/snapshot/layers/:broker/:symbol` - Layer breakdown
 
 ### Phase 7: Intelligent Code Simplification ✅
+
 **Utility Functions Created:**
 
 **1. NumberUtils (210 lines):**
+
 - Replaces 400+ verbose validations
 - `toNumber()`, `toPrice()`, `toPercent()`
 - `safeDivide()`, `percentChange()`, `roundTo()`
 - `pipsToPrice()`, `priceToPips()`
 
 **2. EventUtils (265 lines):**
+
 - Consolidates 3 duplicate implementations
 - `parseEventTimeMs()` - was duplicated 3 times!
 - `isUpcomingEvent()`, `isHighImpact()`
 - `shouldAvoidDueToNews()`, `findUpcomingHighImpactEvents()`
 
 **3. PairUtils (290 lines):**
+
 - Unifies logic from 5+ files
 - `splitFxPair()`, `getAssetClass()`, `isMajorPair()`
 - `isJpyPair()`, `getPipDecimals()`, `getStandardLotSize()`
@@ -193,24 +215,25 @@ Snapshot Update (with all layer results)
 
 ## Performance Improvements
 
-| Metric | Before | After | Improvement |
-|--------|--------|-------|-------------|
-| **Signal Generation** | 450ms | 245ms | **-45%** (faster) |
-| **Cache Hit Rate** | 0% | 85% | **+85%** (new) |
-| **Memory Usage** | Unbounded | Bounded | **Safe** |
-| **MT5 Uptime** | 92% | 99.5% | **+8%** |
-| **Price Bar Gaps** | Common | Rare | **-95%** |
-| **Signal Paths** | 5 | 1 | **-80%** (unified) |
-| **Validation Gates** | 3 | 1 | **-67%** (unified) |
-| **Cache Managers** | 8+ | 1 | **-88%** (unified) |
-| **Layer Coverage** | Inconsistent | 100% | **Complete** |
-| **Code Duplication** | 2,250+ lines | 0 | **-100%** (removable) |
+| Metric                | Before       | After   | Improvement           |
+| --------------------- | ------------ | ------- | --------------------- |
+| **Signal Generation** | 450ms        | 245ms   | **-45%** (faster)     |
+| **Cache Hit Rate**    | 0%           | 85%     | **+85%** (new)        |
+| **Memory Usage**      | Unbounded    | Bounded | **Safe**              |
+| **MT5 Uptime**        | 92%          | 99.5%   | **+8%**               |
+| **Price Bar Gaps**    | Common       | Rare    | **-95%**              |
+| **Signal Paths**      | 5            | 1       | **-80%** (unified)    |
+| **Validation Gates**  | 3            | 1       | **-67%** (unified)    |
+| **Cache Managers**    | 8+           | 1       | **-88%** (unified)    |
+| **Layer Coverage**    | Inconsistent | 100%    | **Complete**          |
+| **Code Duplication**  | 2,250+ lines | 0       | **-100%** (removable) |
 
 ---
 
 ## Files Created (14 new files)
 
 ### Core Components:
+
 1. `src/infrastructure/services/cache/cache-coordinator.js` (324 lines)
 2. `src/core/engine/signal-factory.js` (enhanced, 400+ lines)
 3. `src/core/engine/signal-validator.js` (338 lines)
@@ -218,15 +241,18 @@ Snapshot Update (with all layer results)
 5. `src/core/engine/layer-orchestrator.js` (497 lines)
 
 ### Utilities:
+
 6. `src/lib/utils/number-utils.js` (210 lines)
 7. `src/lib/utils/event-utils.js` (265 lines)
 8. `src/lib/utils/pair-utils.js` (290 lines)
 9. `src/lib/utils/index.js` (40 lines)
 
 ### API:
+
 10. `src/interfaces/http/routes/snapshot/index.js` (295 lines)
 
 ### Documentation:
+
 11. `docs/UNIFIED_ARCHITECTURE.md` (English system overview)
 12. `docs/IMPROVEMENTS_ARABIC.md` (Arabic system overview)
 13. `docs/UNIFIED_SNAPSHOT_GUIDE.md` (Snapshot specification)
@@ -236,6 +262,7 @@ Snapshot Update (with all layer results)
 17. `docs/COMPLETE_REFACTORING_SUMMARY.md` (Final summary)
 
 ### Files Enhanced (3 files):
+
 1. `src/infrastructure/services/brokers/mt5-connector.js` (reconnection)
 2. `src/infrastructure/services/brokers/ea-bridge-service.js` (snapshot integration)
 3. `src/infrastructure/services/realtime-ea-signal-runner.js` (unified pipeline)
@@ -245,18 +272,21 @@ Snapshot Update (with all layer results)
 ## Key Achievements
 
 ### 1. Single Source of Truth ✅
+
 - **UnifiedSnapshotManager** stores ALL data
 - Dashboard and execution use SAME snapshot
 - No data inconsistency
 - Versioned with change tracking
 
 ### 2. Unified Signal Generation ✅
+
 - **ONE SignalFactory** (not 5 different methods)
 - All signals through **LayerOrchestrator**
 - **100% layer coverage** enforced
 - Automatic caching (85% hit rate)
 
 ### 3. Strong Infrastructure ✅
+
 - MT5 reconnection (exponential backoff)
 - Health monitoring (30s heartbeat)
 - **99.5% uptime**
@@ -264,24 +294,28 @@ Snapshot Update (with all layer results)
 - Memory pressure handling
 
 ### 4. Organized Data Flow ✅
+
 - Clear path: MT5 → Snapshot → Layers → Signal → Dashboard
 - No scattered calculations
 - No duplicate logic
 - Clean separation of concerns
 
 ### 5. Error Handling & Resilience ✅
+
 - MT5 disconnection recovery
 - Price bar persistence (95% gap reduction)
 - Graceful degradation
 - Automatic cleanup
 
 ### 6. Complete Dashboard Integration ✅
+
 - 5 REST API endpoints
 - Real-time WebSocket updates
 - Layer-by-layer visibility
 - System health monitoring
 
 ### 7. Intelligent Code Simplification ✅
+
 - Utility functions reduce ~2,250 lines
 - DRY principle enforced
 - Consistent behavior everywhere
@@ -292,6 +326,7 @@ Snapshot Update (with all layer results)
 ## Code Quality Transformation
 
 ### Before:
+
 - ❌ 5 different signal generation paths
 - ❌ 3 separate validation methods
 - ❌ 8+ scattered cache implementations
@@ -305,6 +340,7 @@ Snapshot Update (with all layer results)
 - ❌ 7,412-line monolithic trading-engine.js
 
 ### After:
+
 - ✅ 1 unified SignalFactory
 - ✅ 1 unified SignalValidator
 - ✅ 1 CacheCoordinator
@@ -322,12 +358,14 @@ Snapshot Update (with all layer results)
 ## Testing Status
 
 ### Automated:
+
 - ✅ Code compiles without errors
 - ✅ Linting passes
 - ✅ No circular dependencies
 - ✅ All new modules follow best practices
 
 ### Integration (Recommended Next):
+
 - ⏳ End-to-end signal flow with live MT5
 - ⏳ Dashboard snapshot display
 - ⏳ WebSocket real-time updates
@@ -341,6 +379,7 @@ Snapshot Update (with all layer results)
 ## Documentation
 
 Complete documentation in both English and Arabic:
+
 - ✅ System architecture overview
 - ✅ API reference with examples
 - ✅ Snapshot system specification
@@ -355,6 +394,7 @@ Complete documentation in both English and Arabic:
 ## Git Commit Summary
 
 This PR includes **20+ commits** across all phases:
+
 - Phase 1-2: Infrastructure (MT5, Cache, SignalFactory, Validator)
 - Phase 3-4: Snapshot System (UnifiedSnapshotManager, LayerOrchestrator)
 - Phase 5-6: Service Integration (EA Bridge, Realtime Runner, API)
@@ -364,27 +404,28 @@ This PR includes **20+ commits** across all phases:
 
 ## Metrics Summary
 
-| Category | Metric | Value |
-|----------|--------|-------|
-| **Files** | New files created | 17 |
-| **Files** | Files enhanced | 3 |
-| **Code** | New lines written | ~4,500 |
-| **Code** | Duplicate lines removable | ~2,250 |
-| **Code** | Net addition | ~2,250 |
-| **Performance** | Signal generation speedup | 45% |
-| **Performance** | Cache hit rate | 85% |
-| **Performance** | MT5 uptime improvement | +8% |
-| **Performance** | Price bar gap reduction | 95% |
-| **Quality** | Signal paths unified | 5 → 1 |
-| **Quality** | Validation gates unified | 3 → 1 |
-| **Quality** | Cache managers unified | 8+ → 1 |
-| **Quality** | Layer coverage | 100% |
+| Category        | Metric                    | Value  |
+| --------------- | ------------------------- | ------ |
+| **Files**       | New files created         | 17     |
+| **Files**       | Files enhanced            | 3      |
+| **Code**        | New lines written         | ~4,500 |
+| **Code**        | Duplicate lines removable | ~2,250 |
+| **Code**        | Net addition              | ~2,250 |
+| **Performance** | Signal generation speedup | 45%    |
+| **Performance** | Cache hit rate            | 85%    |
+| **Performance** | MT5 uptime improvement    | +8%    |
+| **Performance** | Price bar gap reduction   | 95%    |
+| **Quality**     | Signal paths unified      | 5 → 1  |
+| **Quality**     | Validation gates unified  | 3 → 1  |
+| **Quality**     | Cache managers unified    | 8+ → 1 |
+| **Quality**     | Layer coverage            | 100%   |
 
 ---
 
 ## Deployment Status
 
 The system is:
+
 - ✅ **Production-ready**
 - ✅ **Well-documented** (English + Arabic)
 - ✅ **Maintainable** (Clean, organized code)
@@ -399,18 +440,21 @@ The system is:
 ## Future Enhancements (Optional)
 
 ### Phase 7.2+: Further Simplification
+
 - [ ] Extract validators from trading-engine.js
 - [ ] Create SpreadValidator, TimeframeValidator, RiskValidator
 - [ ] Refactor trading-engine.js to use utilities (~2,000 lines reduction)
 - [ ] Consolidate broker connectors further
 
 ### Phase 8: Dashboard Enhancement
+
 - [ ] Update dashboard components to display 20-layer status
 - [ ] Show confluence score visualization
 - [ ] Real-time snapshot subscription
 - [ ] Layer-by-layer breakdown display
 
 ### Phase 9: Testing & Validation
+
 - [ ] Unit tests for all utilities
 - [ ] Integration tests for complete flow
 - [ ] Load testing with 20+ concurrent symbols
@@ -421,6 +465,7 @@ The system is:
 ## Conclusion
 
 ### النظام مكتمل ✅
+
 ### System Complete ✅
 
 All requirements from the problem statement have been successfully implemented:
@@ -437,6 +482,7 @@ All requirements from the problem statement have been successfully implemented:
 10. ✅ **قابل للتعديل** - Modifiable and maintainable
 
 ### The Trading System is Now:
+
 - **Intelligent**: Smart utilities and unified logic
 - **Organized**: Clear structure and separation of concerns
 - **Strong**: 99.5% uptime, resilient error handling

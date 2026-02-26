@@ -1,9 +1,9 @@
 /**
  * Currency Pair Utilities
- * 
+ *
  * Provides utilities for parsing, normalizing, and categorizing
  * currency pairs and other trading instruments.
- * 
+ *
  * Consolidates duplicate pair handling logic found throughout the codebase.
  */
 
@@ -13,14 +13,16 @@
  * @returns {string} Normalized currency code
  */
 export function normalizeCurrency(currency) {
-  if (!currency || typeof currency !== 'string') return '';
+  if (!currency || typeof currency !== 'string') {
+    return '';
+  }
   return currency.toUpperCase().trim();
 }
 
 /**
  * Split forex pair into base and quote currencies
  * Handles various formats: EURUSD, EUR/USD, EUR_USD, etc.
- * 
+ *
  * @param {string} pair - Currency pair
  * @returns {Object} { base: string, quote: string, valid: boolean }
  */
@@ -34,7 +36,7 @@ export function splitFxPair(pair) {
 
   // Extract 3-letter currencies (most common)
   const match = normalized.match(/^([A-Z]{3})([A-Z]{3})$/);
-  
+
   if (match) {
     return {
       base: match[1],
@@ -64,7 +66,9 @@ export function splitFxPair(pair) {
  */
 export function pairContainsCurrency(pair, currency) {
   const { base, quote, valid } = splitFxPair(pair);
-  if (!valid) return false;
+  if (!valid) {
+    return false;
+  }
 
   const currencyUpper = normalizeCurrency(currency);
   return base === currencyUpper || quote === currencyUpper;
@@ -76,7 +80,9 @@ export function pairContainsCurrency(pair, currency) {
  * @returns {string} Asset class (forex, crypto, commodity, index, stock, bond, unknown)
  */
 export function getAssetClass(pair) {
-  if (!pair || typeof pair !== 'string') return 'unknown';
+  if (!pair || typeof pair !== 'string') {
+    return 'unknown';
+  }
 
   const normalized = pair.toUpperCase().trim();
 
@@ -88,30 +94,49 @@ export function getAssetClass(pair) {
   }
 
   // Cryptocurrency
-  if (normalized.includes('BTC') || normalized.includes('ETH') || 
-      normalized.includes('USDT') || normalized.includes('BUSD') ||
-      normalized.match(/^[A-Z]+USDT?$/)) {
+  if (
+    normalized.includes('BTC') ||
+    normalized.includes('ETH') ||
+    normalized.includes('USDT') ||
+    normalized.includes('BUSD') ||
+    normalized.match(/^[A-Z]+USDT?$/)
+  ) {
     return 'crypto';
   }
 
   // Commodities
-  if (normalized.includes('XAU') || normalized.includes('XAG') || // Gold, Silver
-      normalized.includes('OIL') || normalized.includes('WTI') || 
-      normalized.includes('BRENT') || normalized.includes('GAS')) {
+  if (
+    normalized.includes('XAU') ||
+    normalized.includes('XAG') || // Gold, Silver
+    normalized.includes('OIL') ||
+    normalized.includes('WTI') ||
+    normalized.includes('BRENT') ||
+    normalized.includes('GAS')
+  ) {
     return 'commodity';
   }
 
   // Indices
-  if (normalized.includes('SPX') || normalized.includes('NDX') ||
-      normalized.includes('DJI') || normalized.includes('DAX') ||
-      normalized.includes('FTSE') || normalized.includes('NIK') ||
-      normalized.match(/^[A-Z]+\d{2,}$/)) { // e.g., US30, NAS100
+  if (
+    normalized.includes('SPX') ||
+    normalized.includes('NDX') ||
+    normalized.includes('DJI') ||
+    normalized.includes('DAX') ||
+    normalized.includes('FTSE') ||
+    normalized.includes('NIK') ||
+    normalized.match(/^[A-Z]+\d{2,}$/)
+  ) {
+    // e.g., US30, NAS100
     return 'index';
   }
 
   // Bonds
-  if (normalized.includes('BOND') || normalized.includes('YIELD') ||
-      normalized.match(/^[A-Z]{2}\d{2}Y$/)) { // e.g., US10Y
+  if (
+    normalized.includes('BOND') ||
+    normalized.includes('YIELD') ||
+    normalized.match(/^[A-Z]{2}\d{2}Y$/)
+  ) {
+    // e.g., US10Y
     return 'bond';
   }
 
@@ -130,10 +155,7 @@ export function getAssetClass(pair) {
  * @returns {boolean} True if major pair
  */
 export function isMajorPair(pair) {
-  const majorPairs = [
-    'EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF',
-    'AUDUSD', 'USDCAD', 'NZDUSD',
-  ];
+  const majorPairs = ['EURUSD', 'GBPUSD', 'USDJPY', 'USDCHF', 'AUDUSD', 'USDCAD', 'NZDUSD'];
 
   const normalized = normalizeCurrency(pair).replace(/[^A-Z]/g, '');
   return majorPairs.includes(normalized);
@@ -146,7 +168,9 @@ export function isMajorPair(pair) {
  */
 export function isCrossPair(pair) {
   const { base, quote, valid } = splitFxPair(pair);
-  if (!valid) return false;
+  if (!valid) {
+    return false;
+  }
 
   return base !== 'USD' && quote !== 'USD';
 }
@@ -167,14 +191,20 @@ export function isJpyPair(pair) {
  */
 export function getPipDecimals(pair) {
   // JPY pairs typically use 2 decimal places
-  if (isJpyPair(pair)) return 2;
+  if (isJpyPair(pair)) {
+    return 2;
+  }
 
   // Most other forex pairs use 4-5 decimal places
   const assetClass = getAssetClass(pair);
-  if (assetClass === 'forex') return 4;
+  if (assetClass === 'forex') {
+    return 4;
+  }
 
   // Crypto typically uses more decimals
-  if (assetClass === 'crypto') return 8;
+  if (assetClass === 'crypto') {
+    return 8;
+  }
 
   // Default
   return 4;
@@ -188,7 +218,9 @@ export function getPipDecimals(pair) {
  */
 export function formatPair(pair, separator = '/') {
   const { base, quote, valid } = splitFxPair(pair);
-  if (!valid) return pair;
+  if (!valid) {
+    return pair;
+  }
 
   return `${base}${separator}${quote}`;
 }
@@ -207,8 +239,12 @@ export function getStandardLotSize(pair) {
     case 'crypto':
       return 1; // Crypto usually trades in units
     case 'commodity':
-      if (pair.includes('XAU') || pair.includes('GOLD')) return 100; // Gold oz
-      if (pair.includes('XAG') || pair.includes('SILVER')) return 5000; // Silver oz
+      if (pair.includes('XAU') || pair.includes('GOLD')) {
+        return 100;
+      } // Gold oz
+      if (pair.includes('XAG') || pair.includes('SILVER')) {
+        return 5000;
+      } // Silver oz
       return 1000; // Oil barrels
     case 'index':
       return 1; // Index points
@@ -223,12 +259,16 @@ export function getStandardLotSize(pair) {
  * @returns {boolean} True if valid
  */
 export function isValidPair(pair) {
-  if (!pair || typeof pair !== 'string') return false;
+  if (!pair || typeof pair !== 'string') {
+    return false;
+  }
 
   const normalized = pair.toUpperCase().replace(/[^A-Z0-9]/g, '');
-  
+
   // At least 6 characters for forex
-  if (normalized.length < 6) return false;
+  if (normalized.length < 6) {
+    return false;
+  }
 
   // Check if it matches known patterns
   const assetClass = getAssetClass(pair);
@@ -242,7 +282,9 @@ export function isValidPair(pair) {
  */
 export function extractCurrencies(pair) {
   const { base, quote, valid } = splitFxPair(pair);
-  if (!valid) return [];
+  if (!valid) {
+    return [];
+  }
   return [base, quote];
 }
 
@@ -256,7 +298,7 @@ export function hasCommonCurrency(pair1, pair2) {
   const currencies1 = extractCurrencies(pair1);
   const currencies2 = extractCurrencies(pair2);
 
-  const common = currencies1.filter(c => currencies2.includes(c));
+  const common = currencies1.filter((c) => currencies2.includes(c));
 
   return {
     hasCommon: common.length > 0,
